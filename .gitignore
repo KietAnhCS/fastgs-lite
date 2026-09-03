@@ -1,0 +1,29 @@
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.DS_Store
+
+# build artifacts of the vendored CUDA extensions
+**/build/
+**/*.egg-info/
+**/dist/
+
+# glm ships 19 MB of html docs that are not needed to compile
+submodules/diff-gaussian-rasterization_fastgs/third_party/glm/doc/
+
+# datasets, checkpoints and renders are never committed
+datasets/
+data/
+output/
+checkpoints/
+results/
+*.ply
+*.gif
+*.mp4
