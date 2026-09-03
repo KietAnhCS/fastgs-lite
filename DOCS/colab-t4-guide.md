@@ -223,10 +223,22 @@ Xuất `ablation.csv` và biểu đồ **Score theo phút** — đường cong t
 
 ## 8. Thứ tự chạy notebook
 
+Notebook chạy được bằng **Runtime → Run all** trên T4 free mà không cần sửa gì. Mọi tham số nằm ở ô cấu hình **7.0**; các công tắc mặc định:
+
+| Công tắc | Mặc định | Lý do |
+|---|---|---|
+| `USE_DEMO_DATASET` | `True` | tự tải `tandt/truck` nếu `SOURCE_PATH` chưa có |
+| `ITERATIONS` | `7000` | Run all kết thúc trong ~15–25 phút. Đặt `30000` cho kết quả đầy đủ (mục 2.1) |
+| `RUN_ABLATION` | `False` | Phần 8 chạy thêm 3 lượt train, bật tay khi cần |
+| `DOWNLOAD_MODEL_TO_BROWSER` | `False` | `files.download` làm kẹt Run all |
+
+Mọi ô nặng đều có rào chắn (`DATA_READY`, `HAS_MODEL`, `RUN_TRAINING`, `RUN_ABLATION`): thiếu điều kiện thì in thông báo rồi bỏ qua, không ném lỗi làm đứt Run all.
+
 | Ô | Việc |
 |---|---|
+| 7.0 | cấu hình: đường dẫn, số vòng, các công tắc |
 | 7.1 | kiểm tra GPU + helper đo RAM/VRAM; clone repo, build submodule CUDA |
-| 7.2 | trỏ `SOURCE_PATH`, lập hồ sơ dữ liệu (số ảnh, phân giải, tách train/test, điểm COLMAP) |
+| 7.2 | tải dữ liệu (demo hoặc của bạn) rồi lập hồ sơ (số ảnh, phân giải, tách train/test, điểm COLMAP) |
 | 7.3 | định nghĩa `composite_score`, vẽ phương trình 2D/3D |
 | 7.4 | `evaluate_on_holdout` → helper args → `train_fastgs` → chạy preset A |
 | 7.5 | dọn RAM |
@@ -236,7 +248,7 @@ Xuất `ablation.csv` và biểu đồ **Score theo phút** — đường cong t
 | 7.9 | đóng gói + tải mô hình |
 | 8 | ablation 3 cấu hình |
 
-**Ba chỗ phải sửa trước khi chạy:** `REPO_URL` (7.1), `SOURCE_PATH` (7.2), `RESOLUTION` (2 trong nhà / 4 ngoài trời).
+**Không cần sửa gì để chạy thử lần đầu.** Khi dùng dữ liệu của mình, sửa trong ô 7.0: `USE_DEMO_DATASET = False`, `SOURCE_PATH`, và `RESOLUTION` (`2` trong nhà / `4` ngoài trời).
 
 Quy ước code trong notebook: **toàn bộ code là tiếng Anh, không comment**; giải thích nằm ở ô markdown.
 
