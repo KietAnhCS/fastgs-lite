@@ -242,7 +242,20 @@ $$S_{\max}=\frac{T_{\text{iter}}^{\text{3dgs}}}{F}=\frac{1}{f}\quad\text{với }
 
 Nếu loss + SSIM + IO chiếm 15% một vòng 3DGS thì **không cơ chế nào đưa tăng tốc vượt 6.7×**, dù có xoá sạch mọi Gaussian. Đây là lý do các con số tăng tốc thực tế của họ 3DGS nhanh đều nằm trong khoảng 2–5× chứ không phải 50×, và là lý do phải đo $f$ trước khi đặt kỳ vọng.
 
-fastgs-lite còn **thêm** một chi phí mà 3DGS không có: `compute_gaussian_score_fastgs` render thêm $10\times2=20$ ảnh mỗi lần densify. Với `densification_interval=500` và `densify_until_iter=15000`: $30\times20=600$ render phụ trên tổng 30.000 vòng $\Rightarrow$ **+2% chi phí rasterization**. Nhỏ, nhưng phải trừ đi cho trung thực — và nó **tăng tuyến tính** nếu hạ `densification_interval` (xem §7.3).
+fastgs-lite còn **thêm** một chi phí mà 3DGS không có: `compute_gaussian_score_fastgs` render thêm $10\times2=20$ ảnh mỗi lần densify.
+
+**Đếm số lần densify cho đúng.** Điều kiện trong code là `iteration > densify_from_iter and iteration % densification_interval == 0`, nằm trong `if iteration < densify_until_iter` (`train.py:127,132`; `pipeline/trainer.py:118,124`). Với `densify_from_iter=500`, `densification_interval=500`, `densify_until_iter=15000`, các vòng thoả điều kiện là $1000, 1500, \dots, 14500$:
+
+$$n_{\text{densify}}=\frac{14500-1000}{500}+1=\mathbf{28}\qquad(\text{không phải }30)$$
+
+**Quy ra chi phí.** $28\times20=560$ lượt **forward** phụ. Nhưng một vòng train là *forward + backward*, mà §1.5 đã nói backward tốn 2–3× forward, nên một vòng $\approx 3$ forward-equivalent:
+
+| Cách quy đổi | Phép tính | Overhead |
+|---|---|---|
+| Thô — coi 1 render phụ $=$ 1 vòng train (**cận trên**) | $560/30000$ | +1.9% |
+| Có tính backward — 1 vòng $\approx 3$ forward (**sát thực tế hơn**) | $560/(30000\times 3)$ | **+0.6%** |
+
+Cost model ở §6.5 dùng **cận trên $+2\%$** cho an toàn: thà trừ nhiều hơn thực tế còn hơn báo một con số tăng tốc ảo. Overhead này **tăng tuyến tính** khi hạ `densification_interval` — xem §7.3.
 
 ---
 ---
@@ -361,18 +374,37 @@ $$\text{split}_i:\ \lVert \bar{g}^{\text{abs}}_i\rVert \ge \tau_{\text{grad}}^{\
 | $\bar{g}^{\text{abs}}_i$ | Gradient **trị tuyệt đối** tích luỹ (kiểu Abs-GS) | `--grad_abs_thresh` (0.0012) |
 | $\delta\cdot\text{extent}$ | Ngưỡng kích thước: nhỏ thì **clone** (thiếu mật độ), to thì **split** (thiếu độ mịn) | `--dense` (0.001) |
 
-**Vì sao cần gradient trị tuyệt đối?** `add_densification_stats` (`:527-530`) tích luỹ hai đại lượng khác nhau từ cùng một tensor:
+**Vì sao cần gradient trị tuyệt đối?** Đây là chỗ rất dễ giải thích sai, nên phải bám sát code ở **hai tầng**.
+
+**Tầng Python** (`gaussian_model.py:528-531`) — cả hai dòng đều lấy `norm` rồi cộng, **không** có dòng nào "cộng có dấu":
 
 ```python
-self.xyz_gradient_accum[f]     += norm(viewspace_point_tensor.grad[f, :2])   # cộng có dấu
-self.xyz_gradient_accum_abs[f] += norm(viewspace_point_tensor.grad[f, 2:])   # cộng trị tuyệt đối
+self.xyz_gradient_accum[f]     += torch.norm(viewspace_point_tensor.grad[f, :2], dim=-1, keepdim=True)
+self.xyz_gradient_accum_abs[f] += torch.norm(viewspace_point_tensor.grad[f, 2:], dim=-1, keepdim=True)
 ```
 
-Một Gaussian phủ lên biên vật thể nhận gradient **đẩy sang trái ở khung hình này, sang phải ở khung hình kia**. Tổng có dấu triệt tiêu về ~0, nên 3DGS gốc **không thấy** nó cần split — dù đó chính là chỗ cần thêm chi tiết nhất. Bản trị tuyệt đối không triệt tiêu:
+Khác biệt duy nhất ở tầng này là **lát cắt cột**: `[:, :2]` so với `[:, 2:]`. Đó là lý do `screenspace_points` trong `gaussian_renderer/__init__.py:27` có **4 cột** chứ không phải 3 như 3DGS gốc.
 
-$$\Bigl\lVert\sum_v g^{(v)}\Bigr\rVert \;\le\; \sum_v \bigl\lVert g^{(v)}\bigr\rVert$$
+**Tầng CUDA** (`backward.cu:588-596`) — đây mới là nơi sinh ra khác biệt:
 
-Dấu bằng chỉ xảy ra khi mọi $g^{(v)}$ cùng hướng. Khoảng cách giữa hai vế **chính là** tín hiệu "gradient dao động đổi dấu" mà Abs-GS khai thác — và cũng là lý do hai ngưỡng khác nhau ($0.0002$ vs $0.0012$, gấp 6 lần).
+```c
+Register_dL_dmean2D_x += tmp_x;            // cot 0: cong CO DAU
+Register_dL_dmean2D_y += tmp_y;            // cot 1: cong CO DAU
+Register_dL_dmean2D_z += fabs(tmp_x);      // cot 2: cong TRI TUYET DOI
+Register_dL_dmean2D_w += fabs(tmp_y);      // cot 3: cong TRI TUYET DOI
+```
+
+Vòng cộng dồn này chạy **trên các pixel bên trong một lượt render duy nhất**, rồi `atomicAdd` ra bộ nhớ toàn cục (`backward.cu:607-610`).
+
+> **Chỗ triệt tiêu nằm ở đâu — nói cho chính xác:** triệt tiêu xảy ra **giữa các pixel trong cùng một khung hình**, *không* phải giữa các khung hình. Một Gaussian phủ lên biên vật thể nhận gradient đẩy sang trái ở nửa trái footprint và sang phải ở nửa phải — **trong cùng một ảnh**. Tổng có dấu (cột 0-1) triệt tiêu về ~0, nên 3DGS gốc **không thấy** nó cần split, dù đó chính là chỗ cần thêm chi tiết nhất.
+>
+> Bản trước của tài liệu này quy nhầm hiện tượng cho việc cộng dồn qua nhiều khung hình ($\sum_v$). Điều đó không thể đúng, vì tầng Python đã lấy `norm` **trước** khi cộng qua các iteration — sau khi lấy norm thì mọi số đều không âm, không còn gì để triệt tiêu nữa.
+
+Bất đẳng thức đúng, viết ở đúng tầng của nó — tổng theo **pixel** $q$ trong một khung hình:
+
+$$\Bigl\lVert\sum_{q} g_q\Bigr\rVert \;\le\; \sum_{q} \bigl\lVert g_q \bigr\rVert$$
+
+Dấu bằng chỉ xảy ra khi mọi $g_q$ cùng hướng.
 
 ### Điều kiện nhất quán đa góc nhìn — lọc *cái nào* thực sự đáng thêm
 
@@ -452,11 +484,31 @@ rồi `getRect(p, my_radius, ...)` (`auxiliary.h:50`) dùng **cùng một `max_r
 
 $$K_{\text{3dgs}}=\left(\frac{2\cdot 3\sqrt{\lambda_{\max}}}{16}+1\right)^{\!2}$$
 
-Hệ quả toán học: với một splat **dẹt** — tỉ lệ trục $\rho=\sigma_{\max}/\sigma_{\min}$ — hộp vuông có diện tích $\propto \sigma_{\max}^2$, trong khi ellipse thật chỉ có diện tích $\pi\sigma_{\max}\sigma_{\min}=\pi\sigma_{\max}^2/\rho$. Tỉ lệ lãng phí:
+### Lượng lãng phí, tính cho đúng đơn vị
 
-$$\frac{\text{diện tích hộp vuông}}{\text{diện tích ellipse}} = \frac{36\sigma_{\max}^2}{\pi\sigma_{\max}^2/\rho}=\frac{36}{\pi}\rho \;\approx\; 11.5\,\rho$$
+Đặt $\rho=\sigma_{\max}/\sigma_{\min}$ là **tỉ lệ trục** của splat (ellipse dẹt cỡ nào). Hai vùng cần đem ra so:
 
-**Và Gaussian sau khi train thì rất dẹt.** Adaptive density control ép chúng thành những đĩa mỏng áp vào bề mặt — đó là cách 3DGS biểu diễn mặt phẳng. Nên $\rho\gg1$ là trạng thái *bình thường*, không phải ngoại lệ. Đây là lý do lượng lãng phí lớn hơn nhiều so với trực giác "chữ nhật bao ellipse thì thừa 4 góc".
+| Vùng | Diện tích | Ghi chú |
+|---|---|---|
+| Hộp vuông của 3DGS | $(2\cdot 3\sigma_{\max})^2=36\,\sigma_{\max}^2$ | cạnh quyết định bởi trục **dài nhất** |
+| Ellipse thật, **ở cùng mức $3\sigma$** | $\pi(3\sigma_{\max})(3\sigma_{\min})=9\pi\,\sigma_{\max}\sigma_{\min}$ | $=9\pi\,\sigma_{\max}^2/\rho$ |
+
+> ⚠️ **Phải so cùng một mức level-set.** Đem hộp $3\sigma$ so với ellipse $1\sigma$ là lệch đơn vị, và làm con số phồng lên đúng $3^2=9$ lần. Bản trước của tài liệu này mắc đúng lỗi đó (ghi $\approx 11.5\,\rho$). Con số đúng là:
+
+$$\frac{\text{diện tích hộp vuông}}{\text{diện tích ellipse } 3\sigma} \;=\; \frac{36\,\sigma_{\max}^2}{9\pi\,\sigma_{\max}^2/\rho}\;=\;\frac{4}{\pi}\,\rho \;\approx\; 1.27\,\rho$$
+
+**Phép thử tỉnh táo.** Đặt $\rho=1$ (splat tròn). Công thức phải trả về đúng tỉ lệ hình-vuông trên hình-tròn-nội-tiếp, tức $4/\pi\approx 1.273$ — và nó trả về đúng như vậy. Công thức cũ thì trả về $11.5$, tức khẳng định một hình vuông lãng phí 1050% so với hình tròn nội tiếp nó: vô lý ngay ở trường hợp đơn giản nhất. Đây là cách rẻ nhất để tự bắt lỗi loại này.
+
+| $\rho$ (tỉ lệ trục thật) | Lãng phí $=\tfrac{4}{\pi}\rho$ | Đọc là |
+|---|---|---|
+| 1 (tròn) | 1.27× | thừa đúng 4 góc — trực giác quen thuộc |
+| 3 | 3.82× | |
+| 10 | 12.7× | |
+| 25 | 31.8× | ứng với hàng cuối bảng §4.5 |
+
+**Và Gaussian sau khi train thì rất dẹt.** Adaptive density control ép chúng thành những đĩa mỏng áp vào bề mặt — đó là cách 3DGS biểu diễn một mặt phẳng bằng các primitive thể tích. Nên $\rho\gg1$ là trạng thái *bình thường*, không phải ngoại lệ.
+
+Điều cần rút ra **không phải con số cụ thể**, mà là **dạng phụ thuộc**: lãng phí tăng **tuyến tính theo $\rho$ và không có trần**. Với splat tròn nó chỉ là hằng số $4/\pi$; nhưng $\rho$ càng lớn thì hộp vuông càng vô nghĩa — và đó mới là chế độ hoạt động thật của một mô hình đã hội tụ.
 
 ## 4.2 — Hộp được dựng từ conic và opacity, không từ $3\sigma$
 
@@ -490,7 +542,15 @@ $$\text{half-extent}_x=\sqrt{t\,\Sigma'_{11}},
 
 So sánh trực tiếp với §4.1: hộp này **tôn trọng dị hướng** ($\Sigma'_{11}\ne\Sigma'_{22}$) còn hộp vuông của 3DGS thì không. Toàn bộ hệ số $\rho$ trong công thức lãng phí biến mất ngay tại đây.
 
-> **Chi tiết đọc code dễ nhầm:** `x_term`/`y_term` ở dòng 340-343 **không phải** nửa cạnh — đó là toạ độ điểm tiếp tuyến $h=\sqrt{-B^2t/(\text{disc}\cdot C)}$, dùng làm đầu vào cho `computeEllipseIntersection` để lấy biên chính xác.
+> **Chi tiết đọc code dễ nhầm:** `x_term`/`y_term` ở dòng 340-343 **không phải** nửa cạnh của hộp. Chúng là toạ độ điểm tiếp tuyến, và **mẫu số của hai dòng khác nhau** — đọc lướt rất dễ chép nhầm thành một:
+>
+> ```c
+> // auxiliary.h:340-343
+> float x_term = sqrt(-(con_o.y * con_o.y * t) / (disc * con_o.x));   // mau so dung A = con_o.x
+> float y_term = sqrt(-(con_o.y * con_o.y * t) / (disc * con_o.z));   // mau so dung C = con_o.z
+> ```
+>
+> tức $x_{\text{term}}=\sqrt{\dfrac{-B^2t}{\text{disc}\cdot A}}$ và $y_{\text{term}}=\sqrt{\dfrac{-B^2t}{\text{disc}\cdot C}}$. Hai giá trị này được dùng làm đầu vào cho `computeEllipseIntersection` để lấy biên chính xác, **không** dùng trực tiếp làm nửa cạnh (nửa cạnh thật là $\sqrt{t\,\Sigma'_{11}}$, $\sqrt{t\,\Sigma'_{22}}$ như trên).
 
 ## 4.3 — Ba hệ quả của việc `mult` nhân vào $t$ chứ không vào cạnh
 
@@ -509,10 +569,14 @@ Nên `mult=0.5` **giảm nửa** diện tích hộp, không phải giảm ba ph�
 
 | $o$ | $t$ tại `mult=0.5` | Bán kính hiệu dụng | $K$ đo được ($\sigma'=8$px, đẳng hướng) |
 |---|---|---|---|
-| 1.0 | 5.54 | $2.35\,\sigma'$ | 12.0 |
-| 0.5 | 4.85 | $2.20\,\sigma'$ | 9.0 |
-| 0.1 | 3.24 | $1.80\,\sigma'$ | 6.0 |
-| 0.02 | 1.63 | $1.28\,\sigma'$ | 5.0 |
+| 1.0 | 5.54 | $2.35\,\sigma'$ | **10.08** |
+| 0.5 | 4.85 | $2.20\,\sigma'$ | **9.02** |
+| 0.1 | 3.24 | $1.80\,\sigma'$ | **7.27** |
+| 0.02 | 1.63 | $1.28\,\sigma'$ | **5.14** |
+
+> **Tái lập cột cuối:** chạy `python demos/fastgs_cost_model.py` rồi đọc khối **PHỤ LỤC 1a**. Mỗi ô là trung bình của `tiles_fastgs()` trên 24 hướng $\theta$ × 8 vị trí tâm $x$ × 8 vị trí tâm $y$ trong một tile (1536 mẫu), nên nó không phụ thuộc vào một lần bốc ngẫu nhiên nào. *(Bản trước của tài liệu này ghi 12.0 / 9.0 / 6.0 / 5.0 — những con số đó không tái lập được và mâu thuẫn với chính hàng $\rho=1$ của bảng §4.5, vốn cùng cấu hình $\sigma'=8$, $o=1$, `mult=0.5`.)*
+>
+> **Đọc bảng cho đúng:** $K$ giảm **chậm hơn nhiều** so với bán kính, vì $K$ đếm *tile* chứ không đo *diện tích*. Splat bán kính $2.35\times 8=18.8$px và splat bán kính $1.80\times 8=14.4$px vẫn chạm số tile 16px gần bằng nhau — hiệu ứng lượng tử hoá của lưới tile. Nên lợi ích từ opacity thấp là **thật nhưng khiêm tốn**: từ $o=1$ xuống $o=0.1$ chỉ tiết kiệm 28% số tile, không phải tỉ lệ với $t$ (vốn giảm 42%).
 
 Ý nghĩa: những Gaussian mờ — chính là loại đông đảo nhất trong giai đoạn giữa huấn luyện, ngay trước khi bị prune — gần như **miễn phí** về mặt rasterization. 3DGS trả giá đầy đủ cho chúng.
 
@@ -556,17 +620,25 @@ Ba biến điều khiển hiện rõ:
 | $o$ | qua $\ln$ — splat mờ được thưởng, nhưng lợi ích giảm dần |
 | $\rho$ (độ dẹt) | **mạnh nhất** — $\sqrt{\Sigma'_{11}\Sigma'_{22}}/\lambda_{\max}\sim1/\rho$ |
 
-Đo bằng `demos/fastgs_cost_model.py` ($\sigma_g=8$px, $o=1$, `mult=0.5`, lấy trung bình theo hướng $\theta$ và vị trí tâm):
+Đo bằng `demos/fastgs_cost_model.py` — khối **PHỤ LỤC 1b** ($\sigma_g=8$px, $o=1$, `mult=0.5`, trung bình trên 24 hướng $\theta$ × 64 vị trí tâm).
 
-| $\rho$ (tỉ lệ trục) | $K_{\text{3dgs}}$ | $K_{\text{fastgs}}$ | $R_{\text{tile}}$ |
-|---|---|---|---|
-| 1.0 (tròn) | 16.00 | 10.14 | **0.634** |
-| 1.5 | 30.25 | 10.74 | **0.355** |
-| 2.0 | 49.00 | 11.91 | **0.243** |
-| 3.0 | 100.00 | 14.54 | **0.145** |
-| 5.0 (rất dẹt) | 256.00 | 20.68 | **0.081** |
+> ⚠️ **Hai cột đầu là hai đại lượng KHÁC nhau — đừng gộp.** Tham số quét trong script đặt
+> $$\sigma_{\max}=\sigma_g\cdot r,\qquad \sigma_{\min}=\sigma_g/r$$
+> nên **tỉ lệ trục thật** là
+> $$\rho=\frac{\sigma_{\max}}{\sigma_{\min}}=r^2,\qquad\text{không phải } r.$$
+> Bản trước của tài liệu này dán nhãn cột $r$ là "$\rho$ (tỉ lệ trục)" và vì thế mô tả một splat dẹt **25:1** thành "5:1". Bảng dưới tách hẳn hai cột để không lặp lại lỗi đó — và cột $\rho$ mới là cột phải đem so với công thức $\tfrac{4}{\pi}\rho$ ở §4.1.
 
-Đọc cột cuối: **splat càng dẹt, compact box càng thắng đậm.** Với splat tròn nó chỉ tiết kiệm 37%; với splat dẹt tỉ lệ 5:1 nó tiết kiệm hơn 12×. Vì Gaussian sau huấn luyện có xu hướng dẹt (§4.1), giá trị thực tế nằm ở nửa dưới bảng.
+| $r$ (tham số quét) | $\rho=r^2$ (tỉ lệ trục thật) | $K_{\text{3dgs}}$ | $K_{\text{fastgs}}$ | $R_{\text{tile}}$ |
+|---|---|---|---|---|
+| 1.0 | **1 : 1** (tròn) | 16.00 | 10.08 | **0.630** |
+| 1.5 | **2.2 : 1** | 30.25 | 10.58 | **0.350** |
+| 2.0 | **4 : 1** | 49.00 | 11.84 | **0.242** |
+| 3.0 | **9 : 1** | 100.00 | 14.56 | **0.146** |
+| 5.0 | **25 : 1** (rất dẹt) | 256.00 | 20.38 | **0.080** |
+
+Đọc cột cuối: **splat càng dẹt, compact box càng thắng đậm.** Với splat tròn nó chỉ tiết kiệm 37%; với splat dẹt **tỉ lệ trục 25:1** nó tiết kiệm hơn 12×. Vì Gaussian sau huấn luyện có xu hướng dẹt (§4.1), giá trị thực tế nằm ở nửa dưới bảng.
+
+**Nhất quán với §4.1?** Có. Ở hàng cuối, §4.1 dự đoán riêng phần "hộp vuông vs ellipse" lãng phí $\tfrac{4}{\pi}\cdot 25\approx 31.8\times$; nhân thêm hệ số $\pi/4$ của bước lọc ellipse và hệ số `mult`$=0.5$ thì ra cùng bậc độ lớn với $1/0.080=12.5\times$ đo được. Hai con số **không** phải bằng nhau — §4.1 so diện tích liên tục, còn bảng này đếm tile rời rạc trên lưới 16px (luôn có phần "làm tròn lên" khiến splat nhỏ tốn tương đối nhiều tile hơn) — nhưng chúng cùng chiều và cùng bậc, đó là điều cần kiểm.
 
 ---
 ---
@@ -587,11 +659,28 @@ Ba biến điều khiển hiện rõ:
 
 | | `optimizer` | `shoptimizer` | tổng |
 |---|---|---|---|
-| 3DGS gốc | 30.000 | 30.000 | 60.000 |
+| 3DGS gốc | 29.999 | 29.999 | 59.998 |
 | fastgs-lite | 15.313 | 1.250 | **16.563** |
 | tỉ số | 0.510 | **0.042** | **0.276** |
 
-Đây là con số **chính xác**, không phải ước lượng — nó đọc thẳng từ vòng lặp trong code.
+Đây là con số **đếm được**, không phải ước lượng — `adam_steps()` chỉ mô phỏng lại đúng ba nhánh `if` của `optimizer_step`.
+
+> **Hai chi tiết cực dễ đếm sai. Cả hai đều đã kiểm bằng cách chạy thật, không nhẩm.**
+>
+> **(1) Biên trên của vòng lặp là 29.999, không phải 30.000.** Cả `train.py:159` lẫn `pipeline/trainer.py:143` đều bọc lời gọi trong `if iteration < opt.iterations:` — vòng cuối cùng vẫn render và backward bình thường, nhưng **không** step. Vì thế cột 3DGS là 29.999. Với fastgs thì $30000 \bmod 64 = 48 \neq 0$, nên vòng 30.000 vốn dĩ cũng không step — **cột fastgs không đổi**.
+>
+> **(2) Khoảng $(15000,\,20000]$ có 157 bội của 32, không phải 156** — vì $20000 = 32\times 625$, nên chính mốc 20000 cũng là một bước. Đếm nhẩm kiểu "$(19968-15008)/32+1=156$" sẽ hụt đúng bước đó, và kéo theo sai cả tổng.
+>
+> Bảng đếm đầy đủ:
+>
+> | Khoảng | Nhánh code | `optimizer` | `shoptimizer` |
+> |---|---|---|---|
+> | $1\dots15000$ | dòng 227 | 15.000 (mỗi vòng) | 937 $\;=\lfloor 15000/16\rfloor$ |
+> | $15001\dots20000$ | dòng 233 | 157 (bội của 32) | 157 |
+> | $20001\dots29999$ | dòng 239 | 156 (bội của 64) | 156 |
+> | **Tổng** | | **15.313** | **1.250** |
+>
+> Bài học chung: với ba nhánh `if` lồng ngưỡng như thế này, **đừng đếm nhẩm** — viết vòng `for` mà đếm. `demos/fastgs_cost_model.py::adam_steps()` làm đúng việc đó.
 
 Gradient vẫn cộng dồn bình thường mỗi vòng (vì `zero_grad` chỉ gọi khi thực sự `step`), nên mỗi bước hiếm hoi đó áp một gradient đã tích luỹ. Về mặt tối ưu, nó gần với **gradient accumulation** hơn là bỏ bớt cập nhật — nhưng Adam chuẩn hoá theo $\sqrt{v}$, nên cộng dồn gradient rồi step một lần **không** tương đương với step nhiều lần: bước đi bị chuẩn hoá về cùng cỡ $\approx\text{lr}$ bất kể tích luỹ bao nhiêu. Đó chính là điều làm 15k–30k rẻ gần như miễn phí, và cũng là điều làm nó **học được rất ít** trong giai đoạn đó.
 
@@ -679,7 +768,9 @@ Tách hai nguồn tiết kiệm tại `mult=0.5`:
 
 ## 6.3 — Phép đo 2: số lần Adam step (chính xác)
 
-Bảng ở §5.1: $R_{\text{adam}}=16{,}563/60{,}000=\mathbf{0.276}$.
+Bảng ở §5.1: $R_{\text{adam}}=16{,}563/59{,}998=\mathbf{0.276}$.
+
+Đây là tỉ số **duy nhất** trong ba tỉ số không cần bất kỳ giả định nào — nó thuần là số học trên ba nhánh `if`. Chạy `python demos/fastgs_cost_model.py` rồi đọc khối "PHEP DO 2" để tự kiểm lại.
 
 ## 6.4 — Phép đo 3: số Gaussian (giả định, không phải đo)
 
@@ -765,7 +856,7 @@ Một lần chạy fastgs-lite trên Colab free T4, ghi trong [`DOCS/assets/lead
 - $N$ giảm vì tiêu chí densify đổi từ *"gradient lớn"* sang *"gradient lớn **và** nhiều camera cùng thấy sai"*, và vì có thêm hai đường prune dựa trên cùng tín hiệu đó. Vì densify chạy lặp ~30 lần, khác biệt nhỏ ở tỉ lệ sinh khuếch đại thành khác biệt lớn ở $N$ cuối.
 - Nhịp Adam thưa dần cắt số hạng thứ ba, nhưng đóng góp khiêm tốn (1.12×).
 
-Tín hiệu nhất quán đa góc nhìn là thứ khiến hai đòn bẩy đầu khả thi: nó vừa **rẻ để tính** (20 render phụ mỗi `densification_interval` vòng, +2% chi phí), vừa **chọn lọc hơn gradient** — nên thêm Gaussian đúng chỗ, bỏ Gaussian đúng lúc.
+Tín hiệu nhất quán đa góc nhìn là thứ khiến hai đòn bẩy đầu khả thi: nó vừa **rẻ để tính** (28 lần $\times$ 20 render phụ trên cả 30k vòng, tức $+0.6\%$ thực tế / $+1.9\%$ nếu tính cận trên — §2.3), vừa **chọn lọc hơn gradient** — nên thêm Gaussian đúng chỗ, bỏ Gaussian đúng lúc.
 
 Nhưng **repo chưa chứng minh được con số cụ thể**. Mô hình cho 3.83×; giá trị thật phụ thuộc $R_{\text{gauss}}$ và cách chia chi phí, cả hai đều chưa đo. §6.6 nói cách đo.
 
@@ -788,15 +879,37 @@ Xem §5.1. Tóm tắt hệ quả: hạ `--iterations` xuống 15k là lỗ — t
 
 Mặc định trong `arguments/__init__.py` là `100`, nhưng `train_base.sh` thật sự dùng `500`. Vì `compute_gaussian_score_fastgs` render 10 camera × 2 lượt mỗi lần gọi, khác biệt là **~145 lần gọi so với ~29 lần** trong khoảng 500–15000.
 
-Quy về mô hình chi phí (§2.3): overhead scoring là
+Quy về mô hình chi phí (§2.3), số lần gọi trong cửa sổ densify là
 
-$$\frac{\text{densify\_until}}{\text{interval}}\times\frac{20}{\text{total\_iters}}$$
+$$n_{\text{densify}}=\left\lfloor\frac{U-1}{I}\right\rfloor-\left\lfloor\frac{F}{I}\right\rfloor,
+\qquad
+\text{overhead}_{\text{cận trên}}=\frac{n_{\text{densify}}\times 20}{\texttt{total\_iters}}$$
 
-| `densification_interval` | Số lần gọi (tới 15k) | Overhead raster |
-|---|---|---|
-| 500 | 30 | **+2.0%** |
-| 200 | 75 | +5.0% |
-| 100 (mặc định trong `arguments/`) | 150 | **+10.0%** |
+với $F=\texttt{densify\_from\_iter}=500$, $U=\texttt{densify\_until\_iter}=15000$, $I=\texttt{densification\_interval}$.
+
+Hai chi tiết mà công thức phải tôn trọng, và là chỗ mọi phép tính tắt đều sai:
+
+- điều kiện là `iteration > F` (**nghiêm ngặt**), nên mốc $I$ đầu tiên phải **lớn hơn** 500 — trừ đi $\lfloor F/I\rfloor$;
+- điều kiện ngoài là `iteration < U` (**cũng nghiêm ngặt**), nên mốc cuối là $U-1$ chứ không phải $U$ — dùng $\lfloor (U-1)/I\rfloor$.
+
+(Chia thêm cho 3 nếu muốn con số sát thực tế hơn, vì một vòng train $\approx 3$ forward-equivalent — xem bảng ở §2.3.)
+
+| `densification_interval` | $n_{\text{densify}}$ (cửa sổ $500 < i < 15000$) | Overhead cận trên | Overhead sát thực tế |
+|---|---|---|---|
+| **500** (`train_base.sh`, `pipeline/config.py`) | **28** | **+1.9%** | +0.6% |
+| 200 | 72 | +4.8% | +1.6% |
+| **100** (mặc định trong `arguments/`) | **144** | **+9.6%** | +3.2% |
+
+Tự kiểm bằng một dòng Python:
+
+```python
+I, F, U = 100, 500, 15000
+len([i for i in range(1, U) if i > F and i % I == 0])   # -> 144
+```
+
+Ở `interval=100`, riêng bước chấm điểm đã ăn gần 10% chi phí rasterization theo cách tính cận trên — đủ để triệt tiêu phần lớn lợi ích của nhịp Adam thưa (1.12×). Đây là lý do preset thật dùng 500.
+
+> **Lưu ý về cách đếm:** $n_{\text{densify}}$ là số vòng thoả `iteration > 500 and iteration % interval == 0` trong khoảng `iteration < 15000`, tức các mốc $1000, 1000+I, \dots$ (với $I=100$ thì mốc đầu là 600, cho 145 lần). Đừng dùng phép chia tắt `15000/interval` — nó bỏ qua cả `densify_from_iter` lẫn dấu `<` nghiêm ngặt ở biên trên, và cho ra 30/150 thay vì 28/144.
 
 Ở `interval=100`, riêng bước chấm điểm đã ăn 10% chi phí rasterization — đủ để triệt tiêu phần lớn lợi ích của nhịp Adam thưa (1.12×). Đây là lý do preset thật dùng 500.
 

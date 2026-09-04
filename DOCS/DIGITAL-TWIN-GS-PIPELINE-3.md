@@ -555,26 +555,26 @@ Hàng `MEAN` là **trung bình cộng theo từng cột số của mọi scene**
 
 | Hằng số | Giá trị | Vị trí | Vai trò |
 |---|---|---|---|
-| SH degree tối đa | 3 | `arguments/__init__.py:49` (`ModelParams.sh_degree`) | Bậc cầu điều hoà tối đa cho màu phụ thuộc góc nhìn |
+| SH degree tối đa | 3 | `arguments/__init__.py:48` (`ModelParams.sh_degree`) | Bậc cầu điều hoà tối đa cho màu phụ thuộc góc nhìn |
 | Nhịp tăng SH degree | mỗi 1000 iteration | `train.py:80-82` (`if iteration % 1000 == 0: gaussians.oneupSHdegree()`) | Tăng dần độ phức tạp màu sắc, tránh học SH bậc cao quá sớm |
 | `min_opacity` (giai đoạn densify) | 0.005 | `train.py:140` (gọi `densify_and_prune_fastgs`) | Ngưỡng opacity để prune trong pha densify |
 | `min_opacity` (giai đoạn cuối) | 0.1 | `train.py:158` (gọi `final_prune_fastgs`) | Ngưỡng opacity cao hơn khi prune lần cuối, dọn Gaussian yếu |
 | Ngưỡng kích thước màn hình (`max_screen_size`) | 20 | `train.py:133` (`size_threshold = 20 if iteration > opt.opacity_reset_interval else None`) | Pixel — Gaussian chiếm view lớn hơn ngưỡng này (sau lần reset opacity đầu) bị coi là "quá to", có thể bị prune |
-| `percent_dense` | 0.001 | `arguments/__init__.py:83` (`OptimizationParams.percent_dense`) | Đặt vào `self.percent_dense` của `GaussianModel` (`scene/gaussian_model.py:193`); tham chiếu tỉ lệ với `extent` cảnh để phân loại clone/split ở 3DGS gốc |
+| `percent_dense` | 0.001 | `arguments/__init__.py:86` (`OptimizationParams.percent_dense`) | Đặt vào `self.percent_dense` của `GaussianModel` (`scene/gaussian_model.py:193`); tham chiếu tỉ lệ với `extent` cảnh để phân loại clone/split ở 3DGS gốc |
 | `dense` (fastgs-lite, đóng vai trò percent_dense) | 0.001 | `arguments/__init__.py:100` (`OptimizationParams.dense`) | Dùng trực tiếp trong `densify_and_prune_fastgs`: `clone_qualifiers = scaling.max <= args.dense*extent`, `split_qualifiers = scaling.max > args.dense*extent` (`scene/gaussian_model.py:486-487`) |
-| `opacity_reset_interval` | 3000 | `arguments/__init__.py:86` | Chu kỳ (iteration) reset opacity về thấp; cũng là mốc bật ngưỡng screen-size 20 |
-| `densify_from_iter` | 500 | `arguments/__init__.py:87` | Iteration bắt đầu tính densify |
-| `densify_until_iter` | 15000 | `arguments/__init__.py:88` | Iteration dừng densify/prune theo gradient |
-| `densification_interval` | 100 (mặc định gốc) — nhưng pipeline Colab override thành **500** | `arguments/__init__.py:85`; override tại `pipeline/config.py:43` (`train_extra_args: ["--densification_interval", "500", ...]`) | Chu kỳ (số iteration) giữa hai lần chạy densify_and_prune |
-| `position_lr_max_steps` | 30000 | `arguments/__init__.py:76` | Số bước để lịch suy giảm learning-rate vị trí (`position_lr_init` → `position_lr_final`) hoàn tất — `pipeline/trainer.py::build_args` ghi đè bằng đúng số vòng train; đường CLI giữ nguyên 30000. |
-| `lambda_dssim` | 0.2 (mặc định gốc) — pipeline Colab override thành **0.25** | `arguments/__init__.py:82`; override `pipeline/config.py:44` | Trọng số D-SSIM trong loss: `loss = (1-λ)*L1 + λ*(1-SSIM)` (`train.py:103`) |
+| `opacity_reset_interval` | 3000 | `arguments/__init__.py:89` | Chu kỳ (iteration) reset opacity về thấp; cũng là mốc bật ngưỡng screen-size 20 |
+| `densify_from_iter` | 500 | `arguments/__init__.py:90` | Iteration bắt đầu tính densify |
+| `densify_until_iter` | 15000 | `arguments/__init__.py:91` | Iteration dừng densify/prune theo gradient |
+| `densification_interval` | 100 (mặc định gốc) — nhưng pipeline Colab override thành **500** | `arguments/__init__.py:88`; override tại `pipeline/config.py:43` (`train_extra_args: ["--densification_interval", "500", ...]`) | Chu kỳ (số iteration) giữa hai lần chạy densify_and_prune |
+| `position_lr_max_steps` | 30000 | `arguments/__init__.py:80` | Số bước để lịch suy giảm learning-rate vị trí (`position_lr_init` → `position_lr_final`) hoàn tất — `pipeline/trainer.py::build_args` ghi đè bằng đúng số vòng train; đường CLI giữ nguyên 30000. |
+| `lambda_dssim` | 0.2 (mặc định gốc) — pipeline Colab override thành **0.25** | `arguments/__init__.py:87`; override `pipeline/config.py:44` | Trọng số D-SSIM trong loss: `loss = (1-λ)*L1 + λ*(1-SSIM)` (`train.py:103`) |
 | `mult` | 0.5 | `arguments/__init__.py:101` (`OptimizationParams.mult`); cũng là `Config.mult` (`pipeline/config.py:37`) | Hệ số nhân "compact box" kiểm soát số tile mỗi splat chiếm (đặc thù fastgs-lite) |
 | `loss_thresh` | 0.1 (mặc định gốc) — pipeline Colab override thành **0.07** | `arguments/__init__.py:95`; override `pipeline/config.py:46` | Ngưỡng loss dùng trong tính điểm multi-view của fastgs-lite (`utils/fast_utils.py`) |
-| `grad_abs_thresh` | 0.0012 | `arguments/__init__.py:93` (mặc định gốc trùng với override `pipeline/config.py:46`) | Ngưỡng gradient tuyệt đối để đánh dấu ứng viên "split" (`grad_qualifiers_abs`, `scene/gaussian_model.py:484`) |
-| `grad_thresh` | 0.0002 | `arguments/__init__.py:96` | Ngưỡng gradient (norm) để đánh dấu ứng viên "clone" (`grad_qualifiers`, `scene/gaussian_model.py:483`) |
+| `grad_abs_thresh` | 0.0012 | `arguments/__init__.py:96` (mặc định gốc trùng với override `pipeline/config.py:47`) | Ngưỡng gradient tuyệt đối để đánh dấu ứng viên "split" (`grad_qualifiers_abs`, `scene/gaussian_model.py:484`) |
+| `grad_thresh` | 0.0002 | `arguments/__init__.py:99` | Ngưỡng gradient (norm) để đánh dấu ứng viên "clone" (`grad_qualifiers`, `scene/gaussian_model.py:483`) |
 | `lowfeature_lr` | 0.0025 | `arguments/__init__.py:98` | Learning rate cho nhóm feature "thấp" (đặc thù fastgs-lite, tách khỏi `feature_lr` gốc) |
-| `highfeature_lr` | 0.005 (mặc định gốc) — pipeline Colab override thành **0.02** | `arguments/__init__.py:91`; override `pipeline/config.py:45` | Learning rate cho nhóm feature "cao" |
-| Ngưỡng importance-score trong densify mask | `importance_score > 5` | `scene/gaussian_model.py:494` (`metric_mask = importance_score > 5`) | Gaussian phải được tối thiểu ~6 lượt "phiếu" đa góc nhìn mới được coi là ứng viên densify hợp lệ |
+| `highfeature_lr` | 0.005 (mặc định gốc) — pipeline Colab override thành **0.02** | `arguments/__init__.py:97`; override `pipeline/config.py:45` | Learning rate cho nhóm feature "cao" |
+| Ngưỡng importance-score trong densify mask | `importance_score > 5` | `scene/gaussian_model.py:494` (`metric_mask = importance_score > 5`) | Gaussian phải phủ **trung bình hơn 5 pixel bị đánh dấu lỗi trên mỗi góc nhìn** (trong 10 camera lấy mẫu) mới được coi là ứng viên densify hợp lệ. **Đơn vị là pixel, không phải "phiếu bầu của camera"** — xem §48 và PIPELINE-2 §28 |
 | Ngưỡng pruning-score cuối | `pruning_score > 0.9` | `scene/gaussian_model.py:538` (`final_prune_fastgs`) | Gaussian có điểm nhất quán đa góc nhìn chuẩn hoá > 0.9 (tức rất kém — xem §48) bị prune ở bước dọn cuối |
 | Kích thước tile rasterizer | 16 × 16 pixel | `submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/config.h:16-17` (`BLOCK_X 16`, `BLOCK_Y 16`) | Kích thước ô lưới dùng để phân vùng màn hình khi rasterize |
 | `psnr_max` | 30.0 | `pipeline/config.py:38` (`Config.psnr_max`); mặc định trùng trong `pipeline/score.py:12,23` | Ngưỡng chuẩn hoá PSNR trong `composite_score` (xem §44) |
@@ -602,7 +602,7 @@ Lưu ý quan trọng: nhiều tham số của `OptimizationParams` (`arguments/_
 
 | Triệu chứng | Nguyên nhân (theo code) | Cách xử lý |
 |---|---|---|
-| CUDA out of memory trên T4 | VRAM 16 GB của T4 không đủ khi số Gaussian tăng nhanh trong pha densify, hoặc `mult`/độ phân giải quá cao; `compute_gaussian_score_fastgs` giữ nhiều tensor tạm khi tính điểm đa góc nhìn | Giảm `resolution` (tăng `-r`), giảm `iterations`/tần suất densify, hoặc gọi `torch.cuda.empty_cache()` (đã có sau `densify_and_prune_fastgs`, `scene/gaussian_model.py:531`); giảm `eval_views`/`max_views` khi chấm điểm live |
+| CUDA out of memory trên T4 | VRAM của T4 (**14.56 GB khả dụng**, không phải 16 GB như hay bị nói) không đủ khi số Gaussian tăng nhanh trong pha densify, hoặc `mult`/độ phân giải quá cao; `compute_gaussian_score_fastgs` giữ nhiều tensor tạm khi tính điểm đa góc nhìn | Giảm `resolution` (tăng `-r`), giảm `iterations`/tần suất densify, hoặc gọi `torch.cuda.empty_cache()` (đã có ở cuối `densify_and_prune_fastgs`, `scene/gaussian_model.py:526`); giảm `eval_views`/`max_views` khi chấm điểm live |
 | RAM (CPU) OOM khi nén `submission.zip` | `pipeline/submission.py`/`pipeline/deliver.py` giữ nhiều ảnh/đường dẫn trong bộ nhớ khi zip nhiều scene liên tiếp trên Colab (RAM hệ thống giới hạn, xem `Config.ram_soft_limit_gb = 10.5`) | Zip theo từng scene rồi giải phóng, theo dõi `pipeline/env.py::mem`/`show_mem`; hạ `ram_soft_limit_gb` để cảnh báo sớm hơn |
 | `Could not recognize scene type!` | `scene/__init__.py:49` — `Scene.__init__` không tìm thấy `sparse/` (COLMAP) hoặc `transforms_train.json` (Blender) trong `source_path` | Kiểm tra đường dẫn `-s`/`data_root`, đảm bảo cấu trúc thư mục scene đúng chuẩn COLMAP (`sparse/0/...`) hoặc Blender |
 | Zero test camera / không chấm được | Chạy thiếu cờ `--eval`; khi đó `readColmapSceneInfo` không tách hold-out theo `llffhold` mà đưa hết ảnh vào train (`scene/dataset_readers.py:149-150` chỉ tách khi `eval=True`) | Luôn truyền `--eval` (đã có sẵn trong `pipeline/trainer.py::build_args`, `argv` chứa `"--eval"`); nếu chạy `train.py` tay thì phải tự thêm |
@@ -620,12 +620,12 @@ Lưu ý quan trọng: nhiều tham số của `OptimizationParams` (`arguments/_
 | SH (Spherical Harmonics — cầu điều hoà) | Khai triển hàm màu phụ thuộc góc nhìn; bậc (degree) càng cao càng biểu diễn được hiệu ứng phản chiếu/góc nhìn phức tạp, đổi lại tốn bộ nhớ hơn |
 | Opacity | Độ mờ/đục của một Gaussian, dùng sigmoid nghịch đảo (`inverse_sigmoid`) để tham số hoá; Gaussian có opacity quá thấp bị coi là "vô hình" và bị prune |
 | Densify (làm dày) | Quá trình thêm Gaussian mới ở vùng thiếu chi tiết, gồm hai thao tác: clone và split |
-| Clone | Nhân đôi một Gaussian nhỏ (đang thiếu chi tiết nhưng đã đủ nhỏ) thành hai bản giữ nguyên scale, dịch nhẹ vị trí |
+| Clone | Nhân đôi một Gaussian nhỏ (đang thiếu chi tiết nhưng kích thước đã dưới ngưỡng `dense*extent`) thành hai bản **giống hệt nhau hoàn toàn** — cùng vị trí, cùng scale, cùng rotation, cùng SH, cùng opacity. ⚠ **Không có bước "dịch nhẹ vị trí"**: `densify_and_clone_fastgs` (`scene/gaussian_model.py:455-466`) chỉ index rồi `densification_postfix`, không cộng nhiễu nào. Hai bản sao tách nhau ra là nhờ gradient khác nhau ở các bước Adam sau đó, không nhờ khởi tạo |
 | Split | Tách một Gaussian lớn thành N Gaussian con nhỏ hơn (scale chia nhỏ theo hệ số `0.8*N`), dùng khi Gaussian đã đủ lớn nhưng vẫn thiếu chi tiết |
 | Prune (tỉa) | Xoá Gaussian không cần thiết: opacity quá thấp, kích thước màn hình/không gian quá lớn, hoặc bị đánh dấu bởi pruning-score cao |
 | Tile | Ô lưới 16×16 pixel (`BLOCK_X`, `BLOCK_Y`) mà rasterizer CUDA dùng để phân vùng và song song hoá việc vẽ splat lên ảnh |
 | Splat | Kết quả chiếu 2D của một Gaussian 3D lên mặt phẳng ảnh khi rasterize |
-| Importance score | Số nguyên đếm số lượt (qua nhiều camera lấy mẫu) một Gaussian được "bỏ phiếu" là quan trọng cho chất lượng render đa góc nhìn; dùng để lọc ứng viên densify (`metric_mask = importance_score > 5`) |
+| Importance score | **Số pixel bị đánh dấu lỗi mà một Gaussian phủ lên, tính trung bình trên 10 camera lấy mẫu, làm tròn xuống.** Dùng để lọc ứng viên densify (`metric_mask = importance_score > 5`). ⚠ Hai hiểu lầm phải tránh: (a) **đơn vị là pixel**, không phải số camera "bỏ phiếu" — kernel cộng `+1` mỗi pixel lỗi chứ không phải mỗi view; (b) điểm **cao** nghĩa là Gaussian đó đang nằm dưới vùng render **sai**, tức "đáng để thêm chi tiết vào đây", chứ không phải "Gaussian này tốt/quan trọng". Xem PIPELINE-2 §28 |
 | Pruning score | Điểm chuẩn hoá 0..1 đo mức độ *kém* nhất quán đa góc nhìn của một Gaussian (giá trị càng cao càng nên loại bỏ); dùng trong cả pha densify (lấy mẫu theo trọng số `1/(1e-6+1-pruning_score)`) và pha cuối (`pruning_score > 0.9` → prune) |
 | Hold-out | Tập ảnh/camera bị giữ lại không dùng để train, dùng làm test để đo khả năng tổng quát hoá — chọn bằng `idx % llffhold == 0` |
 | Novel view synthesis | Tổng hợp ảnh từ góc nhìn (camera pose) mới không có trong tập ảnh gốc, dựa trên mô hình 3D đã học |

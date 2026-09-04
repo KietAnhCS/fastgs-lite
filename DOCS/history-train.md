@@ -22,7 +22,7 @@ với cấu hình mặc định của notebook, không sửa gì. Đây là **m�
 | Stack | torch 2.11.0+cu128 · CUDA 12.8 · Python 3.13.15 |
 | RAM hệ thống | 12.7 GB (lúc khởi động dùng 1.13 GB) |
 | Tổng wall-clock | **14 phút** — gồm ~6–7 phút clone repo + build 3 submodule CUDA |
-| Thời gian train thuần | 327.6 s cho 4 cảnh (~82 s/cảnh, ~94 it/s) |
+| Thời gian train thuần | 327.6 s cho 4 cảnh (~82 s/cảnh, **~85 it/s**) |
 | Dataset | `tandt_db.zip` (Tanks&Temples + Deep Blending) — 4 cảnh tự phát hiện |
 
 ### 1.2 — Cấu hình
@@ -55,7 +55,7 @@ cfg = Config(
 
 ![Score từng cảnh so với trung bình, và ba thành phần metric](assets/leaderboard.png)
 
-> **Hình 1.** Trái: Score từng cảnh, đường đứt nét là trung bình 0.7644. Phải: ba thành phần cấu thành Score.
+> **Hình 1.** Trái: Score từng cảnh, đường đứt nét là trung bình 0.7643. Phải: ba thành phần cấu thành Score.
 > Cột LPIPS (xanh lá) gần như bằng nhau ở cả 4 cảnh, trong khi `psnr_norm` (xanh dương) tụt hẳn ở `train` và
 > `truck` — đây là chỗ nhìn ra ngay chênh lệch trong nhà/ngoài trời đến từ đâu.
 > Nguồn: `assets/leaderboard.csv`.

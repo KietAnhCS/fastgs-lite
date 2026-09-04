@@ -167,7 +167,7 @@ notebook ô code
   → pipeline.run.finish() → pipeline.submission.build_zip / pipeline.deliver.*
 ```
 
-`train_scene()` (`pipeline/trainer.py:414`) tự dựng `Namespace` tham số bằng
+`train_scene()` (`pipeline/trainer.py:52`) tự dựng `Namespace` tham số bằng
 `build_args()` (§9) rồi lặp gần như song song với `training()` của `train.py`:
 cùng `gaussians.update_learning_rate`, cùng `oneupSHdegree` mỗi 1000 vòng, cùng
 vòng lặp lấy camera ngẫu nhiên, cùng `render_fastgs` + `l1_loss` +
@@ -450,7 +450,7 @@ Một Gaussian trong `GaussianModel` là một hàng trong sáu tensor tham số
 optimizer.** Không có `pose_optimizer`, không có bước "tinh chỉnh tư thế camera
 trong lúc train", không có DUSt3R. Tư thế camera (`R`, `T`) được đọc một lần từ
 COLMAP và giữ **cố định tuyệt đối** suốt quá trình train — `Camera` kế thừa
-`nn.Module` (`scene/cameras.py:14`) nhưng `R`, `T`,
+`nn.Module` (`scene/cameras.py:17`) nhưng `R`, `T`,
 `world_view_transform`, `full_proj_transform` được gán bằng `self.R = R` /
 `torch.tensor(...)` thường, không bọc trong `nn.Parameter`, nên không nằm trong
 bất kỳ `optimizer.param_groups` nào của `GaussianModel.training_setup`.
@@ -460,11 +460,23 @@ bất kỳ `optimizer.param_groups` nào của `GaussianModel.training_setup`.
 | ① Đọc nhị phân/text COLMAP | `read_extrinsics_binary` / `read_extrinsics_text`, `read_intrinsics_binary` / `read_intrinsics_text` — `scene/colmap_loader.py` | `readColmapSceneInfo` (`scene/dataset_readers.py:135`) thử đọc `sparse/0/images.bin` + `cameras.bin` trước, rơi về `.txt` nếu lỗi (khối `try/except` trần) |
 | ② Dựng `CameraInfo` thô | `readColmapCameras` — `scene/dataset_readers.py:69` | Với mỗi ảnh: `R = transpose(qvec2rotmat(qvec))`, `T = tvec`, FOV tính từ tiêu cự COLMAP (`SIMPLE_PINHOLE` hoặc `PINHOLE`; model khác thì `assert False` — dữ liệu **phải** đã undistort) |
 | ③ Chuẩn hoá bán kính cảnh | `getNerfppNorm` — `scene/dataset_readers.py:44` | Từ toàn bộ `W2C` suy ra tâm camera trong world, lấy tâm trung bình + đường kính lớn nhất × `1.1` → `radius` dùng làm `cameras_extent` (ảnh hưởng LR vị trí và ngưỡng `dense`) |
-| ④ Tách train/test | `readColmapSceneInfo:150-155` | Nếu `--eval`: `idx % llffhold != 0` → train, `idx % llffhold == 0` → test (`llffhold=8` cố định, không phải cờ CLI); nếu không `--eval`, mọi ảnh vào train |
+| ④ Tách train/test | `readColmapSceneInfo` — `scene/dataset_readers.py:149-150` | Nếu `--eval`: `idx % llffhold != 0` → train, `idx % llffhold == 0` → test. ⚠ **`llffhold` LÀ một cờ CLI thật** (`--llffhold`, mặc định 8) — xem ghi chú ngay dưới bảng; nếu không truyền `--eval`, mọi ảnh vào train |
 | ⑤ Ghi `cameras.json` | `Scene.__init__` — `scene/__init__.py:53-61` | Khi chưa nạp checkpoint: ghi mọi camera (test trước, train sau) ra `<model_path>/cameras.json` qua `camera_to_JSON` — dùng để xem lại tư thế bằng công cụ ngoài (ví dụ viewer web), không phải để tối ưu |
 | ⑥ Resize + dựng `Camera` train | `loadCam` — `utils/camera_utils.py:15`, gọi từ `cameraList_from_camInfos` | Co ảnh theo `--resolution` (`1/2/4/8` chia thẳng, hoặc `-1` tự co nếu rộng > 1600px); dựng `Camera(colmap_id, R, T, FoVx, FoVy, image, ...)` |
-| ⑦ Tính ma trận chiếu | `Camera.__init__` — `scene/cameras.py:14-53` | `world_view_transform = getWorld2View2(R,T).transpose(0,1)`; `full_proj_transform = world_view_transform @ projection_matrix`; `camera_center = world_view_transform.inverse()[3,:3]` — tất cả tính **một lần**, lưu làm thuộc tính thường, không có `.grad` |
+| ⑦ Tính ma trận chiếu | `Camera.__init__` — `scene/cameras.py:18-57` | `world_view_transform = getWorld2View2(R,T).transpose(0,1)`; `full_proj_transform = world_view_transform @ projection_matrix`; `camera_center = world_view_transform.inverse()[3,:3]` — tất cả tính **một lần**, lưu làm thuộc tính thường, không có `.grad` |
 | ⑧ Dùng trong render | `render_fastgs` — `gaussian_renderer/__init__.py:18` | `viewpoint_camera.world_view_transform` / `full_proj_transform` / `camera_center` truyền thẳng vào `GaussianRasterizationSettings` của rasterizer CUDA để chiếu Gaussian 3D → ảnh 2D; **không có gradient chảy ngược về camera** vì các tensor này không phải `nn.Parameter` |
+
+⚠ **`llffhold` là cờ CLI, không phải hằng số** — đây là điểm bản trước của tài liệu này nói sai. Đường đi đầy đủ của nó:
+
+| Nơi | Dòng | Nội dung |
+|---|---|---|
+| Khai báo trong `ModelParams` | `arguments/__init__.py:57` | `self.llffhold = 8` ⇒ `ParamGroup.__init__` tự sinh cờ `--llffhold` kiểu `int` |
+| `Scene` đọc ra | `scene/__init__.py:45` | `getattr(args, "llffhold", None) or 8` — có `getattr` phòng thân để tương thích ngược |
+| Reader dùng | `scene/dataset_readers.py:132,149-150` | `def readColmapSceneInfo(path, images, eval, llffhold=8)` |
+| Đường notebook truyền | `pipeline/trainer.py:28` | `"--llffhold", str(cfg.llffhold)` |
+| Nguồn của `cfg` | `pipeline/config.py:26` | `llffhold: int = 8` |
+
+Vì `Scene.__init__` dùng `getattr(args, "llffhold", None) or 8`, một giá trị `0` sẽ **âm thầm bị đổi thành 8** (vì `0` là falsy) chứ không phải "không giữ ảnh test nào" — nếu muốn tắt hold-out thì bỏ `--eval`, đừng đặt `--llffhold 0`.
 
 ★ Vì tư thế cố định, "sai số pose" (nếu có, ví dụ do COLMAP tái tạo lỗi) sẽ
 biểu hiện thành lỗi ảnh render bị mờ/lệch mà mô hình chỉ có thể "che" bằng cách
@@ -593,7 +605,7 @@ Dùng bởi các script chạy sau khi train (ví dụ `render.py`), không ph�
 
 Nhờ bước 1 dùng `fill_none`, một cờ không gõ trên dòng lệnh mới sẽ là `None` và không ghi đè cấu hình cũ; một cờ có gõ (dù trùng giá trị mặc định gốc) sẽ luôn thắng cấu hình cũ vì nó khác `None`.
 
-### Bảng `ModelParams` (`arguments/__init__.py:47-57`)
+### Bảng `ModelParams` (`arguments/__init__.py:46-62`)
 
 | Thuộc tính (khai báo) | Cờ CLI | Shorthand | Default | Ý nghĩa |
 |---|---|---|---|---|
@@ -605,6 +617,7 @@ Nhờ bước 1 dùng `fill_none`, một cờ không gõ trên dòng lệnh mớ
 | `_white_background` | `--white_background` | `-w` | `False` | Nền trắng khi render (ảnh hưởng `bg_color` trong `train.py:47` và dữ liệu Blender alpha-composite ở `readCamerasFromTransforms`). |
 | `data_device` | `--data_device` | không | `"cuda"` | Device lưu `original_image` trong `Camera.__init__` (§16). |
 | `eval` | `--eval` | không | `False` | Bật tách train/test theo `llffhold` (§15). |
+| `llffhold` | `--llffhold` | không | `8` | Cứ `llffhold` ảnh thì giữ 1 ảnh làm hold-out/test (`idx % llffhold == 0`), chỉ có tác dụng khi `--eval` bật. Truyền xuống `readColmapSceneInfo` qua `scene/__init__.py:45`. **Bản trước của tài liệu này bỏ sót dòng này và mô tả nhầm `llffhold` là hằng số cứng — nó là cờ CLI đầy đủ.** |
 
 ### Bảng `OptimizationParams` (`arguments/__init__.py:73-104`)
 
@@ -805,7 +818,7 @@ Trình tự:
 `scene/dataset_readers.py:68-105`. Với mỗi `(key, extr)` trong `cam_extrinsics` (thứ tự lặp dict — không đảm bảo có thứ tự, nhưng sẽ bị `sorted(..., key=image_name)` sắp lại ngay sau ở `readColmapSceneInfo`):
 
 - `intr = cam_intrinsics[extr.camera_id]`; `height, width = intr.height, intr.width`; `uid = intr.id` (chú ý `uid` lấy từ **intrinsics id**, không phải `extr.id`/`image_id`).
-- `R = np.transpose(qvec2rotmat(extr.qvec))`, `T = np.array(extr.tvec)` — R lưu ở dạng **chuyển vị** ngay từ đây (comment ở `scene/cameras.py:197` giải thích lý do liên quan tới quy ước `glm` trong code CUDA).
+- `R = np.transpose(qvec2rotmat(extr.qvec))`, `T = np.array(extr.tvec)` — R lưu ở dạng **chuyển vị** ngay từ đây (comment ở `scene/dataset_readers.py:197` — `# R is stored transposed due to 'glm' in CUDA code` — giải thích lý do; lưu ý comment nằm trong nhánh Blender `readCamerasFromTransforms`, còn nhánh COLMAP ở dòng 82 làm cùng phép chuyển vị mà không lặp lại chú thích).
 - Chuyển intrinsics → FOV, chỉ chấp nhận đúng hai model:
   ```python
   if intr.model == "SIMPLE_PINHOLE":

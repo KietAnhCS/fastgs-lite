@@ -58,8 +58,8 @@ Truyền cờ này chỉ bị bỏ qua âm thầm — không lỗi, không tác 
 
 | `densification_interval` | Số lần gọi trong 0–15k |
 |---|---|
-| `100` (mặc định của `arguments/__init__.py:88`) | ~145 lần |
-| `500` (giá trị `pipeline/config.py` đặt sẵn trong `train_extra_args`, khớp `train_base.sh`) | ~29 lần |
+| `100` (mặc định của `arguments/__init__.py:88`) | **144** lần |
+| `500` (giá trị `pipeline/config.py` đặt sẵn trong `train_extra_args`, khớp `train_base.sh`) | **28** lần |
 
 ⇒ Đây là lever thời gian lớn thứ hai sau độ phân giải, và nó là **setting chính chủ**, không phải thoả hiệp. `Config()` mặc định đã dùng `500`, không cần tự thêm.
 

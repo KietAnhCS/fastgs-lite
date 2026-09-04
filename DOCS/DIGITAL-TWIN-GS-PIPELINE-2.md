@@ -322,7 +322,17 @@ Luôn lấy **đúng 10 camera** (hằng số cứng `num_cams = 10`, không ph�
    l1_loss_norm = (l1_loss - min(l1_loss)) / (max(l1_loss) - min(l1_loss))
    ```
    Đây là **min-max chuẩn hoá trên toàn ảnh** của riêng camera đó — không so sánh giữa các camera.
-4. *Mặt nạ nhị phân* (dòng 82): `metric_map = (l1_loss_norm > args.loss_thresh).int()`, với `args.loss_thresh = 0.1` mặc định (`arguments/__init__.py:94`) — phẳng hoá `(H,W)` thành vector 1D `int` độ dài `H*W` để truyền cho rasterizer (kiểu `metric_map` mà `render_fastgs` cần khi `metric_map != None`, xem `gaussian_renderer/__init__.py:37-38`).
+4. *Mặt nạ nhị phân* (dòng 82): `metric_map = (l1_loss_norm > args.loss_thresh).int()`, với `args.loss_thresh = 0.1` mặc định (`arguments/__init__.py:95`).
+
+   ⚠ **Không có bước flatten nào ở đây.** `l1_loss_norm` có shape `(H, W)` và `metric_map` giữ nguyên shape đó — `fast_utils.py:82` chỉ so ngưỡng rồi `.int()`. Chỗ duy nhất tạo tensor 1D là **nhánh mặc định** trong `render_fastgs` khi caller *không* truyền `metric_map`:
+
+   ```python
+   # gaussian_renderer/__init__.py:37-38
+   if metric_map==None:
+       metric_map=torch.zeros(int(...image_height)*int(...image_width), dtype=torch.int, device='cuda')
+   ```
+
+   Hai đường đi vào kernel vì thế có **shape khác nhau** (`(H,W)` vs `(H*W,)`) nhưng cùng số phần tử và cùng layout bộ nhớ liên tục, nên phía CUDA đọc như nhau. Đây là điểm lỏng lẻo của code chứ không phải thiết kế — đừng mô tả nó thành "được phẳng hoá".
 5. *Lượt render thứ hai, có cờ đếm* (dòng 84): `render_fastgs(cam, gaussians, pipe, bg, args.mult, get_flag=True, metric_map=metric_map)`. Lượt này rasterizer (phía CUDA) duyệt lại từng pixel bị đánh dấu lỗi trong `metric_map`, và với mỗi pixel đó cộng `+1` vào bộ đếm của **mọi Gaussian có đóng góp (alpha-blend) vào pixel đó** — trả về qua `render_pkg["accum_metric_counts"]`, một vector độ dài = số Gaussian hiện tại, kiểu đếm nguyên. Đây chính là "đổ ngược mặt nạ lỗi 2D về không gian Gaussian".
 6. *Cộng dồn qua các view* (dòng 88-97):
    ```python
@@ -341,9 +351,56 @@ else:
     importance_score = None
 ```
 - `pruning_score` = min-max chuẩn hoá của `full_metric_score` trên **toàn bộ Gaussian** (không giới hạn theo view) → nằm trong [0,1], càng gần 1 càng "đóng góp nhiều vào các vùng lỗi nặng ở nhiều view" → ứng viên prune (khi hội tụ, Gaussian còn gây lỗi lớn dai dẳng có nghĩa nó đặt sai chỗ).
-- `importance_score` = trung bình số view đánh dấu lỗi, làm tròn xuống (`torch.div(..., rounding_mode='floor')`) → số nguyên trong `[0, num_cams]`. Vì `len(camlist) = 10` cố định, `importance_score` thực chất là "làm tròn xuống của (số view thấy lỗi / 10)" — ví dụ minh hoạ: một Gaussian bị 6/10 view đánh dấu lỗi có `importance_score = floor(6/10) = 0`; phải bị đánh dấu ở **toàn bộ 10/10** view mới cho `importance_score = 1`. Điều này giải thích tại sao điều kiện `metric_mask = importance_score > 5` ở `densify_and_prune_fastgs` (§29) hiếm khi đúng nếu hiểu nhầm — thực ra `full_metric_counts` (tử số trước khi chia) mới có thể vượt 5 khi được cộng dồn qua nhiều lần gọi liên tiếp trong cùng một chu kỳ densify (không phải, mỗi lần gọi `compute_gaussian_score_fastgs` tính lại từ đầu với `camlist` mới của riêng lần đó) — nói cách khác `importance_score` **nằm trong [0, 10]** (không chia lại theo số lần gọi lịch sử), nên `> 5` nghĩa là Gaussian phải bị hơn một nửa trong 10 camera lấy mẫu đánh dấu là điểm lỗi.
 
-Ví dụ số minh hoạ (chỉ để hình dung, không phải số thật của repo): với 3 view lấy mẫu, Gaussian A được rasterizer đếm là góp vào pixel lỗi ở cả 3 view với số pixel-lỗi phủ được lần lượt là 8, 6, 7 (tổng `full_metric_counts = 21`), và photometric-loss của 3 ảnh là 0.20, 0.05, 0.10 → `full_metric_score = 8·0.20 + 6·0.05 + 7·0.10 = 1.6+0.3+0.7 = 2.6`; `importance_score = floor(21/3) = 7`. So với Gaussian B chỉ bị đếm ở 1 view (12 pixel, loss 0.20) → `full_metric_score = 2.4`, `importance_score = floor(12/3) = 4`. Sau min-max trên toàn bộ tập Gaussian, A và B có `pruning_score` khác nhau tuỳ vị trí tương đối với min/max toàn cục.
+- `importance_score` = **số pixel-lỗi trung bình mỗi góc nhìn**, làm tròn xuống.
+
+### ⚠ Đơn vị của `importance_score`: pixel, KHÔNG phải "phiếu bầu"
+
+Đây là chỗ dễ hiểu sai nhất trong cả tài liệu, và bản trước của mục này đã hiểu sai. Phải bám vào **đơn vị** của `accum_metric_counts`:
+
+| Đại lượng | Đơn vị | Miền giá trị |
+|---|---|---|
+| `accum_metric_counts` (một view) | **số pixel** mà Gaussian $i$ đóng góp *và* pixel đó bị `metric_map` gắn cờ lỗi | $0 \dots$ (số pixel trong footprint của splat) — có thể hàng trăm |
+| `full_metric_counts` (cộng 10 view) | **số pixel**, cộng dồn | $0 \dots$ hàng nghìn |
+| `importance_score` | **số pixel trung bình mỗi view** | $0 \dots$ hàng trăm |
+
+Kernel CUDA cộng `+1` cho **mỗi pixel lỗi**, không phải `+1` cho mỗi view. Vì thế:
+
+$$\text{importance}_i=\left\lfloor \frac{1}{V}\sum_{v=1}^{V}\underbrace{\text{counts}^{(v)}_i}_{\text{số PIXEL}} \right\rfloor,\qquad V=10$$
+
+**Ngưỡng `importance_score > 5` nghĩa là:** "Gaussian này phủ trung bình **hơn 5 pixel bị đánh dấu lỗi** trên mỗi góc nhìn lấy mẫu." Một splat cỡ trung bình phủ vài chục đến vài trăm pixel, nên ngưỡng này hoàn toàn đạt được — nó lọc ra khoảng vài phần trăm quần thể chứ không phải gần như không ai qua nổi.
+
+> **Vì sao cách hiểu "phiếu bầu" là bất khả thi về mặt logic.** Nếu `counts` là cờ 0/1 mỗi view thì $\sum_v \text{counts} \le 10$, nên $\lfloor \sum/10 \rfloor \in \{0, 1\}$ — và điều kiện `> 5` sẽ **không bao giờ** thoả với bất kỳ Gaussian nào. Densify sẽ chết hoàn toàn, `all_clones`/`all_splits` luôn AND với một mask toàn `False`, số Gaussian đứng yên từ đầu tới cuối. Nhưng `DOCS/assets/history.csv` ghi lại số Gaussian của `drjohnson` tăng từ 87.375 (vòng 1000) lên 174.003 (vòng 7000) — bằng chứng thực nghiệm trực tiếp rằng densify có chạy, tức cách hiểu đó sai.
+>
+> **Mẹo tự bắt lỗi:** khi một diễn giải làm cho một nhánh code trở nên *chết hoàn toàn*, gần như chắc chắn diễn giải đó sai chứ không phải code sai. Hãy kiểm bằng một số đo thực tế trước khi viết.
+
+**Vai trò của phép `floor`.** Vì lấy trung bình rồi mới làm tròn xuống, một Gaussian chỉ bị **một** camera duy nhất tố sai (dù tố rất nặng) sẽ bị chia cho 10 và tụt xuống gần 0. Đây chính là ý nghĩa "multi-view consistent": muốn điểm cao thì phải sai **một cách nhất quán qua nhiều góc nhìn**. Phép floor còn là bộ lọc nhiễu miễn phí — mọi Gaussian có tổng counts $< 10$ đều nhận điểm 0.
+
+### Ví dụ số (dùng $V=3$ cho gọn; repo thật dùng $V=10$)
+
+Mọi con số trong cột giữa là **số pixel lỗi**, không phải cờ 0/1:
+
+| | cam 1 ($\mathcal{L}_{\text{photo}}=0.20$) | cam 2 ($0.05$) | cam 3 ($0.10$) | `full_metric_counts` | `importance_score` |
+|---|---|---|---|---|---|
+| $G_A$ | 8 px | 6 px | 7 px | 21 | $\lfloor 21/3\rfloor=\mathbf{7}$ |
+| $G_B$ | 12 px | 0 | 0 | 12 | $\lfloor 12/3\rfloor=\mathbf{4}$ |
+| $G_C$ | 1 px | 0 | 1 px | 2 | $\lfloor 2/3\rfloor=\mathbf{0}$ |
+
+- $G_A$ sai **nhất quán ở cả 3 góc nhìn** → điểm 7, vượt ngưỡng 5 → **ứng viên densify**.
+- $G_B$ sai *nặng hơn* $G_A$ ở cam 1 (12 > 8) nhưng **chỉ ở một góc nhìn** → bị phép chia cho $V$ dìm xuống 4 → **không densify**. Đây đúng là hành vi mong muốn: không nhồi Gaussian để chữa một artefact chỉ nhìn thấy từ một phía (floater, phản chiếu).
+- $G_C$ nhiễu lẻ tẻ → floor triệt về 0.
+
+`full_metric_score` (cho pruning) thì **nhân trọng số** bằng loss toàn khung hình:
+
+- $s_A=8(0.20)+6(0.05)+7(0.10)=1.6+0.3+0.7=2.60$
+- $s_B=12(0.20)=2.40$
+- $s_C=1(0.20)+1(0.10)=0.30$
+
+Sau min-max trên toàn bộ tập Gaussian: $\text{Pruning}_A=1.000$, $\text{Pruning}_B=\frac{2.40-0.30}{2.60-0.30}=0.913$, $\text{Pruning}_C=0.000$.
+
+> **Không mâu thuẫn khi $G_A$ vừa là ứng viên densify vừa là ứng viên prune.** Hai điểm số được tiêu thụ ở **hai giai đoạn khác nhau**: `importance_score` dùng ở vòng $< 15000$ để *thử thêm chi tiết*; `pruning_score` dùng ở `final_prune_fastgs` (vòng $> 15000$) để *dọn những gì đã thử mà không giúp được*.
+
+Chạy `python demos/fastgs_mechanisms.py` (mục "2.") in ra đúng ba con số 7 / 4 / 0 và 1.000 / 0.913 / 0.000 này.
 
 **Mô phỏng chạy được:** `demos/fastgs_mechanisms.py` tái hiện thu nhỏ đúng ba bước trên bằng NumPy (không cần CUDA):
 - `error_mask(height, width, loss_thresh)` (dòng 18-23) — mô phỏng bước 3+4 (chuẩn hoá min-max rồi ngưỡng).
@@ -377,7 +434,14 @@ metric_mask = importance_score > 5
 densify_and_clone_fastgs(metric_mask, all_clones)
 densify_and_split_fastgs(metric_mask, all_splits)
 ```
-Cả clone lẫn split chỉ áp dụng cho Gaussian thoả **đồng thời** điều kiện gradient truyền thống của 3DGS (`all_clones`/`all_splits`) **VÀ** bị đa số camera lấy mẫu (>5/10) đánh dấu là vùng lỗi cao (`metric_mask`) — đây là phép AND giữa hai luồng tín hiệu hoàn toàn độc lập (gradient tích luỹ qua toàn bộ iteration vs. lỗi ảnh đo tức thời qua 10 camera mẫu). Comment trong code gọi đây là "multi-view consistent metric... similar to taming 3dgs" (dòng 492-493).
+Cả clone lẫn split chỉ áp dụng cho Gaussian thoả **đồng thời**:
+
+1. điều kiện gradient truyền thống của 3DGS (`all_clones` / `all_splits`), **VÀ**
+2. `metric_mask`, tức phủ **trung bình hơn 5 pixel bị đánh dấu lỗi trên mỗi góc nhìn** trong 10 camera lấy mẫu.
+
+⚠ **Đọc điều kiện 2 cho đúng đơn vị.** `importance_score` đếm **pixel**, không đếm "phiếu bầu của camera" — xem bảng đơn vị ở §28. Đọc `> 5` thành "hơn 5 trên 10 camera đồng ý" là sai, và nếu đúng như vậy thì nhánh densify sẽ không bao giờ kích hoạt (§28 giải thích vì sao).
+
+Đây là phép AND giữa hai luồng tín hiệu **hoàn toàn độc lập**: gradient tích luỹ qua toàn bộ iteration kể từ lần densify trước, so với lỗi ảnh đo *tức thời* trên 10 camera mẫu tại đúng thời điểm này. Comment trong code gọi đây là "multi-view consistent metric... similar to taming 3dgs" (dòng 492-493).
 
 **Nhánh clone** (`densify_and_clone_fastgs`, dòng 455-466): với Gaussian nhỏ đạt điều kiện, sao chép y hệt mọi thuộc tính (`_xyz, _features_dc, _features_rest, _opacity, _scaling, _rotation, tmp_radii`) sang bản mới, nối vào cuối qua `densification_postfix`. Không dịch chuyển vị trí — bản sao trùng vị trí bản gốc (khác 3DGS gốc chỗ này? Không — 3DGS gốc cũng clone y hệt, gradient khác nhau sẽ tự tách chúng ra ở các bước sau).
 

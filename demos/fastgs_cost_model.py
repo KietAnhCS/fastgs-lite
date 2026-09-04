@@ -2,7 +2,7 @@
 
 Chay:  python demos/fastgs_cost_model.py
 
-Tai lieu di kem: DOCS/why-fastgs-is-faster.md (Phan IV-V).
+Tai lieu di kem: DOCS/fastgs-acceleration-method.md (Phan IV-VI).
 
 Ba ti so duoi day la ba "phep do" ma repo nay that su lam duoc ma khong can
 chay A/B tren GPU:
@@ -132,13 +132,56 @@ def tile_stats(pop, mult):
     return k3, kbox, kf
 
 
+def sweep_opacity(sigma=8.0, mult=0.5, opacities=(0.999, 0.5, 0.1, 0.02)):
+    """Tai lap bang DOCS/fastgs-acceleration-method.md Section 4.3(b).
+
+    Splat DANG HUONG sigma' = 8 px. Lay trung binh theo huong theta va vi tri
+    tam trong tile de con so khong phu thuoc mot mau ngau nhien duy nhat.
+    """
+    rows = []
+    for o in opacities:
+        t = mult * 2.0 * np.log(255.0 * o)
+        vals = [tiles_fastgs(sigma ** 2, sigma ** 2, th, o, mult, px, py)
+                for th in np.linspace(0, np.pi, 24, endpoint=False)
+                for px in np.linspace(0, TILE, 8, endpoint=False)
+                for py in np.linspace(0, TILE, 8, endpoint=False)]
+        rows.append((o, t, np.sqrt(t), float(np.mean(vals))))
+    return rows
+
+
+def sweep_aniso(sigma_g=8.0, opacity=0.999, mult=0.5, rhos=(1.0, 1.5, 2.0, 3.0, 5.0)):
+    """Tai lap bang DOCS/fastgs-acceleration-method.md Section 4.5.
+
+    CANH BAO VE KY HIEU: tham so `rho` o day dat sigma_max = sigma_g * rho va
+    sigma_min = sigma_g / rho, nen TI LE TRUC THAT (sigma_max/sigma_min) bang
+    rho^2, KHONG phai rho. Cot "ti le truc" duoi day in ra rho^2.
+    """
+    rows = []
+    for rho in rhos:
+        smax, smin = sigma_g * rho, sigma_g / rho
+        k3 = tiles_3dgs(smax ** 2, smin ** 2)
+        vals = [tiles_fastgs(smax ** 2, smin ** 2, th, opacity, mult, px, py)
+                for th in np.linspace(0, np.pi, 24, endpoint=False)
+                for px in np.linspace(0, TILE, 8, endpoint=False)
+                for py in np.linspace(0, TILE, 8, endpoint=False)]
+        kf = float(np.mean(vals))
+        rows.append((rho, rho * rho, k3, kf, kf / k3))
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # 3. Nhip Adam - con so chinh xac tu optimizer_step()
 # ---------------------------------------------------------------------------
 def adam_steps(total_iters=30000, fastgs=True):
-    """Dem so lan .step() cua (optimizer chinh, shoptimizer)."""
+    """Dem so lan .step() cua (optimizer chinh, shoptimizer).
+
+    QUAN TRONG: train.py:159 va pipeline/trainer.py:143 deu bao boc loi goi
+    bang `if iteration < opt.iterations:` -> vong CUOI CUNG (30000) KHONG step.
+    Vi 30000 chia het cho 64, neu duyet toi 30000 se dem du dung 1 buoc cho
+    ca `optimizer` lan `shoptimizer`. Nen range dung la range(1, total_iters).
+    """
     main = sh = 0
-    for it in range(1, total_iters + 1):
+    for it in range(1, total_iters):        # KHONG bao gom vong cuoi
         if not fastgs:                      # 3DGS goc: moi tham so, moi vong
             main += 1
             sh += 1
@@ -241,6 +284,24 @@ def main():
     print(f"  hop vuong 3-sigma (3DGS)        K = {k3:7.2f}   1.000")
     print(f"  compact box, chua loc ellipse   K = {kbox:7.2f}   {kbox / k3:.3f}")
     print(f"  + loc tile theo ellipse         K = {kf:7.2f}   {kf / k3:.3f}")
+
+    print()
+    print("PHU LUC 1a - K theo opacity (sigma'=8px dang huong, mult=0.5)")
+    print("  [tai lap bang Section 4.3(b) cua tai lieu]")
+    print(f"{'opacity':>8} | {'t':>6} | {'ban kinh':>10} | {'K_fastgs':>9}")
+    print("-" * 44)
+    for o, t, r, kf in sweep_opacity():
+        print(f"{o:>8.3f} | {t:>6.2f} | {r:>8.2f}*s | {kf:>9.2f}")
+
+    print()
+    print("PHU LUC 1b - K theo do det (sigma_g=8px, o=1, mult=0.5)")
+    print("  [tai lap bang Section 4.5 cua tai lieu]")
+    print("  rho la THAM SO: sigma_max=8*rho, sigma_min=8/rho")
+    print("  => ti le truc THAT = rho^2 (cot thu hai)")
+    print(f"{'rho':>5} | {'ti le truc':>10} | {'K_3dgs':>8} | {'K_fastgs':>9} | {'R_tile':>7}")
+    print("-" * 54)
+    for rho, ratio, k3_, kf_, r_ in sweep_aniso():
+        print(f"{rho:>5.1f} | {ratio:>9.1f}:1 | {k3_:>8.2f} | {kf_:>9.2f} | {r_:>7.3f}")
 
     print()
     print("=" * 70)
