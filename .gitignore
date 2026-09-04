@@ -1,3 +1,4 @@
+# --- Python ---
 __pycache__/
 *.py[cod]
 *.so
@@ -6,11 +7,16 @@ __pycache__/
 venv/
 .pytest_cache/
 .ipynb_checkpoints/
+
+# --- Editors / OS ---
 .vscode/
 .idea/
 .DS_Store
+Thumbs.db
+# OneDrive drops these into every synced folder
+desktop.ini
 
-# build artifacts of the vendored CUDA extensions
+# --- Build artifacts of the vendored CUDA extensions ---
 **/build/
 **/*.egg-info/
 **/dist/
@@ -18,12 +24,36 @@ venv/
 # glm ships 19 MB of html docs that are not needed to compile
 submodules/diff-gaussian-rasterization_fastgs/third_party/glm/doc/
 
-# datasets, checkpoints and renders are never committed
+# --- Datasets ---
+# COLMAP scenes and the archives they arrive in. Fetch these with
+# Config.dataset_url instead of committing them.
 datasets/
 data/
+dataset.zip
+tandt_db.zip
+
+# --- Training artifacts ---
+# A git object is permanent: committing a 32-50 MB point cloud grows the clone
+# size of this repository forever, for every user, even after a later delete.
+# Publish models and renders through GitHub Releases / Hugging Face / Drive and
+# link them from the README.
+#
+# The evidence needed to re-derive every table and figure in the README is kept
+# instead in DOCS/assets/ (leaderboard.csv, history.csv and the two plots,
+# 384 KB total), which is committed.
 output/
 checkpoints/
 results/
+submission/
+submission.zip
+fastgs_models/
+fastgs_models.zip
 *.ply
 *.gif
 *.mp4
+
+# --- Logs and secrets ---
+*.log
+nohup.out
+wandb/
+.env

@@ -4,13 +4,9 @@
 
 **A trimmed [FastGS](https://github.com/fastgs/FastGS) fork that trains 3D Gaussian Splatting on a single free Google Colab T4.**
 
-[🌐 Upstream homepage](https://fastgs.github.io/) · [📄 Paper (arXiv:2511.04283)](https://arxiv.org/abs/2511.04283) · [🤗 Pre-trained models](https://huggingface.co/Goodsleepeverday/fastgs)
-
 </div>
 
 ---
-
-FastGS replaces the question *"does this Gaussian have a large gradient?"* with *"do several cameras agree that this region is wrong?"*. That multi-view consistency signal is cheap to compute (10 extra renders) and far more selective, so Gaussians get added in the right place, pruned at the right time, and every rasterization step stays small.
 
 This fork keeps that method intact and rebuilds everything around it for a **16 GB GPU and 12.7 GB of system RAM**.
 
@@ -80,6 +76,245 @@ datasets/
 ```
 
 MipNeRF360 scenes are [hosted by the authors](https://jonbarron.info/mipnerf360/); SfM data for Tanks&Temples and Deep Blending is [here](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip).
+
+## Results
+
+A complete reference run of the notebook on free-tier Colab. Every number below is read from the run's own
+artifacts — [`DOCS/assets/leaderboard.csv`](DOCS/assets/leaderboard.csv) (final metrics),
+[`DOCS/assets/history.csv`](DOCS/assets/history.csv) (training dynamics), and `fastgs_models/<scene>/cfg_args`
+(the exact `Namespace` each scene was trained with) — and nothing is rounded by hand. Both CSVs and the two
+figures below (2.2 MB) are committed so the tables can be re-derived; the models and renders are not (see
+[Artifacts](#artifacts)). A narrative version with per-session commentary is in
+[DOCS/history-train.md](DOCS/history-train.md) (Vietnamese).
+
+### Experimental setup
+
+| | |
+|---|---|
+| Accelerator | NVIDIA Tesla T4, 14.56 GB VRAM (Colab free tier) |
+| Host | 12.7 GB system RAM |
+| Software | PyTorch 2.11.0+cu128 · CUDA 12.8 · Python 3.13.15 |
+| Datasets | Deep Blending (`drjohnson`, `playroom`) and Tanks&Temples (`train`, `truck`), from `tandt_db.zip` |
+| Split | `--eval` with `llffhold=8`: every 8th camera held out. Deterministic, no sampling |
+| Runner | `pipeline/run.py` (`setup → load_data → smoke_test → run_all → analytics → finish`) |
+| Date | 2026-09-04 |
+
+Scene sizes after the split, from `cameras.json` and the submission folders:
+
+| Scene | Cameras | Train views | Test views | Evaluation resolution |
+|---|---|---|---|---|
+| drjohnson | 263 | 230 | 33 | 1332×876 |
+| playroom | 225 | 196 | 29 | 1264×832 |
+| train | 301 | 263 | 38 | 980×545 |
+| truck | 251 | 219 | 32 | 979×546 |
+
+Optimization was identical across scenes (`cfg_args`, abridged):
+
+```
+iterations=7000            position_lr_max_steps=7000    sh_degree=3
+resolution=2               submission_resolution=1       lambda_dssim=0.25
+densification_interval=500 densify_from_iter=500         densify_until_iter=15000
+opacity_reset_interval=3000 grad_abs_thresh=0.0012       grad_thresh=0.0002
+dense=0.001                highfeature_lr=0.02           lowfeature_lr=0.0025
+mult=0.5                   optimizer_type='default'      separate_sh=True
+```
+
+Note the **training/evaluation resolution mismatch**: models were fit at `resolution=2` but scored on renders at
+the native resolution (`submission_resolution=1`). This is the competition protocol, not an oversight, and it is
+the single largest known handicap in this run.
+
+### Metric
+
+`pipeline/score.py` implements the competition definition
+
+```
+Score = 0.4 (1 − LPIPS) + 0.3 SSIM + 0.3 clamp(PSNR / PSNR_max, 0, 1),    PSNR_max = 30 dB
+```
+
+reported as the unweighted mean over scenes. Two distinct measurement protocols appear in the artifacts and must
+not be compared with each other:
+
+| | `live_*` columns | reported columns |
+|---|---|---|
+| When | every 1000 iterations, during training | after training, on the final model |
+| Views | 6 sampled test views (`eval_views=6`) | all test views (29–38) |
+| Resolution | `resolution=2` | native |
+| LPIPS backbone | AlexNet (`lpips_net_live`) | VGG (`lpips_net_report`) |
+
+### Table 1 — Final quality
+
+Reported columns of `leaderboard.csv`. LPIPS is VGG-based at native resolution; lower is better.
+
+| Scene | Score ↑ | PSNR (dB) ↑ | PSNR_norm | SSIM ↑ | LPIPS ↓ | Gaussians |
+|---|---|---|---|---|---|---|
+| playroom | **0.8198** | 28.457 | 0.9486 | 0.8799 | 0.3219 | 129,383 |
+| drjohnson | **0.8027** | 27.408 | 0.9136 | 0.8677 | 0.3293 | 174,003 |
+| truck | **0.7482** | 22.231 | 0.7410 | 0.7851 | **0.2742** | 187,287 |
+| train | **0.6867** | 19.755 | 0.6585 | 0.7241 | 0.3202 | 201,129 |
+| **Mean** | **0.7643** | **24.463** | 0.8154 | 0.8142 | 0.3114 | 172,951 |
+
+![Per-scene Score against the 0.7644 mean, and the three metric components side by side](DOCS/assets/leaderboard.png)
+
+> **Figure 1.** *Left:* final Score per scene, dashed line at the 0.7644 mean. *Right:* the three components that
+> enter the Score — `psnr_norm` (blue), `SSIM` (orange), `LPIPS` (green, lower is better). The component view is
+> what makes the indoor/outdoor split legible: LPIPS bars are nearly level across all four scenes, while
+> `psnr_norm` drops sharply on `train` and `truck`. Axis labels are Vietnamese, matching `DOCS/`.
+
+The two indoor Deep Blending scenes lead the two outdoor Tanks&Temples scenes by 0.06–0.13 Score **while using
+fewer Gaussians** (129k vs 201k). The gap is carried entirely by the PSNR term — `PSNR_norm` is 0.66 for `train`
+against 0.95 for `playroom` — whereas `truck` has the best LPIPS in the table (0.2742). Fidelity of fine texture is
+not what separates these scenes; absolute radiometric accuracy on large-depth outdoor geometry is.
+
+For reference, the pipeline's smoke test on `drjohnson` at 300 iterations already scores 0.6012 under the live
+protocol (PSNR 20.93, SSIM 0.7073, LPIPS 0.5506) — 67% of that scene's final live Score of 0.8966 in 4.3% of the
+iteration budget, consistent with FastGS's claim that its multi-view score front-loads Gaussian placement.
+
+### Qualitative results
+
+Held-out test views, produced by `report.show_samples(cfg, scene, n=3)`. **Top row: render. Bottom row: ground
+truth.** Views are sampled evenly across each scene's test set, not hand-picked. The two scenes shown are the
+extremes of Table 1 — the strongest indoor result and the weakest outdoor one.
+
+![drjohnson: three rendered test views above their ground-truth counterparts](DOCS/assets/samples_drjohnson.png)
+
+> **Figure 3.** `drjohnson` (Score 0.8027, PSNR 27.41). Geometry, pose and colour hold up: the first view is
+> near-indistinguishable from its ground truth. The residual errors are all high-frequency or view-dependent —
+> the radiator fins and the bookcase glazing bars soften, book spines lose their separation, and the specular
+> highlight on the mahogany cabinet (bright in the ground truth, third column) is largely missing, since
+> view-dependent lobes are exactly what the high-order SH coefficients encode and `highfeature_lr` is divided by
+> 20 in `gaussian_model.py:205`. Corners also blur more than centres. This is what LPIPS ≈ 0.33 looks like.
+
+![train: three rendered test views above their ground-truth counterparts](DOCS/assets/samples_train.png)
+
+> **Figure 4.** `train` (Score 0.6867, PSNR 19.75) — the weakest scene, and the failure is unmistakable: **the
+> sky**. Ground truth is clean, uniform blue; the renders fill it with grey-white streaks and blotches. The
+> locomotive itself is reconstructed well, and so is anything with parallax to lock onto, but a textureless
+> region at effectively infinite depth gives the multi-view score nothing to disagree about, so stray Gaussians
+> survive there. Ballast gravel and the "WESTERN PACIFIC" lettering also flatten, and the third view smears
+> toward the frame edge.
+>
+> This is precisely why the deficit lands in `psnr_norm` (0.66 vs `drjohnson`'s 0.91) and not in LPIPS, which is
+> nearly identical for the two scenes (0.3202 vs 0.3293): sky occupies a large fraction of the pixels, so its
+> error dominates a per-pixel metric like PSNR, while a perceptual metric weights it far less. It also suggests
+> the cheapest available fix for outdoor scenes is a larger `--dense` (the `train_base.sh` outdoor values are
+> `0.004`–`0.01`, against the `0.001` used here) rather than a longer schedule.
+
+Regenerate these, or the two scenes not shown, with one call per scene:
+
+```python
+report.show_samples(cfg, "playroom", n=3, save_to="samples_playroom.png")
+```
+
+### Table 2 — Training dynamics
+
+Live Score at each checkpoint (`history.csv`), all four scenes:
+
+| Iteration | drjohnson | playroom | train | truck |
+|---|---|---|---|---|
+| 1000 | 0.6578 | 0.6991 | 0.6360 | 0.7596 |
+| 2000 | 0.7598 | 0.7909 | 0.7102 | 0.8213 |
+| **3000** | *0.2954* | *0.2315* | *0.2324* | *0.2264* |
+| 4000 | 0.8489 | 0.8949 | 0.7863 | 0.8634 |
+| 5000 | 0.8818 | 0.9158 | 0.7993 | 0.8804 |
+| **6000** | *0.3116* | *0.2523* | *0.2424* | *0.2304* |
+| 7000 | **0.8966** | **0.9167** | **0.8123** | **0.8821** |
+
+![Four panels: Score per iteration, the three metric components, per-checkpoint deltas, and Score against Gaussian count](DOCS/assets/training.png)
+
+> **Figure 2.** All four scenes, every 1000 iterations. *Top left:* Score — the two V-shaped notches at 3000 and
+> 6000 are opacity resets, identical in phase across scenes. *Top right:* PSNR in dB alongside SSIM and LPIPS
+> rescaled ×30 to share the axis. *Bottom left:* ΔScore between consecutive checkpoints, showing the −0.6 drop
+> and the matching +0.6 recovery. *Bottom right:* Score against Gaussian count — the trajectory moves right
+> monotonically (densification never stops before 15000) while Score oscillates, so the horizontal excursions at
+> low Score are the reset artifacts, not a quality/size trade-off curve.
+
+The collapses at 3000 and 6000 (PSNR falls to 6.0–11.1 dB on all four scenes simultaneously) are a **measurement
+artifact, not divergence**. `opacity_reset_interval = 3000` makes `reset_opacity()` fire exactly on those
+iterations, and `score_every = 1000` samples the model in the same iteration, before any recovery step. Full
+recovery takes fewer than 1000 iterations in every case.
+
+Two practical consequences:
+
+- Do not set `iterations` to a multiple of 3000 while densification is still active — the run would terminate on
+  a reset. `iterations = 7000` lands 1000 steps after the last reset, so the delivered model is intact.
+  Budgets of 15000+ are unaffected because `densify_until_iter = 15000` closes that branch.
+- Offsetting `score_every` (e.g. 1100) yields a monotone curve without changing the optimization.
+
+### Table 3 — Cost and storage
+
+| Scene | Train (s) | Iter/s | Peak VRAM (GB) | Peak RAM (GB) | `point_cloud.ply` | Bytes/Gaussian |
+|---|---|---|---|---|---|---|
+| playroom | 67.2 | 104.2 | 0.89 | 9.59 | 32.1 MB | 248 |
+| drjohnson | 74.8 | 93.6 | **1.16** | 3.74 | 43.2 MB | 248 |
+| truck | 91.0 | 76.9 | 0.68 | 9.59 | 46.4 MB | 248 |
+| train | 94.6 | 74.0 | 0.78 | 9.59 | 49.9 MB | 248 |
+| **Total / mean** | **327.6** | 85.5 | 0.88 | — | 171.6 MB | 248 |
+
+End-to-end wall clock was **14 minutes**, of which 5.5 minutes is optimization; the remainder is the one-time
+CUDA-extension build (~6–7 min, skipped on later sessions via `/content/.deps_ok`), dataset download, native-
+resolution rendering of 132 test images, and VGG-LPIPS scoring.
+
+248 B/Gaussian is exactly the uncompressed 3DGS record — 62 float32 fields (3 position, 3 normal, 3 `f_dc`,
+45 `f_rest`, 1 opacity, 3 scale, 4 rotation) — confirming no compression is applied at save time.
+
+### Artifacts
+
+`run.finish` produces two archives and downloads them to the machine running the browser:
+
+| Artifact | Contents | Size | In git? |
+|---|---|---|---|
+| `submission.zip` → `submission/` | 132 PNGs at native resolution, `<scene>/0001.png…` contiguous | 82 MB | no |
+| `fastgs_models.zip` → `fastgs_models/` | 4 × (`point_cloud.ply`, `cameras.json`, `cfg_args`) plus the CSVs and figures | 165 MB | no |
+| [`DOCS/assets/`](DOCS/assets) | `leaderboard.csv`, `history.csv` and the four figures above | 2.2 MB | **yes** |
+
+Only the evidence needed to re-derive every table and figure above is committed. The 247 MB of renders and point
+clouds is deliberately excluded — both folders are in `.gitignore`, because a git object is permanent: adding a
+`.ply` per run would grow the clone size of the repository forever, for every user, even after deletion. Publish
+those through GitHub Releases, Hugging Face, or Drive instead, and link them. To regenerate them locally, run the
+notebook with the config under [Reproduction](#reproduction).
+
+`pipeline/submission.py` validated scene names, filename contiguity, per-scene image counts and image sizes:
+`problems = []`.
+
+### Observations
+
+**1. At 7000 iterations, `final_prune_fastgs` never executes.** Its guard is `15_000 < iteration < 30_000`
+(`pipeline/trainer.py`), so a 7k run delivers *un-pruned* models. This is the most likely explanation for both
+the storage figures above and the LPIPS floor around 0.31: the third pruning stage that FastGS relies on for its
+compactness claims was never reached. Any comparison of these numbers against published FastGS or 3DGS results
+is therefore invalid — those use the 30k budget.
+
+**2. VRAM is not the constraint on a T4; host RAM is.** Peak VRAM was 1.16 GB, 8.0% of the 14.56 GB available,
+while host RAM reached 9.59 GB of 12.7 GB — 91% of the pipeline's own 10.5 GB soft limit. The guidance in
+[DOCS/colab-t4-guide.md](DOCS/colab-t4-guide.md) to lower resolution for VRAM reasons is unnecessary at this
+budget; `resolution=1` is affordable and would remove the train/eval mismatch.
+
+**3. The `live_*` → reported drop (0.8769 → 0.7643) is protocol, not regression.** Decomposed: LPIPS rises
+0.1140 → 0.3114 (AlexNet → VGG, and half → native resolution) and PSNR falls 26.23 → 24.46 dB (evaluation at
+native resolution on a model fit at half resolution). SSIM moves least (0.8675 → 0.8142). Cross-session
+comparisons must hold the protocol fixed.
+
+**4. Internal consistency.** The reported Score reproduces exactly from its components, e.g. for `drjohnson`:
+`0.4(1 − 0.3293) + 0.3(0.8677) + 0.3(0.9136) = 0.8027`, and the mean Score is the unweighted mean of the four
+scene Scores (0.76435). No post-hoc weighting was applied.
+
+### Reproduction
+
+```python
+cfg = Config(data_root="/content/data", scenes=(), resolution=2, iterations=7000,
+             score_every=1000, eval_views=6, psnr_max=30.0, submission_resolution=1)
+```
+
+then `Runtime → Run all` on a T4. `pipeline/config.py` supplies the FastGS flags
+(`--densification_interval 500 --lambda_dssim 0.25 --highfeature_lr 0.02 --loss_thresh 0.07
+--grad_abs_thresh 0.0012`) and `pipeline/trainer.py:26` syncs `--position_lr_max_steps` to `iterations`.
+
+**Threats to validity.** This is a *single* run: no seed is fixed, camera order within each epoch is shuffled
+randomly, and no repeats were performed, so no variance estimate or error bars are available and small
+differences between scenes should not be over-read. Four scenes from two datasets is a narrow sample. The 7k
+budget is a third of the schedule the optimizer cadence in `scene/gaussian_model.py:225` is written for, and as
+noted above it skips final pruning entirely. Treat Table 1 as a **reproducible baseline for this repository**,
+not as a benchmark result.
 
 ## Documentation
 

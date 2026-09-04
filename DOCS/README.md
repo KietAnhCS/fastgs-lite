@@ -10,6 +10,7 @@ Tài liệu của fork này. `docs/` và `docs2/` đã được gộp làm một
 | [fastgs-acceleration-method.md](fastgs-acceleration-method.md) | Cơ chế tăng tốc của FastGS: điểm số nhất quán đa góc nhìn, densify điều kiện kép, compact box `--mult`, tách lr SH | `demos/fastgs_mechanisms.py` |
 | [colab-t4-guide.md](colab-t4-guide.md) | Huấn luyện thật trên Colab free T4: preset A, điểm Score theo dõi, chống tràn RAM, roadmap tầng CUDA | `fastgs-acceleration-method.ipynb`, `pipeline/` |
 | [pipeline-and-submission.md](pipeline-and-submission.md) | Tham chiếu gói `pipeline/`: bảng cell↔hàm, các trường `Config`, công thức điểm (LPIPS/SSIM/PSNR) và nơi triển khai, hợp đồng `submission.zip`, cách chạy trên dữ liệu riêng | `pipeline/`, `fastgs-acceleration-method.ipynb` |
+| [history-train.md](history-train.md) | Nhật ký các phiên train thật: cấu hình, bảng điểm từng cảnh, diễn biến theo vòng lặp, tài nguyên đo được, việc cần làm cho phiên sau | `fastgs-acceleration-method.ipynb` |
 
 ### Cấu trúc repo hiện tại
 
