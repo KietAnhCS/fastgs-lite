@@ -1,106 +1,45 @@
-# DIGITAL TWIN GS — PIPELINE (Phần 3/3): Lưu, render, chấm điểm, đối chiếu output, phụ lục
+# DIGITAL TWIN GS PIPELINE (3/3) — Lưu, render, chấm điểm, submission
 
-### Từ `point_cloud.ply` đến `output/HCM0539/metrics.json`
-
-> Phần 1 (PHẦN I–V): [DIGITAL-TWIN-GS-PIPELINE-1.md](DIGITAL-TWIN-GS-PIPELINE-1.md).
-> Phần 2 (PHẦN VI–X): [DIGITAL-TWIN-GS-PIPELINE-2.md](DIGITAL-TWIN-GS-PIPELINE-2.md).
-> Phần này nối tiếp phần 2 ở đúng chỗ vòng train ghi checkpoint cuối cùng ra đĩa.
-
-**Câu lệnh đang mổ** (nhắc lại từ phần 1):
-
-```bash
-python train.py -s data/HCM0539 -m output/HCM0539 --scene HCM0539 --iter 7000 \
-    --use_masks --schedule_densify_grad_threshold
-python render.py  -s data/HCM0539 -m output/HCM0539 --iteration 7000
-python metrics.py --rendering output/HCM0539/render_test --gt data/HCM0539/images \
-                  --output output/HCM0539/metrics.json
-```
-
-**Quy ước ký hiệu**
-
-| Ký hiệu | Nghĩa |
-|---|---|
-| **File:** `path/x.py` | Đường dẫn tính từ gốc repo `digital-twin-gs/` |
-| **Hàm:** `foo()` | Tên hàm / phương thức trong file vừa nêu |
-| ① ② ③ | Số thứ tự bước trong một chuỗi xử lý |
-| ★ | Điểm mấu chốt, dễ hiểu sai |
-| ⚠ | Cạm bẫy đã từng gây lỗi thật |
-| ↺ | Vòng lặp khép kín (feedback loop) |
-| 🔒 | Điểm phẫu thuật trạng thái optimizer (Adam moment) |
+> Phần cuối của bộ ba tài liệu tham chiếu, đi từ lúc `Scene.save`/`GaussianModel.save_ply` ghi
+> `point_cloud.ply` xuống đĩa, qua hai đường render (`render.py` CLI và
+> `pipeline/submission.py::render_scene` dùng để nộp bài), tới cách chấm điểm
+> (`pipeline/score.py`, `lpipsPyTorch`, PSNR/SSIM) và đóng gói `submission.zip` đúng hợp đồng
+> cuộc thi. Mọi số liệu lấy trực tiếp từ mã nguồn hiện tại trong repo — không phải bản
+> "DroneSplat" cũ (`save_pose`, `render_video.py`, `scripts/make_gif.py`,
+> `scripts/check_save_ram.py`, `metrics.json` **không tồn tại** trong codebase này).
 
 ---
 
 ## MỤC LỤC
 
-### PHẦN X — LƯU MÔ HÌNH
-- [52. `scene.save` → `save_ply` — 59 float mỗi Gaussian, điền theo cột](#52-scenesave--save_ply--59-float-mỗi-gaussian-điền-theo-cột)
-- [53. `save_pose` — ghi `test_P` ra `.npy`](#53-save_pose--ghi-test_p-ra-npy)
-- [54. `prepare_output_and_logger` — `cfg_args` và TensorBoard](#54-prepare_output_and_logger--cfg_args-và-tensorboard)
-- [55. `scripts/check_save_ram.py` — đo ngân sách RAM của bước lưu](#55-scriptscheck_save_rampy--đo-ngân-sách-ram-của-bước-lưu)
-- [56. Cây thư mục `output/HCM0539/` sau khi train xong](#56-cây-thư-mục-outputhcm0539-sau-khi-train-xong)
+**PHẦN VI — LƯU MÔ HÌNH VÀ RENDER**
 
-### PHẦN XI — RENDER
-- [57. `render.py::__main__` — `get_combined_args` đọc lại `cfg_args`](#57-renderpy__main__--get_combined_args-đọc-lại-cfg_args)
-- [58. `render_sets` — hai thư mục `render_train` / `render_test`](#58-render_sets--hai-thư-mục-render_train--render_test)
-- [59. `Scene.__init__` nhánh `load_iteration` — `load_ply` đọc ngược 59 cột](#59-scene__init__-nhánh-load_iteration--load_ply-đọc-ngược-59-cột)
-- [60. `render_video.py` + `scripts/make_gif.py` — quỹ đạo nội suy](#60-render_videopy--scriptsmake_gifpy--quỹ-đạo-nội-suy)
+- [34. `Scene.save` → `save_ply` — bố cục cột của một Gaussian](#34)
+- [35. Cây thư mục `output/<scene>/` sau khi train xong](#35)
+- [36. Checkpoint định kỳ trong `pipeline/trainer.py`](#36)
+- [37. `render.py` — đường CLI](#37)
+- [38. `Scene.__init__` nhánh `load_iteration` → `load_ply`](#38)
+- [39. `pipeline.submission.render_scene` — đường submission](#39)
+- [40. `build_zip` và `verify` — hợp đồng nộp bài](#40)
 
-### PHẦN XII — CHẤM ĐIỂM
-- [61. `metrics.py::process_folders` — `_index_by_stem` ghép cặp](#61-metricspyprocess_folders--_index_by_stem-ghép-cặp)
-- [62. `_load_lpips_net` — vgg + alex, thiếu thì `None` chứ không phải 0](#62-_load_lpips_net--vgg--alex-thiếu-thì-none-chứ-không-phải-0)
-- [63. `calculate_metrics` — PSNR/SSIM (skimage) + LPIPS `[-1,1]`](#63-calculate_metrics--psnrssim-skimage--lpips-11)
-- [64. `competition_score` — công thức 0.4 / 0.3 / 0.3](#64-competition_score--công-thức-04--03--03)
-- [65. `summarize` — bốn quyết định được giữ nguyên](#65-summarize--bốn-quyết-định-được-giữ-nguyên)
-- [66. `format_score` — một dòng log thang 100](#66-format_score--một-dòng-log-thang-100)
-- [67. Cấu trúc `metrics.json`](#67-cấu-trúc-metricsjson)
+**PHẦN VII — CHẤM ĐIỂM VÀ PHỤ LỤC**
 
-### PHẦN XII (tiếp) — ĐỐI CHIẾU OUTPUT THẬT
-- [68. Một bản ghi `per_image` — từng trường từ đâu tới](#68-một-bản-ghi-per_image--từng-trường-từ-đâu-tới)
-- [69. `score` vs `score_of_means` vs `score_partial`](#69-score-vs-score_of_means-vs-score_partial)
-- [70. Bảng `score_sensitivity` — đọc thế nào](#70-bảng-score_sensitivity--đọc-thế-nào)
-- [71. `scripts/analyze_tail.py` — mổ đuôi dưới](#71-scriptsanalyze_tailpy--mổ-đuôi-dưới)
-
-### PHẦN XIII — PHỤ LỤC
-- [72. `preprocess.py` — nhánh khởi tạo hình học bằng DUSt3R (tuỳ chọn)](#72-preprocesspy--nhánh-khởi-tạo-hình-học-bằng-dust3r-tuỳ-chọn)
-- [73. `seg_all_instances.py` — nhánh mặt nạ SAM2 (tuỳ chọn)](#73-seg_all_instancespy--nhánh-mặt-nạ-sam2-tuỳ-chọn)
-- [74. Bảng hằng số toàn hệ thống](#74-bảng-hằng-số-toàn-hệ-thống)
-- [75. Bảng tra nhanh bước ↔ file ↔ hàm](#75-bảng-tra-nhanh-bước--file--hàm)
-- [76. Câu hỏi thường gặp](#76-câu-hỏi-thường-gặp)
-- [77. Chẩn đoán sự cố](#77-chẩn-đoán-sự-cố)
-- [78. Thuật ngữ](#78-thuật-ngữ)
-
----
----
-
-# PHẦN X — LƯU MÔ HÌNH
-
-Vòng lặp train (phần 2, §28) chạm đĩa ở ba chỗ bên trong khối `with torch.no_grad()`:
-`iteration in saving_iterations` → `scene.save` + `save_pose`; `iteration in checkpoint_iterations`
-→ `torch.save(gaussians.capture())`; và một lần duy nhất lúc dựng `Scene` → `cfg_args` +
-`input.ply` + `cameras.json`. Với câu lệnh đang mổ, `saving_iterations = [3000, 5000, 7000]`
-(`train.py:575`, rồi `args.save_iterations.append(args.iterations)` nối thêm `7000` — trùng,
-vô hại), `checkpoint_iterations = []` (mặc định rỗng).
-
-```mermaid
-flowchart TD
-    LOOP["for iteration in 1..7000"] --> S{"iteration in<br/>saving_iterations?"}
-    S -->|"3000 / 5000 / 7000"| SAVE["scene.save(iteration)"]
-    SAVE --> PLY["GaussianModel.save_ply()<br/>point_cloud/iteration_&lt;it&gt;/point_cloud.ply"]
-    S -->|"cùng lúc"| POSE["save_pose()<br/>pose/pose_&lt;it&gt;.npy  (test_P)"]
-    LOOP --> C{"iteration in<br/>checkpoint_iterations?"}
-    C -->|"mặc định: không bao giờ"| CK["torch.save(capture())<br/>chkpnt&lt;it&gt;.pth"]
-    START["training() khởi động"] --> LOG["prepare_output_and_logger()<br/>cfg_args + SummaryWriter"]
-    START --> INPUT["Scene.__init__: copy input.ply,<br/>ghi cameras.json"]
-    style PLY fill:#0b7a3b,color:#fff
-    style POSE fill:#0b7a3b,color:#fff
-    style LOG fill:#6b21a8,color:#fff
-```
+- 41. `metrics.py`
+- 42. `lpipsPyTorch`
+- 43. PSNR và SSIM
+- 44. `composite_score` và bảng leaderboard
+- 45. Bảng hằng số toàn hệ thống
+- 46. Bảng tra nhanh bước ↔ file ↔ hàm
+- 47. Chẩn đoán sự cố
+- 48. Thuật ngữ
 
 ---
 
-## 52. `scene.save` → `save_ply` — 59 float mỗi Gaussian, điền theo cột
+# PHẦN VI — LƯU MÔ HÌNH VÀ RENDER
 
-**File:** `scene/__init__.py::Scene.save` (dòng 94) và `scene/gaussian_model.py::save_ply` (dòng 327).
+## 34. `Scene.save` → `save_ply` — bố cục cột của một Gaussian
+
+`Scene.save(iteration)` (`scene/__init__.py:83-85`):
 
 ```python
 def save(self, iteration):
@@ -108,296 +47,245 @@ def save(self, iteration):
     self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
 ```
 
-Đường ra: `output/HCM0539/point_cloud/iteration_7000/point_cloud.ply`.
+Chỉ ghép đường dẫn `point_cloud/iteration_<n>/point_cloud.ply` rồi gọi thẳng
+`GaussianModel.save_ply` (`scene/gaussian_model.py:260-277`).
 
-### 52.1 Thứ tự 59 thuộc tính
+### `construct_list_of_attributes` (`scene/gaussian_model.py:246-258`)
 
-`construct_list_of_attributes()` (`gaussian_model.py:313`) dựng danh sách tên cột, và
-`save_ply` ghép các mảng theo **đúng thứ tự đó**:
-
-| Nhóm | Số cột | Tên cột | Nguồn |
-|---|---|---|---|
-| Vị trí | 3 | `x y z` | `_xyz` |
-| Pháp tuyến (giả) | 3 | `nx ny nz` | `np.zeros_like(xyz)` — 3DGS không dùng, để đủ chuẩn PLY |
-| SH bậc 0 | 3 | `f_dc_0..2` | `_features_dc` (transpose → flatten) |
-| SH bậc 1–3 | 45 | `f_rest_0..44` | `_features_rest` — `3 × ((3+1)² − 1) = 45` |
-| Độ đục | 1 | `opacity` | `_opacity` (giá trị **thô**, trước `sigmoid`) |
-| Tỉ lệ | 3 | `scale_0..2` | `_scaling` (thô, trước `exp`) |
-| Quaternion | 4 | `rot_0..3` | `_rotation` (thô, trước `normalize`) |
-| **Tổng** | **59** | | tất cả `float32` (`'f4'`) |
-
-★ Cột `opacity`/`scale`/`rot` lưu **giá trị chưa qua activation**. `load_ply` (§59) đọc thẳng
-vào `nn.Parameter` rồi để các property `get_opacity`/`get_scaling`/`get_rotation` áp
-`sigmoid`/`exp`/`normalize` khi cần — nạp lại phải đi qua đúng `GaussianModel` này, không
-phải viewer PLY bất kỳ.
-
-### 52.2 ★ Điền theo cột thay vì `list(map(tuple, ...))`
+Danh sách tên cột theo đúng thứ tự được sinh ra:
 
 ```python
-# gaussian_model.py:340–351
-elements = np.empty(xyz.shape[0], dtype=dtype_full)
-attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
-for i, (ten_thuoc_tinh, _) in enumerate(dtype_full):
-    elements[ten_thuoc_tinh] = attributes[:, i]
-del attributes
-el = PlyElement.describe(elements, 'vertex')
-PlyData([el]).write(path)
+def construct_list_of_attributes(self):
+    l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
+    # All channels except the 3 DC
+    for i in range(self._features_dc.shape[1]*self._features_dc.shape[2]):
+        l.append('f_dc_{}'.format(i))
+    for i in range(self._features_rest.shape[1]*self._features_rest.shape[2]):
+        l.append('f_rest_{}'.format(i))
+    l.append('opacity')
+    for i in range(self._scaling.shape[1]):
+        l.append('scale_{}'.format(i))
+    for i in range(self._rotation.shape[1]):
+        l.append('rot_{}'.format(i))
+    return l
 ```
 
-Cách gốc của 3DGS là `elements[:] = list(map(tuple, attributes))`. Với ~1,5 triệu Gaussian
-(minh hoạ) × 59 số, dòng đó dựng **một list gồm 1,5 triệu tuple Python, mỗi tuple 59 `float`
-Python** — cỡ ~3 GB object cấp phát cùng lúc, **sau khi train đã xong**. ⚠ Lần chạy 30/08:
-train 7000 vòng, in điểm, in `"[ITER 7000] Saving Gaussians"`, rồi OOM-killer giết tiến
-trình ngay tại bước lưu — thư mục `iteration_7000/` còn lại rỗng, mất trắng 45 phút. Điền
-theo cột không cấp phát gì ngoài `attributes` (đã có sẵn) và `elements` (mảng cấu trúc
-numpy, không phải object Python).
+`_features_dc` có shape `(P, 1, 3)` (1 hệ số SH bậc 0 × 3 kênh màu RGB), `_features_rest` có
+shape `(P, (max_sh_degree+1)²-1, 3)`. Với `sh_degree = 3` (giá trị mặc định của
+`ModelParams.sh_degree`, dùng xuyên suốt pipeline này):
 
-★ `storePly` (`scene/dataset_readers.py:157`, dòng `elements[:] = list(map(tuple, attributes))`
-ở `:167`) **vẫn dùng** cách cũ — cố ý: nó chỉ ghi đám mây điểm **đầu vào** của COLMAP
-(218.846 điểm với HCM0539), nhỏ hơn ba bậc so với đám Gaussian sau train, không đáng đổi.
+| Nhóm cột | Công thức | Số lượng khi `sh_degree=3` |
+|---|---|---|
+| `x, y, z` | vị trí | 3 |
+| `nx, ny, nz` | pháp tuyến — **luôn ghi 0**, xem dưới | 3 |
+| `f_dc_0..2` | `_features_dc.shape[1]*shape[2]` = 1×3 | 3 |
+| `f_rest_0..44` | `_features_rest.shape[1]*shape[2]` = 15×3, với 15 = (3+1)²−1 | 45 |
+| `opacity` | 1 giá trị opacity thô (chưa qua sigmoid) | 1 |
+| `scale_0..2` | `_scaling.shape[1]` | 3 |
+| `rot_0..3` | `_rotation.shape[1]` (quaternion) | 4 |
+| **Tổng** | 3+3+3+45+1+3+4 | **62 cột float** |
 
----
+Vậy mỗi Gaussian ở `sh_degree=3` chiếm **62 giá trị `float32` (`f4`)** trong PLY, tức
+`62 × 4 = 248 byte/vertex` (chưa tính header text của PLY). Con số 45 cho `f_rest` khớp với
+assertion phía đọc lại: `load_ply` yêu cầu
+`len(extra_f_names) == 3*(max_sh_degree+1)**2 - 3 = 3*16-3 = 45` (`scene/gaussian_model.py:299`).
 
-## 53. `save_pose` — ghi `test_P` ra `.npy`
-
-**File:** `train.py::save_pose` (dòng 217). Gọi tại `train.py:470`:
+### Cách ghi (`save_ply`, dòng 260-277)
 
 ```python
-save_pose(save_pose_path + f"/pose_{iteration}.npy", gaussians.test_P, test_cams_init)
+def save_ply(self, path):
+    mkdir_p(os.path.dirname(path))
+    xyz = self._xyz.detach().cpu().numpy()
+    normals = np.zeros_like(xyz)
+    f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+    f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+    opacities = self._opacity.detach().cpu().numpy()
+    scale = self._scaling.detach().cpu().numpy()
+    rotation = self._rotation.detach().cpu().numpy()
+
+    dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
+    elements = np.empty(xyz.shape[0], dtype=dtype_full)
+    attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
+    elements[:] = list(map(tuple, attributes))
+    el = PlyElement.describe(elements, 'vertex')
+    PlyData([el]).write(path)
 ```
 
-- ★ Tham số thứ hai là `gaussians.test_P` — tư thế **tập test**, luôn `requires_grad_(False)`
-  (`gaussian_model.py:171`). Kể cả khi bật `--optimize_pose`, chỉ `self.P` (tập train) thành
-  `nn.Parameter`; `test_P` không bao giờ được tối ưu. Vậy `pose_<it>.npy` chỉ là bản chép
-  tư thế COLMAP của ảnh test dưới dạng ma trận `4×4`, không mang thông tin gì mới sau khi
-  train — nó tồn tại để `render.py` / phân tích ngoại tuyến có sẵn ma trận `w2c` mà không
-  phải dựng lại từ `world_view_transform`.
-- Mỗi tư thế đi qua `get_camera_from_tensor(quat_pose[ind])` (`utils/pose_utils.py:56`) để
-  đổi tensor 7 số → ma trận `4×4`, rồi `torch.stack(...).detach().cpu().numpy()` → `np.save`.
-- Xử lý trường hợp suy biến: nếu `set(index_colmap)` chỉ có một phần tử (mọi ảnh dùng chung
-  một `colmap_id`) thì `index_colmap` được đặt lại thành `range(1, len(train_cams))`.
-- Tham số `llffhold=2` trong chữ ký hàm **không được dùng** ở thân hàm.
+Ghi chú quan trọng:
 
-### 53.1 Bộ khung tinh chỉnh tư thế CÓ, nhưng đang bị tắt
+- `normals = np.zeros_like(xyz)` — cột `nx, ny, nz` **luôn bằng 0**, không phải pháp tuyến bề
+  mặt thật; đây là hành vi gốc của 3DGS (Gaussian không có khái niệm pháp tuyến), giữ cột chỉ
+  để tương thích định dạng PLY tiêu chuẩn (nhiều viewer/loader mong có `nx,ny,nz`).
+- `.transpose(1, 2)` trên `_features_dc`/`_features_rest` đổi thứ tự trục trước khi
+  `.flatten(start_dim=1)`, để khi ghi ra thứ tự cột là "duyệt theo hệ số SH trước, kênh màu
+  sau" — đúng thứ tự mà `load_ply` mong đợi khi đọc ngược lại (xem §38).
+- `opacities`, `scale`, `rotation` được ghi **thô**, chưa qua activation (`sigmoid` cho
+  opacity, `exp` cho scale, chuẩn hoá cho rotation) — activation chỉ áp dụng lúc dùng
+  (`get_opacity`, `get_scaling`, `get_rotation`), không áp dụng lúc lưu.
+- `mkdir_p(os.path.dirname(path))` tạo cây thư mục `point_cloud/iteration_<n>/` nếu chưa có.
+- `PlyElement.describe(elements, 'vertex')` + `PlyData([el]).write(path)` (thư viện `plyfile`)
+  ghi một element PLY tên `vertex`, mặc định ở dạng **binary** (little-endian trên hầu hết máy)
+  vì không truyền `text=True` — mỗi vertex là 248 byte liên tiếp theo đúng thứ tự cột ở trên.
 
-DroneSplat được dựng sẵn cho việc coi mỗi tư thế camera là **một tensor 7 số**
-(4 quaternion + 3 tịnh tiến) và tối ưu nó cùng lúc với Gaussian — nhưng trong mã
-đang chạy, cơ chế đó **không hoạt động**.
+## 35. Cây thư mục `output/<scene>/` sau khi train xong
 
-- `scene/gaussian_model.py:163` đặt `self.P = poses.requires_grad_(False)` và
-  `:171` đặt `self.test_P = poses.cuda().requires_grad_(False)`. Cả hai đóng băng
-  **ngay lúc tạo**.
-- `training_setup` chỉ đăng ký **sáu** nhóm tham số vào Adam: `xyz`, `f_dc`,
-  `f_rest`, `opacity`, `scaling`, `rotation`. `P` / `test_P` **không nằm trong bất
-  kỳ `param_group` nào**.
-- Grep toàn repo: `P` / `test_P` chỉ được **đọc** (`train.py`, `render.py:36,47`
-  gọi `get_RT` / `get_RT_test`) và một chỗ **ghi** ra `.npy` (§53). Không chỗ nào
-  ghi lại giá trị đã cập nhật.
-- Hệ quả: `camera_pose` truyền vào `render()` luôn đúng bằng tư thế COLMAP đọc từ
-  `world_view_transform`, không đổi suốt quá trình train. Mẹo "view matrix đơn vị
-  + dịch cả đám Gaussian" (phần 2, §32) vẫn chạy, nhưng nó chỉ đang **tính lại
-  đúng phép biến đổi mà rasterizer tự làm được nếu truyền thẳng
-  `world_view_transform`** — tốn `O(P)` mỗi khung hình mà không đổi lại được gì.
+Ví dụ minh hoạ cho một scene tên `truck`, train xong ở `iteration=7000` với `save_every=2000`
+đã dọn hết checkpoint trung gian (`keep_last_checkpoint=True`, mặc định):
 
-★ Bật lên là một **thí nghiệm**, không phải một cờ: đổi `requires_grad_(False)`
-thành `True` cho `self.P` (và **chỉ** `P` — tối ưu `test_P` là nhìn trộm đáp án),
-thêm `P` vào một `param_group` riêng với learning rate riêng. Bản cài ở đây có
-`--optimize_pose` mở đường đó nhưng vẫn **chỉ cho ảnh train** (`train.py:333`,
-`setup_pose_optimization`, hoãn `step_pose` tới `--pose_from_iter`).
+```
+output/
+├── truck/
+│   ├── cfg_args                              # ghi bởi build_args (pipeline/trainer.py:20-32)
+│   ├── input.ply                             # copy nguyên point cloud COLMAP/Blender ban đầu
+│   ├── cameras.json                          # toàn bộ camera (test rồi tới train) dạng JSON
+│   └── point_cloud/
+│       └── iteration_7000/
+│           └── point_cloud.ply               # Scene.save(7000) — bản cuối cùng
+├── history.csv                               # ghi bởi pipeline.run.analytics → report.history_frame
+├── leaderboard.csv                           # ghi bởi pipeline.run.analytics → report.leaderboard
+├── training.png                              # ghi bởi pipeline.run.analytics → report.plot_training
+├── leaderboard.png                           # ghi bởi pipeline.run.analytics → report.plot_leaderboard
+└── results.json                              # ghi bởi pipeline.run.run_all (không phải analytics)
+```
 
-⚠ `docs2/10` bản cũ chấm ý tưởng này **+10…+25 điểm** và cảnh báo "DroneSplat tối
-ưu cả tư thế ảnh test". **Cả hai đều sai với mã hiện tại**: không có tối ưu nào
-xảy ra, cả trên train lẫn test. Con số ước tính đúng phải hạ và nới rộng
-(**+5…+20**, tin cậy thấp) vì đây là "bật cái được dựng sẵn" chứ không phải "chép
-lại kết quả đã qua bình duyệt". Cách kiểm chứng nó có thật sự chạy: `train.py`
-in mỗi 500 bước `pose_rot_deg_mean` / `pose_trans_mean` — cả hai ~0 sau vài nghìn
-bước nghĩa là gradient không chảy về hoặc lr quá nhỏ.
+Ai ghi file nào, khi nào:
 
----
+| File | Ghi bởi | Thời điểm |
+|---|---|---|
+| `output/<scene>/cfg_args` | `pipeline.trainer.build_args` (nếu `write_cfg=True`, mặc định khi gọi từ `train_scene`) — hoặc `train.py::prepare_output_and_logger` khi chạy CLI gốc | Ngay khi bắt đầu train scene đó, trước vòng lặp |
+| `output/<scene>/input.ply`, `cameras.json` | `Scene.__init__` (`scene/__init__.py:50-60`), chỉ khi `load_iteration` không được truyền (tức đang train mới, không phải render lại) | Ngay khi `Scene` khởi tạo, trước vòng lặp train |
+| `output/<scene>/point_cloud/iteration_<n>/point_cloud.ply` | `Scene.save` qua `pipeline.trainer._save_checkpoint` | Mỗi `save_every` vòng + vòng cuối (§36) |
+| `output/history.csv` | `pipeline.report.history_frame` gọi từ `pipeline.run.analytics` | Sau khi `run_all` train xong toàn bộ scene, ở bước "cell 6" của notebook |
+| `output/leaderboard.csv` | `pipeline.report.leaderboard` gọi từ `pipeline.run.analytics` | Cùng bước trên |
+| `output/training.png` | `pipeline.report.plot_training` gọi từ `pipeline.run.analytics` | Cùng bước trên |
+| `output/leaderboard.png` | `pipeline.report.plot_leaderboard` gọi từ `pipeline.run.analytics` | Cùng bước trên |
+| `output/results.json` | `pipeline.run.run_all` trực tiếp (`pipeline/run.py:63-65`), **không phải** `analytics` | Ngay sau vòng `for scene in scenes` train+render xong hết, trước khi gọi `analytics` |
 
-## 54. `prepare_output_and_logger` — `cfg_args` và TensorBoard
+Lưu ý: `history.csv`, `leaderboard.csv`, `training.png`, `leaderboard.png`, `results.json` nằm
+ở **`output_root` gốc** (`cfg.output_root`, ví dụ `/content/output`), không nằm bên trong từng
+thư mục `<scene>/` — vì `cfg.model_path(scene) = os.path.join(cfg.output_root, scene)`
+(`pipeline/config.py:65-66`) trong khi các file phân tích được ghi thẳng vào
+`os.path.join(cfg.output_root, "history.csv")` v.v. (`pipeline/run.py:71-75`).
 
-**File:** `train.py::prepare_output_and_logger` (dòng 291). Chạy ngay đầu `training()`.
+Nếu `save_every` khác 0 và scene chưa train xong (checkpoint giữa chừng còn tồn tại vì phiên
+bị ngắt), cây thư mục sẽ có thêm `point_cloud/iteration_<k>/` với `k` là mốc checkpoint gần
+nhất — xem §36.
 
-① Nếu `args.model_path` rỗng → `./output/<uuid4()[:10]>` (hoặc `$OAR_JOB_ID` nếu có).
-Với câu lệnh đang mổ, `-m output/HCM0539` đã đặt sẵn nên nhánh này không chạy.
+## 36. Checkpoint định kỳ trong `pipeline/trainer.py`
 
-② `os.makedirs(args.model_path, exist_ok=True)`.
-
-③ Ghi **`cfg_args`** — một dòng text:
+`_save_checkpoint` (`pipeline/trainer.py:35-42`):
 
 ```python
-with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
-    cfg_log_f.write(str(Namespace(**vars(args))))
+def _save_checkpoint(scene_obj, iteration, previous=None, drop_previous=True):
+    """Lưu `.ply` rồi xoá checkpoint giữa chừng trước đó (đĩa Colab không rộng)."""
+    import shutil
+
+    scene_obj.save(iteration)
+    if drop_previous and previous is not None and previous != iteration:
+        stale = os.path.join(scene_obj.model_path, "point_cloud", f"iteration_{previous}")
+        shutil.rmtree(stale, ignore_errors=True)
+    return iteration
 ```
 
-★ Đây là toàn bộ `args` sau khi đã trộn — kể cả `--use_masks`, `--eval`, `resolution`,
-`source_path` tuyệt đối. `render.py` và `render_video.py` đọc lại tệp này (§57) và
-`eval()` nó, nên mọi cờ bạn đặt lúc train sẽ **tự chảy sang** lúc render. Đây là lý do
-`-m` lúc render phải trỏ đúng thư mục đã train.
+Được gọi ở hai chỗ trong `train_scene`:
 
-④ `SummaryWriter(args.model_path)` (nếu import được `torch.utils.tensorboard`) → ghi
-`events.out.tfevents.*` vào thư mục `-m`. Nhật ký này chứa `train_loss_patches/*`,
-`test/score`, `total_points`, `pose/*` (nếu bật pose)… Hình 4 của báo cáo
-(`scripts/make_report.py`, §71) đọc chính tệp này; mất nó thì script vẫn vẽ năm hình còn
-lại.
+1. **Trong vòng lặp**, dòng `if cfg.save_every and iteration % cfg.save_every == 0 and iteration < iterations:` — với `cfg.save_every` mặc định `2000` (`pipeline/config.py`). Đặt `save_every=0` thì điều kiện `cfg.save_every` (falsy) luôn sai → **tắt hẳn checkpoint giữa chừng**, chỉ còn lưu ở vòng cuối.
+2. **Sau vòng lặp**, luôn luôn gọi một lần cuối `_save_checkpoint(scene_obj, iterations, saved_at, cfg.keep_last_checkpoint)` — bất kể `save_every` là bao nhiêu, đảm bảo luôn có bản `.ply` tại `iteration_<iterations>`.
 
----
+`keep_last_checkpoint` (mặc định `True`) truyền vào tham số `drop_previous`: nếu bật, mỗi lần
+lưu mốc mới sẽ `shutil.rmtree` xoá thư mục `iteration_<previous>` — chỉ giữ **một** bản
+`.ply` trên đĩa tại một thời điểm (đĩa Colab không rộng). Đặt `False` để giữ mọi mốc, phục vụ
+so sánh chất lượng theo iteration, đổi lại tốn đĩa hơn.
 
-## 55. `scripts/check_save_ram.py` — đo ngân sách RAM của bước lưu
+**Giới hạn phải nêu rõ:** `Scene.save`/`save_ply` chỉ ghi tham số Gaussian
+(`_xyz, _features_dc, _features_rest, _opacity, _scaling, _rotation`) — **không** ghi trạng
+thái optimizer Adam (`exp_avg`, `exp_avg_sq`), không ghi bộ đếm densify
+(`xyz_gradient_accum`, `denom`, `max_radii2D`), không ghi số iteration đã chạy. Khác với
+`torch.save(checkpoint)` kiểu gốc 3DGS (`(model_params, first_iter)`, dùng bởi
+`train.py --checkpoint_iterations` + `--start_checkpoint`), file `.ply` này **không resumable**
+— nếu phiên Colab đứt và bạn nạp lại `.ply` để train tiếp, thực chất là train lại từ đầu với
+Gaussian ban đầu đã có nhiều điểm hơn, không phải resume đúng nghĩa optimizer state.
 
-**File:** `scripts/check_save_ram.py`.
+## 37. `render.py` — đường CLI
 
-Tồn tại vì sự cố ở §52.2: trước khi đặt cược 45 phút train vào một lần lưu, script trả lời
-đúng một câu — *"với số Gaussian dự kiến, bước lưu có lọt qua RAM còn trống không?"*
+Đây là script gốc 3DGS, độc lập với `pipeline/`, dùng khi muốn render lại một model đã train
+mà không qua Colab pipeline.
 
-- `gaussian_gia(n, sh_degree, device)` dựng một `GaussianModel` với 6 tensor **đúng hình
-  dạng thật** (`_xyz` `(n,3)`, `_features_dc` `(n,1,3)`, `_features_rest` `(n,15,3)`,
-  `_opacity` `(n,1)`, `_scaling` `(n,3)`, `_rotation` `(n,4)`) — giá trị ngẫu nhiên, vì chi
-  phí bộ nhớ của `save_ply` không phụ thuộc giá trị.
-- `do_mot_muc(n)` gọi **`g.save_ply` thật** (không phải bản chép), đo đỉnh RSS qua
-  `resource.getrusage(...).ru_maxrss`, so với `MemAvailable` trong `/proc/meminfo` (đọc
-  `MemAvailable` chứ không phải `MemFree` — `MemFree` bỏ qua page cache thu hồi được nên
-  luôn bi quan hơn thực tế).
-- Mặc định thử `n ∈ {1,0 · 1,5 · 2,0 · 3,0}` triệu; chỉ dùng thư viện chuẩn + `torch`.
-- ⚠ Con số script in ra là **phần TĂNG THÊM** của riêng bước lưu; trong một lần train thật,
-  nó cộng vào phần RAM mà tiến trình train đang giữ sẵn — nên "đủ" ở đây nghĩa là còn dư
-  gấp đôi.
+### Đọc lại `cfg_args`: `get_combined_args`
 
----
-
-## 56. Cây thư mục `output/HCM0539/` sau khi train xong
-
-```
-output/HCM0539/
-├── cfg_args                          # §54 — Namespace(**vars(args)) một dòng
-├── input.ply                         # Scene.__init__: bản chép points3D.ply đầu vào
-├── cameras.json                      # Scene.__init__: camera_to_JSON cho từng ảnh (test trước, train sau)
-├── events.out.tfevents.<host>.<pid>  # §54 — nhật ký TensorBoard
-├── point_cloud/
-│   ├── iteration_3000/point_cloud.ply   # §52 — mốc bảo hiểm
-│   ├── iteration_5000/point_cloud.ply   # §52 — mốc bảo hiểm
-│   └── iteration_7000/point_cloud.ply   # §52 — mô hình cuối, dùng để render + chấm
-├── pose/
-│   ├── pose_3000.npy                 # §53 — test_P dạng (N,4,4)
-│   ├── pose_5000.npy
-│   └── pose_7000.npy
-├── render_train/  <sinh ở bước render.py>   # §58
-├── render_test/   <sinh ở bước render.py>   # §58 — đầu vào metrics.py
-├── metrics.json   <sinh ở bước metrics.py>  # §67
-├── report/        <sinh ở scripts/make_report.py>  # bảng + 6 hình + quay_quanh.gif
-├── interps/       <sinh ở render_video.py, không bắt buộc>  # §60
-└── chkpntNNNN.pth <chỉ khi truyền --checkpoint_iterations>  # capture(): 6 tensor + Adam state + P
-```
-
-`--start_checkpoint <đường dẫn .pth>` sẽ `torch.load` rồi `gaussians.restore(model_params, opt)`
-(`gaussian_model.py:93`) để train tiếp; `restore` nạp lại 6 tensor + `xyz_gradient_accum` +
-`denom` + `optimizer.load_state_dict` + `self.P`.
-
----
----
-
-# PHẦN XI — RENDER
-
-```mermaid
-flowchart TD
-    CMD["python render.py -s data/HCM0539 -m output/HCM0539 --iteration 7000"] --> GCA["get_combined_args(parser)<br/>đọc + eval() output/HCM0539/cfg_args<br/>dòng lệnh ghi đè giá trị != None"]
-    GCA --> RS["render_sets(pp, model.extract(args), 7000, args)"]
-    RS --> GM["GaussianModel(sh_degree=3)"]
-    RS --> SC["Scene(dataset, gaussians, load_iteration=7000,<br/>opt=args, shuffle=False)"]
-    SC --> LP["gaussians.load_ply(<br/>point_cloud/iteration_7000/point_cloud.ply)"]
-    SC --> IRT["init_RT_seq() + init_RT_seq_test()<br/>đọc lại P / test_P từ COLMAP"]
-    RS --> T["for cam in getTrainCameras():<br/>pose = get_RT(cam.uid)<br/>render(...) → save render_train/&lt;name&gt;.jpg"]
-    RS --> E["for cam in getTestCameras():<br/>pose = get_RT_test(cam.uid)<br/>render(...) → save render_test/&lt;name&gt;.jpg"]
-    E --> OUT[("output/HCM0539/render_test/*.jpg")]
-    style GCA fill:#6b21a8,color:#fff
-    style OUT fill:#0b7a3b,color:#fff
-```
-
----
-
-## 57. `render.py::__main__` — `get_combined_args` đọc lại `cfg_args`
-
-**File:** `render.py` (dòng 55–72) và `arguments/__init__.py::get_combined_args` (dòng 92).
+`get_combined_args` (`arguments/__init__.py:106-126`):
 
 ```python
-parser = ArgumentParser(description="Testing script parameters")
-pp = PipelineParams(parser)
-model = ModelParams(parser, sentinel=True)   # sentinel=True → mọi default = None
-parser.add_argument("--get_video", action="store_true")
-parser.add_argument("--iteration", default=-1, type=int)
-args = get_combined_args(parser)
+def get_combined_args(parser : ArgumentParser):
+    cmdlne_string = sys.argv[1:]
+    cfgfile_string = "Namespace()"
+    args_cmdline = parser.parse_args(cmdlne_string)
+    try:
+        cfgfilepath = os.path.join(args_cmdline.model_path, "cfg_args")
+        ...
+        cfgfile_string = cfg_file.read()
+    except TypeError:
+        ...
+    args_cfgfile = eval(cfgfile_string)
+    merged_dict = vars(args_cfgfile).copy()
+    for k,v in vars(args_cmdline).items():
+        if v != None:
+            merged_dict[k] = v
+    return Namespace(**merged_dict)
 ```
 
-`get_combined_args`:
+Đọc file text `cfg_args` (được `prepare_output_and_logger` hoặc `pipeline.trainer.build_args`
+ghi bằng `str(Namespace(**vars(args)))`), `eval()` chuỗi đó thành lại một `Namespace`, rồi
+**đè** bằng bất kỳ cờ nào người dùng truyền thêm trên dòng lệnh (chỉ đè nếu giá trị command
+line khác `None`). Nhờ vậy chỉ cần `--model_path` + `--iteration` là đủ, không phải gõ lại
+`-s`, `-r`, `--eval`, ... như lúc train.
+
+### Cờ dòng lệnh của `render.py` (dòng 66-73)
+
+| Cờ | Mặc định | Ý nghĩa |
+|---|---|---|
+| `--iteration` | `-1` | chọn mốc; `render_sets` không tự resolve `-1` thành "mới nhất" — việc đó nằm ở `Scene.__init__` khi gọi `searchForMaxIteration` (xem §38) |
+| `--skip_train` | `False` (action `store_true`) | bỏ qua render tập train |
+| `--skip_test` | `False` | bỏ qua render tập test |
+| `--quiet` | `False` | truyền vào `safe_state` |
+| `--mult` | `0.5` | hệ số compact-box FastGS truyền thẳng vào `render_fastgs` |
+
+### `render_sets` → `render_set`
+
+`render_sets` (dòng 49-61) tạo `GaussianModel`, `Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)`, dựng `background` từ `dataset.white_background`, rồi gọi `render_set` cho `"train"` (nếu không `--skip_train`) và `"test"` (nếu không `--skip_test`).
+
+`render_set` (dòng 26-44):
 
 ```python
-args_cmdline = parser.parse_args(cmdlne_string)
-cfgfilepath = os.path.join(args_cmdline.model_path, "cfg_args")
-with open(cfgfilepath) as cfg_file:
-    cfgfile_string = cfg_file.read()
-args_cfgfile = eval(cfgfile_string)                 # ← eval() Namespace(...) từ §54
-merged_dict = vars(args_cfgfile).copy()
-for k, v in vars(args_cmdline).items():
-    if v != None:                                  # dòng lệnh chỉ ghi đè khi != None
-        merged_dict[k] = v
-return Namespace(**merged_dict)
+def render_set(model_path, name, iteration, views, gaussians, pipeline, background, args):
+    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
+    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+    ...
+    for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
+        rendering = render_fastgs(view, gaussians, pipeline, background, args.mult)["render"]
+        gt = view.original_image[0:3, :, :]
+        torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+    ...
+    print(f"[{name}] Rendered {num_frames} frames in {total_time:.2f} seconds. Average FPS: {fps:.2f}")
 ```
 
-★ `ModelParams(parser, sentinel=True)` khiến mọi tham số của nhóm `Model` có default `None`
-trên dòng lệnh, nên **giá trị thật đến từ `cfg_args`** trừ khi bạn gõ tường minh. Hệ quả cụ
-thể: nếu train với `-r 2` (giảm nửa độ phân giải) thì `cfg_args` giữ `resolution=2`, và
-`render.py` tự render ở cùng độ phân giải — không cần (và không nên) lặp lại cờ. Ngược lại,
-`-m` **phải** trỏ đúng thư mục đã train, nếu không `cfg_args` là của mô hình khác.
+Ghi ra `<model_path>/test/ours_<iteration>/renders/00000.png, 00001.png, ...` (đệm **5 chữ
+số**, `{0:05d}`, khác với submission dùng 4 chữ số — xem §40) và ảnh ground-truth tương ứng ở
+`.../gt/`. Số thứ tự `idx` là chỉ số duyệt trong `views` — **không** sắp theo `image_name` như
+`render_scene` submission làm (§39); thứ tự phụ thuộc `Scene.__init__` (không shuffle vì
+`shuffle=False`, nên giữ nguyên thứ tự do `sceneLoadTypeCallbacks` trả về). Cuối cùng in FPS
+trung bình = `1 / (tổng thời gian render / số ảnh)`.
 
-`--iteration` mặc định `-1` → `Scene` sẽ gọi `searchForMaxIteration` (§59).
+`render.py` **không tính PSNR/SSIM/LPIPS** — nó chỉ ghi ảnh ra đĩa; việc chấm điểm off-line
+trên các thư mục `renders`/`gt` này (kiểu `metrics.py::process_folders` của bản cũ) **không
+tồn tại** trong codebase hiện tại. Điểm số được tính ở nơi khác: `pipeline/score.py` (trong
+lúc train) và `pipeline/submission.py::render_scene` (lúc render nộp bài) — xem PHẦN VII.
 
-⚠ README ghi `--iter 7000`; ở `render.py` cờ tên là **`--iteration`**. `--iter` vẫn chạy vì
-argparse khớp theo tiền tố, nhưng notebook (`bước 8`) ghi đầy đủ `--iteration` cho rõ.
+## 38. `Scene.__init__` nhánh `load_iteration` → `load_ply`
 
----
-
-## 58. `render_sets` — hai thư mục `render_train` / `render_test`
-
-**File:** `render.py::render_sets` (dòng 18–52). Toàn bộ trong `with torch.no_grad()`.
-
-```python
-gaussians = GaussianModel(dataset.sh_degree)
-scene = Scene(dataset, gaussians, load_iteration=iteration, opt=args, shuffle=False)
-bg = torch.tensor([0,0,0] or [1,1,1], ...)          # đen, trừ khi white_background
-
-# --- tập train ---
-for viewpoint_cam in scene.getTrainCameras().copy():
-    pose = gaussians.get_RT(viewpoint_cam.uid)      # P[uid] — tư thế train
-    image = render(viewpoint_cam, gaussians, pipe, bg, camera_pose=pose)["render"]
-    torchvision.utils.save_image(image, ".../render_train/" + viewpoint_cam.image_name + ".jpg")
-
-# --- tập test ---
-for viewpoint_cam in scene.getTestCameras().copy():
-    pose = gaussians.get_RT_test(viewpoint_cam.uid) # test_P[uid] — tư thế test
-    image = render(viewpoint_cam, gaussians, pipe, bg, camera_pose=pose)["render"]
-    torchvision.utils.save_image(image, ".../render_test/" + viewpoint_cam.image_name + ".jpg")
-```
-
-- `shuffle=False`: thứ tự camera giữ nguyên theo tên ảnh (đã sắp trong
-  `readColmapSceneInfo`), nên `render_test/` xếp cùng thứ tự với `test_list.txt`.
-- Đường render (`gaussian_renderer.render`) **giống hệt** vòng train (phần 2, §31–33): view
-  matrix = ma trận đơn vị, dịch cả đám Gaussian sang hệ camera bằng `camera_pose`. Khác duy
-  nhất: `torch.no_grad()` và `pipe.debug` không bật.
-- ★ Chỉ `render_test/` tham gia chấm điểm — nó là phần "góc nhìn mới" của cuộc thi.
-  `render_train/` chỉ để soi mắt (mô hình khớp ảnh đã thấy tới đâu).
-- ⚠ **Tên tệp đầu ra bị ép về `<image_name>.jpg` chữ thường** (`image_name` là
-  `os.path.basename(image_path).split(".")[0]`, `dataset_readers.py:134`). Ảnh drone gốc
-  thường là `DJI_0001.JPG` chữ hoa. `torchvision.utils.save_image` không quan tâm phần mở
-  rộng — nó luôn ghi PNG-trong-vỏ-`.jpg` hoặc JPG tuỳ đuôi; điều quan trọng là **tên** giờ
-  lệch hoa/thường và đuôi so với `images/`. Đây là lý do `metrics.py` phải ghép cặp theo
-  *stem chữ thường* (§61).
-
----
-
-## 59. `Scene.__init__` nhánh `load_iteration` — `load_ply` đọc ngược 59 cột
-
-**File:** `scene/__init__.py` (dòng 33–38, 81–87) và `scene/gaussian_model.py::load_ply` (dòng 358).
+Khi gọi `Scene(dataset, gaussians, load_iteration=<n hoặc -1>, shuffle=False)`
+(`scene/__init__.py:23-81`):
 
 ```python
 if load_iteration:
@@ -405,1034 +293,345 @@ if load_iteration:
         self.loaded_iter = searchForMaxIteration(os.path.join(self.model_path, "point_cloud"))
     else:
         self.loaded_iter = load_iteration
-...
+```
+
+`searchForMaxIteration` (`utils/system_utils.py:26-28`):
+
+```python
+def searchForMaxIteration(folder):
+    saved_iters = [int(fname.split("_")[-1]) for fname in os.listdir(folder)]
+    return max(saved_iters)
+```
+
+Liệt kê mọi thư mục con của `point_cloud/` (dạng `iteration_<n>`), tách số sau dấu `_` cuối
+cùng, lấy giá trị lớn nhất — nếu `point_cloud/` không tồn tại hoặc rỗng thì `os.listdir` /
+`max([])` ném lỗi (không có xử lý ngoại lệ nào ở đây).
+
+Vì `load_iteration` khác `None`/`0`, khối ghi `input.ply` + `cameras.json` (dòng 50-60) **bị
+bỏ qua** — đúng như mô tả trong §35 rằng những file đó chỉ ghi khi train mới.
+
+Cuối `__init__`, do `self.loaded_iter` truthy:
+
+```python
 if self.loaded_iter:
     self.gaussians.load_ply(os.path.join(self.model_path, "point_cloud",
-                            "iteration_" + str(self.loaded_iter), "point_cloud.ply"))
-    self.gaussians.init_RT_seq(self.train_cameras, optimize=optimize_pose)
-    self.gaussians.init_RT_seq_test(self.test_cameras)
+                                          "iteration_" + str(self.loaded_iter), "point_cloud.ply"))
+else:
+    self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 ```
 
-- `searchForMaxIteration` (`utils/system_utils.py`) quét các thư mục `iteration_*` và lấy số
-  lớn nhất — dùng khi `--iteration -1`.
-- `load_ply`:
-  - đọc `x/y/z`, `opacity`, `f_dc_0..2`;
-  - gom `f_rest_*` bằng cách lọc theo tiền tố rồi **sắp theo số cuối** (`sorted(..., key=lambda x: int(x.split('_')[-1]))`) — không tin vào thứ tự trong file;
-  - ★ `assert len(extra_f_names) == 3*(self.max_sh_degree + 1)**2 - 3` → **45** với `sh_degree=3`. Nạp một PLY train ở `sh_degree` khác sẽ nổ ngay tại đây, không âm thầm.
-  - reshape `f_rest` về `(P, 3, 15)` rồi `transpose(1,2)` → `(P, 15, 3)`;
-  - bọc cả 6 tensor thành `nn.Parameter(...requires_grad_(True))`;
-  - `self.active_sh_degree = self.max_sh_degree` — nạp lại là dùng ngay SH bậc đầy đủ, không có giai đoạn `oneupSHdegree`.
-- Sau `load_ply`, `init_RT_seq` / `init_RT_seq_test` đọc **lại tư thế từ COLMAP** (không phải
-  từ `pose/*.npy`), nên `render.py` luôn render bằng tư thế gốc — trừ khi bạn tự sửa để nạp
-  `self.P` đã tinh chỉnh.
+### `load_ply` (`scene/gaussian_model.py:284-325`) đọc lại 62 cột
 
----
-
-## 60. `render_video.py` + `scripts/make_gif.py` — quỹ đạo nội suy
-
-**File:** `render_video.py`, `scripts/make_gif.py`. Không tham gia chấm điểm.
-
-### 60.1 `render_video.py`
-
-```bash
-python render_video.py -s data/HCM0539 -m output/HCM0539 --iteration 7000 --n_views 180 --fps 24
-```
-
-- `get_combined_args` (như §57); `--n_views` mặc định 600, `--fps` mặc định 30.
-- `render_sets` (bản riêng của tệp này) dựng `Scene(..., load_iteration=7000, shuffle=False)`
-  rồi gọi `interpolate_camera_list(scene.getTestCameras(), args.n_views)`.
-- `interpolate_camera_list` → `kochanek_bartels_interpolation`: nội suy **vị trí** bằng
-  `splines.KochanekBartels` và **hướng** bằng `splines.quaternion.KochanekBartels`
-  (`endconditions="natural"`, `tcb=(0,0,0)`), lấy `n_frames` mẫu đều trên khoảng
-  `[0, len(keyframes)-1]`. (★ đây là spline Kochanek–Bartels từ thư viện `splines`, **khác**
-  với `generate_interpolated_path` B-spline trong `utils/pose_utils.py` — hàm đó chỉ dùng
-  cho `render.py`/đường bay ellipse, không dùng ở đây.)
-- Mỗi khung dựng một `Camera` mới với `gt_alpha_mask = original_image * 0` (không có ảnh
-  thật để so), rồi `render_set` ghi `output/HCM0539/interps/ours_7000/renders/00000.png`,
-  `00001.png`, …
-- `images_to_video` (`imageio.mimwrite`) gộp thành `output/HCM0539/interps.mp4`.
-- `camera_pose = get_tensor_from_camera(view.world_view_transform.transpose(0,1))` — tức
-  vẫn đi qua đường "view matrix đơn vị" của `render()`.
-- ⚠ `render_set` ghi khung vào `interps/ours_<scene.loaded_iter>/renders`
-  (`render_video.py:144`), nhưng `images_to_video` lại đọc từ
-  `interps/ours_<args.iteration>/renders` (`render_video.py:151`). Trùng khi truyền
-  `--iteration 7000` tường minh; **lệch** khi để `--iteration -1` (khung nằm ở
-  `ours_7000/` còn video đi tìm `ours_-1/`). Luôn truyền `--iteration` tường minh
-  cho `render_video.py`.
-
-### 60.2 `scripts/make_gif.py`
-
-```bash
-python scripts/make_gif.py --frames output/HCM0539/interps/ours_7000/renders \
-    --out output/HCM0539/report/quay_quanh.gif --width 420 --max-frames 90 --fps 12
-```
-
-- Tách khỏi bước render **có chủ đích**: đổi độ rộng / tốc độ / số khung của GIF thì không
-  phải render lại (tốn GPU + phút).
-- `liet_ke_khung` sắp theo **tên** (`00000.png`… nên tên = thời gian; không sắp theo mtime —
-  Drive không đáng tin).
-- `chon_thua` lấy thưa đều xuống `--max-frames` (không cắt cụt đuôi → vòng quay vẫn khép kín).
-- Mặc định **pingpong**: nối thêm chiều ngược lại (`anhs + anhs[-2:0:-1]`) vì quỹ đạo nội
-  suy không khép kín, để GIF lặp không "giật". Tắt bằng `--no-pingpong`.
-- GIF chỉ 256 màu, không nén liên khung → phình theo bình phương độ rộng. Mặc định
-  420 px / 90 khung / 12 fps nhắm vài MB; cảnh báo nếu tệp > 25 MB.
-
----
----
-
-# PHẦN XII — CHẤM ĐIỂM
-
-```mermaid
-flowchart TD
-    R[("render_test/*.jpg<br/>dji_0001.jpg …")] --> IR["_index_by_stem(rendering)<br/>{stem_thường: path}"]
-    G[("images/*.JPG<br/>DJI_0001.JPG …")] --> IG["_index_by_stem(gt)<br/>{stem_thường: path}"]
-    IR --> COM["common = sorted(set(IR) & set(IG))"]
-    IG --> COM
-    COM -->|"rỗng"| DIE["raise SystemExit — không ghi metrics.json rỗng"]
-    COM -->|"N cặp"| LOOP["for stem in common:<br/>calculate_metrics(render, gt, loss_fns)"]
-    LOOP --> ROW["row: image_name(GT), psnr, ssim,<br/>lpips(=alex), lpips_vgg, lpips_alex"]
-    ROW --> SUM["summarize(per_image, psnr_max=30)"]
-    SUM --> JSON[("metrics.json:<br/>[ N row…, {summary} ]")]
-    style DIE fill:#b3261e,color:#fff
-    style JSON fill:#0b7a3b,color:#fff
-```
-
----
-
-## 61. `metrics.py::process_folders` — `_index_by_stem` ghép cặp
-
-**File:** `metrics.py::process_folders` (dòng 107) và `_index_by_stem` (dòng 80).
+Đọc `x,y,z` → `xyz`; `opacity` → `opacities`; ba cột `f_dc_0..2` → `features_dc` shape
+`(P,3,1)`; lọc mọi property tên bắt đầu `f_rest_`, sắp theo số hậu tố tăng dần
+(`sorted(..., key=lambda x: int(x.split('_')[-1]))`), rồi:
 
 ```python
-def _index_by_stem(folder):
-    index = {}
-    for name in sorted(os.listdir(folder)):
-        ...
-        stem = os.path.splitext(name)[0].lower()     # ★ bỏ đuôi, viết thường
-        if stem in index:  # trùng stem sau khi bỏ đuôi → bỏ qua bản sau, cảnh báo
-            continue
-        index[stem] = os.path.join(folder, name)
-    return index
+assert len(extra_f_names) == 3*(self.max_sh_degree + 1) ** 2 - 3   # = 45 khi sh_degree=3
+features_extra = features_extra.reshape((features_extra.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
 ```
+
+— đúng 45 cột như tính ở §34. Tương tự lọc `scale_*` và `rot*` (chú ý `rot*` không có dấu
+gạch dưới bắt buộc ngay sau — `startswith("rot")` khớp cả `rotation` nếu có, nhưng ở đây chỉ
+có `rot_0..rot_3`). Tổng số cột đọc lại: 3(xyz) + 1(opacity) + 3(f_dc) + 45(f_rest) + 3(scale)
++ 4(rot) = **59 giá trị được đọc trực tiếp**, cộng 3 cột `nx,ny,nz` bị **bỏ qua hoàn toàn**
+(không có dòng nào đọc `plydata.elements[0]["nx"]`) — khớp với việc chúng luôn là 0 lúc ghi.
+Vậy 59 + 3 (normals không đọc) = 62 cột tổng cộng trong file, đúng số cột đã ghi ở §34.
+
+Sáu tensor được gán lại làm `nn.Parameter` mới, `requires_grad_(True)`, trên `"cuda"`:
+`_xyz, _features_dc, _features_rest, _opacity, _scaling, _rotation`. Chú ý
+`_features_dc`/`_features_rest` được `.transpose(1, 2)` lại **sau khi** `torch.tensor(...)` —
+đảo ngược đúng phép `.transpose(1, 2)` đã làm lúc `save_ply`, để khôi phục shape gốc
+`(P, 1, 3)` / `(P, 15, 3)` (kênh màu ở trục cuối) từ shape lưu trên đĩa `(P, 3, 1)` / `(P, 3, 15)`.
+
+Dòng cuối:
 
 ```python
-idx_r = _index_by_stem(rendering)   # output/HCM0539/render_test
-idx_g = _index_by_stem(gt)          # data/HCM0539/images
-common_files = sorted(set(idx_r) & set(idx_g))
-if not common_files:
-    raise SystemExit("[metrics] khong ghep duoc cap nao ...")
+self.active_sh_degree = self.max_sh_degree
 ```
 
-★ Ghép cặp bằng **stem chữ thường** chứ không phải tên khớp chính xác, vì (§58) `render.py`
-ghi `dji_0001.jpg` còn ảnh gốc là `DJI_0001.JPG`. Nếu ghép theo tên đầy đủ thì
-`set(idx_r) & set(idx_g)` **rỗng** và — nếu không có `raise SystemExit` — hàm chạy xong êm
-ru với 0 cặp, ghi ra một `metrics.json` có đủ cấu trúc nhưng `per_image` rỗng; mọi thứ đọc
-nó về sau (`analyze_tail`, `make_report`) trắng tay mà không ai biết vì sao. Bản này **dừng
-to tiếng** thay vì ghi tệp giả-thành-công.
+Vì file `.ply` đã lưu đủ toàn bộ hệ số SH tới bậc tối đa (được ghi ra bất kể
+`active_sh_degree` lúc train là bao nhiêu — `construct_list_of_attributes` luôn dùng full
+shape của `_features_rest`), khi load lại để **render/suy luận** không cần tăng dần SH degree
+như lúc train (`oneupSHdegree` mỗi 1000 vòng) — mô hình đã "chín", nên set thẳng
+`active_sh_degree = max_sh_degree` để dùng toàn bộ chi tiết màu sắc góc nhìn ngay từ đầu.
 
-`IMG_EXT = (".jpg",".jpeg",".png",".bmp",".tif",".tiff")`. In ra số cặp:
-`f"[metrics] {len(idx_r)} anh dung / {len(idx_g)} anh goc -> {len(common_files)} cap"`.
+## 39. `pipeline.submission.render_scene` — đường submission
+
+`render_scene(cfg, scene, iterations=None, score=True)` (`pipeline/submission.py:21-83`) là
+đường render dùng để **nộp bài**, khác hẳn `render.py` ở trên. Đi theo đúng thứ tự trong code:
+
+1. **`iterations = int(iterations or cfg.iterations)`** — mặc định dùng `cfg.iterations` nếu không truyền.
+2. **`build_args(cfg, scene, iterations=iterations, resolution=cfg.submission_resolution, write_cfg=False)`** (`pipeline/trainer.py:14-32`) — dựng lại `Namespace` tham số 3DGS cho scene này:
+   - `resolution=cfg.submission_resolution` (mặc định `1`) ghi đè `cfg.resolution` (mặc định `2` lúc train) → **render đúng độ phân giải gốc**, không downscale như lúc train.
+   - `write_cfg=False` → **không ghi đè** `cfg_args` đã có từ lúc train (tránh làm hỏng file cấu hình gốc chỉ vì render submission ở độ phân giải khác).
+3. **`GaussianModel(dataset.sh_degree, optimizer_type="default")`** rồi **`Scene(dataset, gaussians, load_iteration=iterations, shuffle=False)`** — nạp đúng `.ply` tại `iteration_<iterations>` theo cơ chế `load_ply` ở §38. `shuffle=False` giữ nguyên thứ tự camera gốc (không quan trọng vì bước sau sắp lại thủ công).
+4. **`background`** dựng từ `dataset.white_background`, giống mọi nơi khác trong repo.
+5. **`cams = sorted(scene_obj.getTestCameras(), key=lambda c: c.image_name)`** — sắp xếp theo **tên ảnh gốc** (chuỗi), không theo thứ tự trong `cameras.json`, đảm bảo thứ tự file nộp bài **ổn định và tái lập được** giữa các lần chạy.
+6. **Vòng lặp** `for index, cam in enumerate(..., start=1)`:
+   - `rendered = torch.clamp(render_fastgs(...)["render"], 0.0, 1.0)` — **clamp về [0,1]** trước khi lưu, tránh giá trị âm/vượt 1 từ alpha-blend gây lỗi màu khi `torchvision.utils.save_image` tự nhân 255.
+   - `name = _image_name(index, cfg)` = `f"{index:0{cfg.submission_digits}d}{cfg.submission_ext}"` → với mặc định `submission_digits=4`, `submission_ext=".png"`, ra `0001.png`, `0002.png`, ... (đệm **4 chữ số**, khác 5 chữ số của `render.py`).
+   - `torchvision.utils.save_image(rendered, os.path.join(out_dir, name))` ghi thẳng vào `cfg.submission_scene_dir(scene)` = `submission/<scene>/`.
+   - Ghi vào `files`: `dict(file=name, source=cam.image_name, width=cam.image_width, height=cam.image_height)`.
+   - **Nếu `score=True`**: lấy `gt = torch.clamp(cam.original_image.to("cuda")[:3], 0.0, 1.0)` (chỉ khi ảnh gốc có sẵn — với dữ liệu eval-split kiểu 3DGS, test camera vẫn có `original_image` nạp từ đĩa), tính `psnr_fn`, `ssim_fn`, `lpips_fn(..., net_type=cfg.lpips_net_report)` (mặc định `"vgg"`) rồi append vào các list; `del gt` ngay sau đó để giải phóng VRAM.
+   - `del rendered` cuối mỗi vòng — dọn VRAM liên tục vì vòng lặp có thể chạy hàng trăm camera độ phân giải gốc (nặng hơn nhiều so với train ở `resolution=2`).
+7. Sau vòng lặp: dựng `info = dict(scene=..., images=len(files), out_dir=..., width=..., height=..., files=files)`; nếu có `psnrs` (tức `score=True` và có ground-truth), tính trung bình cộng ba metric rồi gọi `composite_score(psnr_val, ssim_val, lpips_val, cfg.psnr_max)` để ra `score_val, psnr_norm`, in log một dòng tổng kết; nếu không có ground-truth thì in dòng "(không có ground-truth để chấm)" và **không** có khoá `score` trong `info`.
+8. **`_manifest.json`** được ghi vào chính `out_dir` (`submission/<scene>/_manifest.json`), chứa toàn bộ `info` (kể cả `files` — danh sách ánh xạ tên file nộp bài ↔ tên ảnh gốc ↔ kích thước ↔ metric tổng). File này **không** được `build_zip` đưa vào zip (§40 lọc theo đuôi `submission_ext`), nó chỉ để tiện tra cứu/so sánh cục bộ.
+9. Cuối hàm: `del gaussians, scene_obj; gc.collect(); torch.cuda.empty_cache(); torch.cuda.ipc_collect()` — dọn RAM/VRAM trước khi trả `info` về cho `run_all`/`render_all` xử lý scene kế tiếp.
+
+**Điểm phải nói rõ:** toàn bộ hàm này chạy **trong cùng tiến trình Python** đang giữ notebook/pipeline (import trực tiếp `scene.Scene`, `gaussian_renderer.render_fastgs`, ...) — **không** phải gọi `!python render.py` như một subprocess con. Hệ quả: (a) không có cách nào "giới hạn" bộ nhớ của bước render này tách biệt khỏi tiến trình chính — nếu nó rò VRAM/RAM, ảnh hưởng trực tiếp tới các scene train sau; (b) không tận dụng được việc một subprocess kết thúc sẽ tự động trả toàn bộ VRAM về hệ điều hành — dọn dẹp hoàn toàn phụ thuộc vào các lệnh `del`/`gc.collect()`/`torch.cuda.empty_cache()` thủ công ở cuối hàm; (c) đổi lại, tránh được chi phí khởi động lại CUDA context và nạp lại thư viện mỗi lần render một scene — nhanh hơn đáng kể khi `run_all` lặp qua nhiều scene liên tiếp trên Colab.
+
+## 40. `build_zip` và `verify` — hợp đồng nộp bài
+
+### `build_zip(cfg, scenes=None)` (`pipeline/submission.py:96-113`)
+
+```python
+scenes = scenes or sorted(d for d in os.listdir(cfg.submission_dir)
+                          if os.path.isdir(os.path.join(cfg.submission_dir, d)))
+if os.path.exists(cfg.submission_zip):
+    os.remove(cfg.submission_zip)
+
+with zipfile.ZipFile(cfg.submission_zip, "w", zipfile.ZIP_STORED) as zf:
+    for scene in scenes:
+        folder = cfg.submission_scene_dir(scene)
+        for name in sorted(os.listdir(folder)):
+            if not name.endswith(cfg.submission_ext):
+                continue
+            zf.write(os.path.join(folder, name), f"{scene}/{name}")
+```
+
+- Nếu không truyền `scenes`, tự liệt kê mọi thư mục con của `cfg.submission_dir` (sắp theo tên).
+- Xoá zip cũ nếu đã tồn tại trước khi ghi mới (tránh cộng dồn file thừa từ lần chạy trước).
+- Lọc `name.endswith(cfg.submission_ext)` — nghĩa là **`_manifest.json` bị loại khỏi zip**, chỉ ảnh `.png` (hoặc đuôi `cfg.submission_ext` khác nếu đổi cấu hình) được đóng gói.
+- Đường dẫn trong zip là `f"{scene}/{name}"` — đúng cây thư mục:
+
+```
+submission.zip
+├── <scene_1>/
+│   ├── 0001.png
+│   ├── 0002.png
+│   └── ...
+├── <scene_2>/
+│   └── ...
+└── ...
+```
+
+- Tên file tuân theo `_image_name(index, cfg) = f"{index:0{cfg.submission_digits}d}{cfg.submission_ext}"` — với mặc định (`submission_digits=4`, `submission_ext=".png"`) là `0001.png, 0002.png, ...`, index bắt đầu từ 1 và liên tục theo đúng thứ tự camera đã sort ở §39 bước 5.
+- Dùng `zipfile.ZIP_STORED` (lưu trữ nguyên văn, **không** nén thêm) thay vì `ZIP_DEFLATED` — vì PNG đã tự nén bên trong định dạng của nó, nén zip thêm lần nữa gần như không giảm dung lượng mà lại tốn CPU/RAM đáng kể khi zip hàng nghìn ảnh trên Colab (bộ nhớ giới hạn).
+- In ra `f"{cfg.submission_zip} | {len(scenes)} scene | {total} ảnh | {size_mb:.1f} MB"` để xác nhận nhanh trước khi tải về.
+
+### `verify(cfg, expected=None)` (`pipeline/submission.py:116-149`)
+
+Trả về `(frame, problems)` — `frame` là `pandas.DataFrame` cột `scene, images, width, height`; `problems` là list chuỗi cảnh báo (rỗng = hợp lệ). Các bước kiểm tra, đúng thứ tự trong code:
+
+1. Mở zip, lọc file có đuôi `cfg.submission_ext`; với mỗi tên, tách `scene, _, file = name.partition("/")` — nếu `file` rỗng (ảnh nằm ở gốc zip, không trong thư mục con nào) thì báo lỗi `"ảnh nằm ngoài thư mục scene: {name}"`.
+2. Với mỗi scene tìm thấy: sắp tên file, so với `wanted = [_image_name(i, cfg) for i in range(1, len(files)+1)]` — nếu khác thì báo `"{scene}: tên file không liên tục ({files[:3]} ...)"` (bắt cả trường hợp thiếu số, nhảy số, hoặc sai định dạng đệm số).
+3. Nếu một scene có 0 ảnh (không xảy ra trong luồng thường vì scene rỗng sẽ không có key trong `by_scene`, nhưng code vẫn thủ điều kiện `if not files`) → báo `"{scene}: không có ảnh nào"`.
+4. Mở ảnh đầu tiên của mỗi scene bằng `PIL.Image.open` để lấy `(width, height)`, đưa vào `rows` cho bảng hiển thị.
+5. Nếu truyền `expected` (danh sách scene mong đợi — `run.finish` truyền đúng `scenes` đã train qua `run_all`): tính `missing = [s for s in expected if s not in by_scene]` và `extra = [s for s in by_scene if s not in expected]`, báo tương ứng `"thiếu scene: {missing}"` / `"thừa scene: {extra}"`.
+6. In `"OK: submission hợp lệ"` nếu `problems` rỗng, ngược lại in `"CẢNH BÁO:\n- " + "\n- ".join(problems)"`.
+
+**Những gì `verify()` KHÔNG thể kiểm tra** — cần nói thẳng với người dùng để tránh ảo tưởng "verify OK = chắc chắn được điểm":
+
+- Nó không biết **số lượng test-pose thật** mà ban tổ chức sẽ chấm cho mỗi scene — chỉ so với `expected` do chính người dùng truyền vào (thường là danh sách scene, không phải số ảnh mỗi scene). Nếu bộ test cục bộ (`Scene.getTestCameras()`, quyết định bởi `llffhold` lúc train) có số lượng camera khác với test set thật của ban tổ chức, `verify()` sẽ báo "OK" một cách sai lệch.
+- Nó không có quyền truy cập **độ phân giải ảnh chuẩn** của ban tổ chức để so khớp — chỉ đọc kích thước ảnh đầu tiên trong zip để hiển thị, không đối chiếu với bất kỳ giá trị tham chiếu nào bên ngoài.
+- Nó **không kiểm tra nội dung hình ảnh** — không đánh giá "hình học đúng, vật thể đúng vị trí, ảnh thực tế và nhất quán" như luật cuộc thi yêu cầu. Việc đó chỉ có thể kiểm bằng mắt qua `pipeline.report.show_samples` (so ảnh render cạnh ảnh ground-truth), không có bước tự động nào trong `verify()`.
+- Tóm lại, `verify()` chỉ đảm bảo **tính nhất quán nội bộ** của file zip (tên liên tục, đúng cấu trúc thư mục, không thiếu/thừa scene so với danh sách bạn tự cung cấp) — không phải một bộ chấm điểm giả lập.
 
 ---
 
-## 62. `_load_lpips_net` — vgg + alex, thiếu thì `None` chứ không phải 0
+# PHẦN VII — CHẤM ĐIỂM VÀ PHỤ LỤC
 
-**File:** `metrics.py::_load_lpips_net` (dòng 30); `LPIPS_NETS = ("vgg", "alex")` (`utils/score_utils.py:45`).
+## 41. `metrics.py` — đường CLI
 
+`metrics.py` là script chấm điểm độc lập, chạy sau khi `render.py` đã xuất ảnh vào `test/ours_<n>/renders` và `test/ours_<n>/gt` (hoặc `train/...`). Gọi bằng:
+
+```
+python metrics.py -m <model_path_1> [<model_path_2> ...]
+```
+
+**`readImages(renders_dir, gt_dir)`** (`metrics.py:24-34`) ghép cặp ảnh render với ảnh ground-truth **theo tên file**: nó liệt kê `os.listdir(renders_dir)` rồi với mỗi `fname` mở luôn `gt_dir / fname` — không có bước đối chiếu danh sách, không sort tường minh trước khi ghép theo index (nhưng vì cùng `fname` nên phép mở file là an toàn miễn là `renders_dir` và `gt_dir` chứa đúng các file trùng tên). Mỗi ảnh được `tf.to_tensor(...).unsqueeze(0)[:, :3, :, :].cuda()` — ép về đúng 3 kênh (bỏ alpha nếu có) và đẩy lên GPU. Hàm trả về ba list son song: `renders`, `gts`, `image_names`.
+
+**Vòng lặp chính** nằm trong `evaluate(model_paths)` (`metrics.py:36-93`):
+- Với mỗi `scene_dir` trong `model_paths`, script tìm `test_dir = Path(scene_dir) / "test"` rồi lặp qua từng `method` (tức từng thư mục con kiểu `ours_<n>` do `render.py` tạo ra).
+- Với mỗi `method`, gọi `readImages` rồi với từng ảnh tính `ssim(renders[idx], gts[idx])` (từ `utils/loss_utils.py`), `psnr(renders[idx], gts[idx])` (từ `utils/image_utils.py`), và `lpips(renders[idx], gts[idx], net_type='vgg')` — **CLI luôn dùng mạng VGG cho LPIPS**, không có tuỳ chọn đổi sang alex.
+- **Vào `results.json`** (ghi ở `scene_dir + "/results.json"`, `metrics.py:88-89`): chỉ ba số trung bình toàn method — `{"SSIM": mean, "PSNR": mean, "LPIPS": mean}` — dạng `full_dict[scene_dir][method]`.
+- **Vào `per_view.json`** (`scene_dir + "/per_view.json"`, `metrics.py:90-91`): điểm SSIM/PSNR/LPIPS **của từng ảnh riêng lẻ**, dạng `{"SSIM": {tên_file: giá_trị, ...}, "PSNR": {...}, "LPIPS": {...}}` — dùng để soi ảnh nào tệ nhất.
+- Các biến `full_dict_polytopeonly` / `per_view_dict_polytopeonly` được khởi tạo (`metrics.py:40-41,49-50,59-60`) nhưng **không bao giờ được điền dữ liệu hay ghi ra file** — đây là phần thừa kế từ mã gốc 3DGS, không có tác dụng trong bản này; không cần bận tâm.
+
+**Cái bẫy `except` trần** (`metrics.py:92-93`):
 ```python
-def _load_lpips_net(net):
-    try:
-        import lpips as lpips_lib
-        return lpips_lib.LPIPS(net=net).eval()        # ① gói pip chính thức
-    except Exception:
-        pass
-    try:
-        from lpipsPyTorch.modules.lpips import LPIPS
-        return LPIPS(net_type=net).eval()             # ② bản đóng gói trong repo
-    except Exception:
-        return None                                   # ③ chịu — trả None
+except:
+    print("Unable to compute metrics for model", scene_dir)
 ```
+Toàn bộ thân vòng lặp cho một `scene_dir` — kể cả việc mở thư mục, đọc ảnh, tính SSIM/PSNR/LPIPS, và ghi JSON — nằm trong khối `try` bắt đầu ở `metrics.py:45`. Bất kỳ lỗi nào (thiếu thư mục `test/`, `renders`/`gt` không khớp tên file, ảnh hỏng, hết VRAM khi chạy LPIPS, lỗi ghi đĩa...) đều bị nuốt gọn: script chỉ in một dòng "Unable to compute metrics for model ..." rồi **chuyển sang scene tiếp theo mà không để lại bất kỳ dấu vết nào khác** — không traceback, không exit code khác 0, và quan trọng nhất là **không có `results.json`/`per_view.json` nào được ghi ra cho scene đó**. Nếu chạy hàng loạt nhiều scene, một scene lỗi sẽ âm thầm biến mất khỏi báo cáo cuối cùng thay vì làm dừng cả script — đây là điểm cần kiểm tra thủ công (xem §47) chứ không thể tin rằng "chạy xong không báo lỗi" nghĩa là "mọi scene đều có điểm".
 
-- ① Ưu tiên gói `lpips` của pip: số ra **so được** với các bảng kết quả cũ của DroneSplat/3DGS.
-- ② Đường lui: `lpipsPyTorch/` đi kèm repo (`metrics.py` cũng dùng nó cho phần loss ở phần 2).
-- ③ Không nạp được **cả hai** → mạng đó bị bỏ, LPIPS của nó **không xuất hiện** trong `row`.
-  ★ **Không** gán `0`: LPIPS = 0 nghĩa là ảnh hoàn hảo, gán 0 là cộng khống trọn 0.4 điểm
-  (xem §64–65).
-- `loss_fns = {net: _load_lpips_net(net) for net in LPIPS_NETS}` — nạp **một lần**, dùng lại
-  cho mọi ảnh; dựng lại VGG cho từng ảnh biến một lần đo vài giây thành vài phút.
+## 42. `lpipsPyTorch` — LPIPS chạy thế nào
 
----
+Hàm công khai `lpips(x, y, net_type='alex', version='0.1')` (`lpipsPyTorch/__init__.py:6-21`) chỉ đơn giản khởi tạo `LPIPS(net_type, version).to(x.device)` rồi gọi nó như một criterion — không cache theo lần gọi, nghĩa là **mỗi lệnh gọi `lpips(...)` xây dựng lại toàn bộ mạng backbone** (kể cả nạp state dict). Đây là lý do các đường chấm điểm tần suất cao (đánh giá trong lúc train) nên dùng ít view/khoảng cách xa nhau hơn là gọi liên tục.
 
-## 63. `calculate_metrics` — PSNR/SSIM (skimage) + LPIPS `[-1,1]`
+`LPIPS.forward(x, y)` (`lpipsPyTorch/modules/lpips.py:29-34`): trích đặc trưng `feat_x = self.net(x)`, `feat_y = self.net(y)` (list theo từng layer mục tiêu), tính `diff = (feat_x - feat_y)**2` theo từng layer, đưa qua các lớp tuyến tính 1×1 `self.lin` (trọng số học sẵn, không có bias — `lpipsPyTorch/modules/networks.py:23-33`), lấy trung bình không gian `.mean((2,3), True)`, rồi **cộng dồn qua tất cả các layer** (`torch.sum(torch.cat(res, 0), 0, True)`) để ra một số LPIPS duy nhất cho mỗi ảnh (giá trị càng nhỏ càng giống nhau).
 
-**File:** `metrics.py::calculate_metrics` (dòng 50).
+**`alex` vs `vgg`** (`lpipsPyTorch/modules/networks.py:12-20,66-96`):
+| net_type | Backbone | Layer trích đặc trưng | Số kênh mỗi layer |
+|---|---|---|---|
+| `alex` | `torchvision.models.alexnet(pretrained=True).features` | `[2, 5, 8, 10, 12]` | `[64, 192, 384, 256, 256]` |
+| `squeeze` | `squeezenet1_1(pretrained=True).features` | `[2, 5, 8, 10, 11, 12, 13]` | `[64,128,256,384,384,512,512]` |
+| `vgg` | `vgg16(weights=VGG16_Weights.IMAGENET1K_V1).features` | `[4, 9, 16, 23, 30]` | `[64,128,256,512,512]` |
 
+`vgg` đi qua backbone sâu và nặng hơn `alex` (VGG16 có nhiều tham số và tốn FLOPs hơn AlexNet đáng kể), nên **chậm hơn rõ rệt cho mỗi lần gọi** — đúng như tên biến `lpips_net_report` (chỉ dùng khi chấm báo cáo cuối, số lần gọi ít) so với `lpips_net_live` (dùng liên tục trong lúc train, cần nhanh).
+
+**Chuẩn hoá đầu vào**: `BaseNet.z_score(x)` (`lpipsPyTorch/modules/lpips.py` gọi gián tiếp qua `networks.py:50-51`) trừ `mean = [-.030, -.088, -.188]` và chia `std = [.458, .448, .450]` — đây là hằng số chuẩn hoá riêng của LPIPS (khác hẳn ImageNet mean/std thông thường), áp dụng **trước khi** đưa ảnh vào backbone. Vì vậy `x, y` truyền vào hàm `lpips(...)` phải là ảnh RGB đã ở thang **[0, 1]** (giống định dạng `torchvision.transforms.functional.to_tensor` hoặc `torch.clamp(render, 0, 1)`) — module tự lo phần chuẩn hoá tiếp theo, người gọi không cần tự chuẩn hoá theo ImageNet.
+
+**Trọng số học sẵn tải từ đâu**: `get_state_dict(net_type, version)` (`lpipsPyTorch/modules/utils.py:11-30`) tải file `.pth` từ:
+```
+https://raw.githubusercontent.com/richzhang/PerceptualSimilarity/master/lpips/weights/v0.1/<net_type>.pth
+```
+qua `torch.hub.load_state_dict_from_url(..., progress=True)`, sau đó đổi tên khoá (`lin` → bỏ, `model.` → bỏ) để khớp với `LinLayers`. Đây là các file rất nhỏ (chỉ chứa trọng số của các lớp tuyến tính 1×1, không phải trọng số backbone) — cỡ vài chục KB, tải gần như tức thời nếu có mạng; backbone (`alexnet`/`vgg16`/`squeezenet1_1`) thì tải trọng số ImageNet tiêu chuẩn của `torchvision` (mục "tải trọng số lần đầu" — vgg16 khoảng 500+ MB, alexnet nhẹ hơn nhiều, ~230 MB) qua cơ chế cache mặc định của `torchvision.models` (thư mục `~/.cache/torch/hub/checkpoints`). Nếu máy chạy offline hoàn toàn, cả hai lần tải này đều thất bại (xem §47).
+
+**Nơi mỗi mạng được dùng**:
+| Vị trí | net_type | Biến cấu hình |
+|---|---|---|
+| `metrics.py:74` (CLI) | `'vgg'` | cố định trong code, không cấu hình được |
+| `pipeline/score.py::evaluate_cameras` (chấm nhanh trong lúc train) | tham số `lpips_net`, gọi từ `trainer.py:158` với `cfg.lpips_net_live` | `Config.lpips_net_live = "alex"` (`pipeline/config.py:39`) |
+| `pipeline/submission.py::render_scene` (chấm báo cáo/nộp bài) | `cfg.lpips_net_report` (`pipeline/submission.py:62`) | `Config.lpips_net_report = "vgg"` (`pipeline/config.py:40`) |
+
+## 43. PSNR và SSIM
+
+**`utils/image_utils.py::psnr(img1, img2)`** (dòng 17-19):
 ```python
-img1 = np.array(Image.open(img1_path).convert("RGB"))   # render
-img2 = np.array(Image.open(img2_path).convert("RGB"))   # gốc
-psnr_value = psnr(img1, img2)                            # skimage.metrics.peak_signal_noise_ratio
-ssim_value = ssim(img1, img2, channel_axis=-1)          # skimage.metrics.structural_similarity
-img1_tensor = torch.tensor(img1).permute(2,0,1).unsqueeze(0).float() / 255.0
-img2_tensor = ...
-for net, fn in loss_fns.items():
-    if fn is None: continue
-    lpips_values[net] = float(fn(img1_tensor*2 - 1, img2_tensor*2 - 1).item())  # ★ [-1,1]
+mse = (((img1 - img2)) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)
+return 20 * torch.log10(1.0 / torch.sqrt(mse))
 ```
+Đây là công thức PSNR chuẩn cho ảnh đã chuẩn hoá về `[0, 1]` (`MAX_I = 1`, nên `20*log10(1) - 10*log10(MSE) = -10*log10(MSE) = 20*log10(1/sqrt(MSE))`). `.view(img1.shape[0], -1).mean(1, keepdim=True)` gộp phẳng mọi kênh màu và pixel rồi lấy trung bình theo batch — hàm trả về **một tensor có shape `[batch, 1]`** (không phải một số vô hướng); các nơi gọi (`metrics.py:73`, `pipeline/score.py:40`, `pipeline/submission.py`) đều tự `.mean()`/`.item()` thêm để lấy số.
 
-- PSNR/SSIM tính trên **mảng `uint8` RGB** bằng `skimage` — cùng đường đo mà `do_mot_cap`
-  trong vòng train (phần 2, §51) dùng, để điểm trên thanh tiến độ và điểm cuối cùng nói về
-  cùng một thang.
-- LPIPS: đầu vào phải ở `[-1, 1]` nên nhân 2 trừ 1 trước khi gọi.
+**`utils/loss_utils.py::ssim(img1, img2, window_size=11, size_average=True)`** (dòng 36-44, `_ssim` dòng 46-66):
+- Xây cửa sổ Gauss 2D kích thước **11×11** (`window_size=11`), 1 chiều Gauss có `sigma=1.5` (`gaussian(window_size, 1.5)`, dòng 26-28) rồi nhân ngoài (`_1D_window.mm(_1D_window.t())`) để ra 2D, sau đó `expand` ra theo số kênh (`create_window`, dòng 30-34).
+- `_ssim` tính SSIM bằng convolution theo từng kênh riêng (`F.conv2d(..., groups=channel)`) — tức **xử lý mỗi kênh màu độc lập** rồi mới gộp, không chuyển sang grayscale trước.
+- Hằng số ổn định `C1 = 0.01**2`, `C2 = 0.03**2` (dòng 17-18 và lặp lại dòng 58-59) — giá trị chuẩn theo bài báo SSIM gốc (giả định ảnh trong `[0,1]`, dynamic range = 1).
+- `size_average=True` (mặc định) trả về **một số vô hướng** = trung bình toàn bộ bản đồ SSIM trên mọi pixel, mọi kênh, mọi ảnh trong batch (`ssim_map.mean()`); nếu `False` thì trả theo từng ảnh trong batch (`ssim_map.mean(1).mean(1).mean(1)`).
 
-`row` một ảnh (`metrics.py:142`):
+**`fused_ssim`** (thư viện ngoài, `from fused_ssim import fused_ssim as fast_ssim`, dùng ở `train.py:18,102,226`, `pipeline/trainer.py:62`, `pipeline/score.py:27,41`): cùng là chỉ số SSIM (cùng công thức toán, cửa sổ Gauss, hằng số C1/C2 tương đương) nhưng **là một kernel CUDA hợp nhất (fused)** viết riêng để chạy nhanh hơn implementation thuần PyTorch của `utils/loss_utils.py::ssim` — tránh việc gọi `F.conv2d` nhiều lần rời rạc. Về mặt giá trị hai hàm cho kết quả gần như tương đương (đều là SSIM cửa sổ Gauss 11×11), nhưng khác nhau về **hiệu năng**, không phải về ý nghĩa chỉ số.
 
+**Ai dùng cái nào**:
+| Nơi | Hàm SSIM | Lý do |
+|---|---|---|
+| Vòng lặp loss huấn luyện (`train.py:102`), test report giữa chừng (`train.py:226`), `pipeline/trainer.py`, `pipeline/score.py::evaluate_cameras` | `fused_ssim` | Gọi hàng nghìn lần mỗi phiên train → cần nhanh |
+| `metrics.py::evaluate` (CLI chấm điểm cuối) | `utils/loss_utils.py::ssim` | Chạy một lần, ít ảnh, ưu tiên đơn giản/không phụ thuộc thêm submodule |
+
+## 44. `composite_score` và bảng leaderboard
+
+`pipeline/score.py::composite_score(psnr_val, ssim_val, lpips_val, psnr_max=30.0)` (dòng 12-18):
 ```python
-row = {
-    "image_name": os.path.basename(img2_path),   # ★ tên ảnh GỐC, không phải tên tệp render
-    "psnr": float(psnr_value),
-    "ssim": float(ssim_value),
-    "lpips": lpips_values.get("alex"),           # khoá cũ của DroneSplat = LPIPS(alex)
-}
-for net, val in lpips_values.items():
-    row[f"lpips_{net}"] = val                     # lpips_vgg, lpips_alex
+psnr_norm = clamp(psnr_val / psnr_max, 0.0, 1.0)
+score = 0.4 * (1 - lpips_val) + 0.3 * ssim_val + 0.3 * psnr_norm
 ```
+Ba trọng số cố định ở đầu file (`pipeline/score.py:9`): `W_LPIPS = 0.4`, `W_SSIM = 0.3`, `W_PSNR = 0.3`.
 
-★ `image_name` là basename của **ảnh gốc** (ví dụ `DJI_0001.JPG`) — chính là tên dùng ở
-`train_list.txt` / `test_list.txt` và ở mọi bảng khác, nên báo cáo tra chéo được.
+**Ý nghĩa của `torch.clamp(psnr_val / psnr_max, 0.0, 1.0)`**: PSNR (đơn vị dB, không có trần tự nhiên) được chia cho `psnr_max` rồi chặn trên tại 1.0. Với `psnr_max = 30.0` mặc định (`Config.psnr_max`, `pipeline/config.py:38`, và tham số mặc định của chính `composite_score`): **một khi PSNR của scene vượt qua 30 dB, phần đóng góp PSNR vào score bị đóng băng ở mức tối đa (0.3 điểm) — cải thiện PSNR thêm nữa (31, 35, 40 dB...) không mang lại thêm điểm nào.** Đây là điểm khuyến khích rõ ràng: tối ưu hoá sau ngưỡng 30 dB nên dồn sang giảm LPIPS/tăng SSIM thay vì cố nặn thêm PSNR.
 
-`average_metrics.lpips` trong tệp (`metrics.py:158` cộng dồn, `:163` chia, `:170` ghi) =
-`total_lpips / count` với `total_lpips += lpips_values.get("alex", 0.0)` → là **trung bình
-LPIPS(alex)**. (Trong khi
-khoá `lpips` ở phần tóm tắt do `score_utils` sinh ra lại là alias của **vgg** — xem §67, ⚠.)
+**Độ nhạy (đạo hàm) của score theo từng metric** (trong miền `psnr_val < psnr_max`, không tính bão hoà clamp):
+- `∂score/∂lpips_val = -0.4` — mỗi 0.1 giảm LPIPS cho +0.04 điểm.
+- `∂score/∂ssim_val = +0.3` — mỗi 0.1 tăng SSIM cho +0.03 điểm.
+- `∂score/∂psnr_val = 0.3 / psnr_max = 0.01` (với `psnr_max=30`) khi `psnr_val < psnr_max`, và **bằng 0** khi `psnr_val ≥ psnr_max` — mỗi 1 dB PSNR tăng thêm cho +0.01 điểm, nhưng chỉ tính đến ngưỡng.
+Vì hệ số của LPIPS (0.4) lớn nhất và đạo hàm tuyệt đối (0.4) cũng lớn nhất trong ba số, **LPIPS là đòn bẩy mạnh nhất lên score trên một đơn vị thay đổi thực tế** của chỉ số đó (dù thang giá trị của mỗi metric khác nhau nên so sánh "1 đơn vị" không hoàn toàn công bằng — LPIPS và SSIM đều nằm trong `[0,1]` nên so sánh trực tiếp được, PSNR thì thang dB khác hẳn).
 
----
-
-## 64. `competition_score` — công thức 0.4 / 0.3 / 0.3
-
-**File:** `utils/score_utils.py::competition_score` (dòng 72).
-
-```
-Score      = 0.4 · (1 − LPIPS) + 0.3 · SSIM + 0.3 · PSNR_norm
-PSNR_norm  = clamp(PSNR / PSNR_max, 0, 1)
-```
-
-```python
-psnr_norm = min(max(psnr / psnr_max, 0.0), 1.0)
-partial   = 0.3 * ssim + 0.3 * psnr_norm
-return {
-    "psnr_max": psnr_max,
-    "psnr_norm": psnr_norm,
-    "score_partial": partial,                                  # trần 0.6 (khi thiếu LPIPS)
-    "score": None if lpips is None else 0.4 * (1.0 - lpips) + partial,
-}
-```
-
-- `PSNR_max` mặc định **30.0** (`--psnr_max`, `score_utils.py:73`) — BTC **chưa công bố**;
-  đây là phỏng đoán. Xem §70.
-- ★ `clamp` làm hàm chấm **phi tuyến theo PSNR**: một ảnh 40 dB (đã vượt 30) không "kéo hộ"
-  được một ảnh 12 dB — phần vượt `PSNR_max` bị cắt, không thêm điểm nào.
-- Thiếu LPIPS → `score = None`, chỉ còn `score_partial` (tối đa `0.3·1 + 0.3·1 = 0.6`).
-- Nhân 100 khi in ra cho dễ đọc (§66); tệp JSON giữ thang `[0, 1]`.
-
-### 64.1 Một mốc điểm cụ thể "nghĩa là gì" — bảng đối chiếu
-
-Đặt bốn kịch bản cạnh nhau, `PSNR_max = 30` (số **minh hoạ**, không phải một lần
-chạy cụ thể trừ hai dòng đầu):
-
-| Kịch bản | PSNR | SSIM | LPIPS | Điểm/100 |
+**Bảng minh hoạ (ví dụ, không phải số đo thật)**:
+| PSNR (dB) | SSIM | LPIPS | psnr_norm (psnr_max=30) | Score |
 |---|---|---|---|---|
-| Test HCM0539, lần 3 (bản cài đặt riêng) | 9,57 | 0,3481 | 0,6515 | **33,96** |
-| Điểm *train* của chính lần 3 | 18,71 | 0,6563 | 0,3780 | **63,28** |
-| 3DGS chính chủ, cảnh ngoài trời | 22,0 | 0,81 | 0,21 | ~77,9 |
-| 3DGS + exposure + depth, tinh chỉnh tốt | 24,0 | 0,85 | 0,17 | ~82,7 |
+| 25 | 0.80 | 0.20 | 0.833 | 0.4×0.80 + 0.3×0.80 + 0.3×0.833 = 0.320+0.240+0.250 = **0.810** |
+| 30 | 0.90 | 0.10 | 1.000 | 0.4×0.90 + 0.3×0.90 + 0.3×1.00 = 0.360+0.270+0.300 = **0.930** |
+| 35 | 0.90 | 0.10 | 1.000 (bị chặn) | giống hệt hàng trên = **0.930** (thêm 5 dB PSNR không đổi gì) |
+| 20 | 0.70 | 0.30 | 0.667 | 0.4×0.70 + 0.3×0.70 + 0.3×0.667 = 0.280+0.210+0.200 = **0.690** |
 
-★ Đọc cho đúng: mốc ~78 ≈ **ngang bản 3DGS gốc chạy đúng như sách trên cảnh
-ngoài trời** — không phải cột mốc nghiên cứu. Hệ quả ngược: **không có cách nào
-chạm ~78 khi còn thua bản gốc**.
-
-Giải ngược, nếu PSNR đã bão hoà trọn `0,30` (PSNR ≥ `PSNR_max`), phần còn lại
-phải đến từ SSIM + LPIPS:
-
-| SSIM | LPIPS ≤ để đạt 78 | LPIPS ≤ để đạt 91,5 |
-|---|---|---|
-| 0,85 | 0,438 | 0,100 |
-| 0,90 | 0,475 | 0,137 |
-| 0,95 | 0,513 | 0,175 |
-
-Nếu PSNR mới `22` dB (`PSNR_max = 30` → đóng góp `0,22`), ngưỡng gắt hơn hẳn:
-SSIM `0,90` thì LPIPS phải `≤ 0,275` để đạt 78; muốn 91,5 với PSNR `25` dB /
-SSIM `0,90` thì LPIPS phải `≤ 0,012` — thực tế bất khả thi. Kết cấu mảnh (thép,
-cáp antenna BTS) là ca khó nhất: mỏng hơn một Gaussian nên luôn bị làm mờ, và đó
-đúng là thứ LPIPS phạt nặng nhất.
-
----
-
-## 65. `summarize` — bốn quyết định được giữ nguyên
-
-**File:** `utils/score_utils.py::summarize` (dòng 124). Nhận `per_image` (list `row`),
-trả về dict báo cáo đầy đủ. Bốn quyết định cố ý **không "cải tiến"** so với bản tham chiếu
-`src/gs3d/eval/metrics.py`, để hai nhánh cho ra **cùng một số** trên cùng bộ độ đo:
-
-| # | Quyết định | Vì sao | Khoá liên quan |
-|---|---|---|---|
-| 1 | `score` = **trung bình của điểm từng ảnh**, không phải điểm của các trung bình | `clamp` khiến hàm phi tuyến; gộp trước rồi chấm sẽ thổi phồng điểm của tập phương sai lớn — đúng kiểu ảnh drone (vài góc xa tâm luôn tệ hơn hẳn) | `score` vs `score_of_means` |
-| 2 | Thiếu LPIPS ⇒ `score = None`, chỉ có `score_partial` | Coi LPIPS = 0 là cộng khống 0.4 điểm | `score`, `score_partial`, `thang 0.6` |
-| 3 | Tính LPIPS bằng **cả `vgg` lẫn `alex`** | Trên cùng cặp ảnh, LPIPS(alex) thường thấp hơn LPIPS(vgg) đáng kể, mà số hạng LPIPS nặng nhất (0.4); BTC chưa nói dùng mạng nào | `score` (vgg), `score_alex` |
-| 4 | `score_sensitivity` theo `PSNR_max ∈ {25, 30, 35, 40}` cũng tính **trung-bình-của-điểm** | Nếu không, hai cột số trong cùng một tệp lại tính bằng hai quy tắc khác nhau | `score_sensitivity` |
-
-`summarize` còn **ghi ngược** `score_vgg` / `score_alex` / `score_partial` vào **từng phần
-tử `per_image`**, để tệp JSON cho biết luôn ảnh nào kéo điểm xuống, không chỉ có một con số
-tổng. `score` chỉ khác `None` khi **mọi** ảnh đều có LPIPS (`len(scores) == n`); trung bình
-trên tập con có LPIPS rồi gọi là điểm của cả tập là so táo với cam giữa các lần chạy có số
-ảnh thiếu LPIPS khác nhau.
-
----
-
-## 66. `format_score` — một dòng log thang 100
-
-**File:** `utils/score_utils.py::format_score` (dòng 184). Dùng ở `metrics.py`
-(in ra cuối), ở `training_report` (phần 2, §50) và ở progress bar.
-
-```
-ĐIỂM  57.34/100 ±3.1 ▲+1.20 | PSNR 22.15 dB (norm 0.738) | SSIM 0.8123 | LPIPS 0.2044
-```
-
-- `ĐIỂM xx.xx/100` khi có `score`; `ĐIỂM xx.xx/60 (thiếu LPIPS)` khi chỉ có `score_partial`.
-- `±std` = `score_std * 100` (độ lệch chuẩn mẫu của điểm từng ảnh) — thanh sai số, không chỉ
-  trung bình.
-- `▲/▼/=` so với `previous` (điểm lần đo trước, thang 100) — để nhìn một dòng biết đang lên
-  hay xuống.
-- `norm` = `psnr_norm` trung bình. `LPIPS` in ra là `m['lpips']` = alias **vgg** (`n/a` nếu
-  thiếu).
-
----
-
-## 67. Cấu trúc `metrics.json`
-
-**File:** `metrics.py::process_folders` (dòng 124–188).
-
-`metrics.json` là một **danh sách JSON**: `N` phần tử đầu là `row` từng ảnh, phần tử **cuối
-cùng** là dict tóm tắt (giữ đúng cấu trúc di sản của DroneSplat: "danh sách ảnh + phần tử
-cuối chứa `average_metrics`").
-
-```jsonc
-// MINH HOẠ cấu trúc — KHÔNG phải số thật
-[
-  {
-    "image_name": "DJI_0007.JPG",
-    "psnr": 0.0, "ssim": 0.0,
-    "lpips": 0.0,          // = LPIPS(alex), khoá cũ tương thích ngược
-    "lpips_vgg": 0.0,
-    "lpips_alex": 0.0,
-    "score_vgg": 0.0,      // ghi ngược bởi summarize()
-    "score_alex": 0.0,
-    "score_partial": 0.0
-  },
-  // … N-1 phần tử ảnh nữa …
-  {
-    "average_metrics": { "psnr": 0.0, "ssim": 0.0, "lpips": 0.0 },  // lpips ở đây = alex
-    "score":            0.0,   // trung bình score_vgg từng ảnh (None nếu thiếu LPIPS ảnh nào)
-    "score_alex":       0.0,
-    "score_partial":    0.0,   // trần 0.6
-    "score_std":        0.0,
-    "score_of_means":   0.0,   // điểm-của-trung-bình, giữ để đối chiếu
-    "score_sensitivity": { "25.0": 0.0, "30.0": 0.0, "35.0": 0.0, "40.0": 0.0 },
-    "psnr_norm":        0.0,
-    "psnr_std":         0.0,
-    "ssim_std":         0.0,
-    "lpips_vgg":        0.0,
-    "lpips_alex":       0.0,
-    "num_images":       0,
-    "psnr_max":         30.0,
-    "per_image":        [ /* bản sao đầy đủ N row, đã có score_* */ ]
-  }
-]
-```
-
-⚠ Có **hai** khoá tên na ná trong tệp: `average_metrics.lpips` = trung bình **alex** (do
-`metrics.py` cộng dồn); còn `score_utils` dùng nội bộ alias `lpips = lpips_vgg`. Khi so hai
-lần chạy, luôn nói rõ đang đọc `lpips_vgg` hay `lpips_alex`.
-
-`json.dump(results, f, indent=4)` — tệp có xuống dòng, đọc bằng mắt được.
-
----
----
-
-# PHẦN XII (tiếp) — ĐỐI CHIẾU OUTPUT THẬT
-
-## 68. Một bản ghi `per_image` — từng trường từ đâu tới
-
-Lấy một dòng minh hoạ (số **không thật**) và truy nguồn từng trường:
-
-```jsonc
-{
-  "image_name":  "DJI_0007.JPG",   // ← basename ảnh GỐC (metrics.py:145) = tên ở test_list.txt
-  "psnr":        21.4,             // ← skimage.peak_signal_noise_ratio(uint8 RGB)  (§63)
-  "ssim":        0.79,             // ← skimage.structural_similarity(channel_axis=-1) (§63)
-  "lpips":       0.221,            // ← lpips_values["alex"]  (khoá cũ, §63)
-  "lpips_vgg":   0.284,            // ← fn_vgg(img*2-1, gt*2-1)  (§62–63)
-  "lpips_alex":  0.221,
-  "score_vgg":   0.532,            // ← 0.4*(1-0.284) + 0.3*0.79 + 0.3*clamp(21.4/30,0,1)  (§64, summarize ghi ngược)
-  "score_alex":  0.557,            // ← 0.4*(1-0.221) + phần partial như trên
-  "score_partial": 0.451          // ← 0.3*0.79 + 0.3*0.713  (không có số hạng LPIPS)
-}
-```
-
-- `psnr_norm` của ảnh này = `clamp(21.4/30, 0, 1) = 0.713`.
-- `score` toàn cục ở phần tử cuối = trung bình `score_vgg` của **tất cả** `per_image`.
-- Nếu `lpips_vgg` của **một** ảnh nào đó là `null` (mạng vgg không nạp được) thì `score`
-  toàn cục = `null`, và chỉ `score_partial` có nghĩa.
-
-Bảng đối chiếu "trường ↔ hàm sinh ra nó":
-
-| Trường trong `row` | Sinh ở | Ghi chú |
-|---|---|---|
-| `image_name` | `metrics.py:145` | basename ảnh gốc |
-| `psnr`, `ssim` | `calculate_metrics` (`metrics.py:60–61`) | skimage, uint8 |
-| `lpips` | `metrics.py:149` | = `lpips_alex` |
-| `lpips_vgg`, `lpips_alex` | `metrics.py:151–152` | vòng qua `loss_fns` |
-| `score_vgg`, `score_alex`, `score_partial` | `score_utils.summarize:164–165` | ghi ngược vào `row` |
-
----
-
-## 69. `score` vs `score_of_means` vs `score_partial`
-
-Ba con số cùng nằm ở phần tử cuối, dễ nhầm.
-
-| Khoá | Định nghĩa | Khi nào chênh nhau |
-|---|---|---|
-| `score` | `mean_i competition_score(psnr_i, ssim_i, lpips_vgg_i)` | luôn là con số "chính thức" |
-| `score_of_means` | `competition_score(mean psnr, mean ssim, mean lpips)` | chênh khi **phương sai PSNR lớn** và có ảnh vượt `PSNR_max` — chính là bộ ảnh drone |
-| `score_partial` | `mean_i (0.3·ssim_i + 0.3·psnr_norm_i)` | luôn ≤ `score`; là trần 0.6 khi thiếu LPIPS |
-
-**Vì sao `score_of_means` ≥ `score` trên tập drone (giải thích ký hiệu, không phải số thật):**
-giả sử nửa tập render rất tốt (PSNR ≫ 30, bị `clamp` về `psnr_norm = 1`) và nửa tập tệ
-(PSNR ≈ 12, `psnr_norm ≈ 0.4`).
-
-- `score` chấm từng ảnh: nửa tốt đóng góp `psnr_norm = 1`, nửa tệ `0.4` → trung bình `0.7`.
-- `score_of_means` lấy trung bình PSNR **trước**: `(rất lớn + 12)/2` vẫn ≫ 30 → `clamp` về
-  `1` → `psnr_norm = 1` cho **cả** tập.
-
-Phần "rất lớn" của nửa tốt, lẽ ra bị `clamp` cắt bỏ khi chấm riêng, lại được đem đi bù cho
-nửa tệ khi gộp trước. `score` không cho phép chuyện đó — và đó là lý do nó là con số dùng để
-so, còn `score_of_means` chỉ để đối chiếu.
-
----
-
-## 70. Bảng `score_sensitivity` — đọc thế nào
-
-`score_sensitivity = { "25.0": …, "30.0": …, "35.0": …, "40.0": … }` — điểm của **cả tập**
-(trung-bình-của-điểm) ứng với từng phỏng đoán `PSNR_max`.
-
-- `PSNR_max` càng lớn → `PSNR_norm = clamp(PSNR/PSNR_max, …)` càng nhỏ → điểm càng giảm. Nên
-  các cột **đơn điệu giảm** từ trái sang phải; đó là hành vi bình thường, không phải tín
-  hiệu gì.
-- ★ Cách dùng thật: khi **so hai mô hình** A và B, tính `score_sensitivity` cho cả hai. Nếu
-  kết luận "A hơn B" **giữ nguyên** ở mọi cột → kết luận vững, không phụ thuộc hằng số BTC
-  chưa công bố. Nếu nó **đảo chiều** giữa các cột (A hơn ở `25`, B hơn ở `40`) → kết luận đó
-  **không dùng được**; phải chờ BTC công bố `PSNR_max` hoặc báo cáo cả dải.
-- `scripts/analyze_tail.py` in lại bảng này ở mục `(c)` kèm đúng cảnh báo trên.
-
-### 70.1 `PSNR_max` — đòn bẩy không tốn công train
-
-`PSNR_max` do BTC chọn và **chưa công bố**. Cùng một mô hình
-(`22,0 / 0,81 / 0,21`), điểm đổi theo hằng số này (số **minh hoạ**):
-
-| `PSNR_max` | Điểm/100 | Ghi chú |
-|---|---|---|
-| 25 | ~82,3 | |
-| 30 | ~77,9 | mặc định phỏng đoán của repo |
-| 35 | ~74,9 | |
-| 40 | ~72,4 | |
-
-Chênh ~10 điểm chỉ vì một hằng số không nằm trong tay mình. `score_sensitivity`
-trong `metrics.json` chính là bảng này tính cho **tập ảnh thật của bạn**. Quy tắc
-dùng:
-
-- Báo cáo kết quả **kèm cả dải** `{25, 30, 35, 40}`, không phải một con số.
-- Khi kết luận "A hơn B": nếu thứ tự **giữ nguyên** ở mọi cột → kết luận vững.
-  Nếu **đảo chiều** giữa các cột → chờ BTC công bố `PSNR_max`.
-- ⚠ `PSNR_max` càng lớn → điểm càng giảm, nên các cột **đơn điệu giảm** từ trái
-  sang phải; đó là hành vi bình thường, không phải tín hiệu gì.
-
----
-
-## 71. `scripts/analyze_tail.py` — mổ đuôi dưới
-
-**File:** `scripts/analyze_tail.py`. **Không** tính lại độ đo (không nạp ảnh, không nạp LPIPS)
-— chỉ đọc `metrics.json` do `metrics.py` ghi và trả lời ba câu.
-
-### 71.1 Đọc tệp
-
-`load_summary` (dòng 99): `metrics.json` là **list**, nên duyệt **ngược** tìm phần tử đầu
-tiên có khoá `per_image`. Cũng nhận dict phẳng (tệp dựng tay). Báo lỗi rõ nếu tệp là bản
-`metrics.py` cũ (chưa có phần chấm điểm / `per_image`).
-
-### 71.2 `build_rows` — tính lại điểm tại chỗ
-
+**`pipeline/report.py::leaderboard(results, submissions=None, save_to=None)`** (dòng 21-49): dựng một `DataFrame`, mỗi hàng là một scene (`row["live_score"]`, `row["live_psnr"]`,... lấy từ kết quả đánh giá trong lúc train — tiền tố `live_`; nếu có `submissions` — kết quả từ `pipeline/submission.py::render_scene` — thì join thêm các cột không tiền tố `score, psnr, psnr_norm, ssim, lpips`, tức **điểm ở chất lượng nộp bài đầy đủ**). Cuối cùng:
 ```python
-sc = competition_score(psnr, ssim, lpips, psnr_max)   # ★ dùng CHUNG hàm với metrics.py & make_report
-rows.append({
-    "image_name": ..., "psnr": ..., "ssim": ..., "lpips": lpips,
-    "psnr_norm": sc["psnr_norm"],
-    "score": sc["score"] if sc["score"] is not None else sc["score_partial"],
-    "t_lpips": None if lpips is None else 0.4*(1 - lpips),   # đóng góp từng số hạng
-    "t_ssim": 0.3*ssim,
-    "t_psnr": 0.3*sc["psnr_norm"],
-})
+numeric = frame.select_dtypes("number")
+frame.loc["MEAN"] = numeric.mean().reindex(frame.columns)
 ```
+Hàng `MEAN` là **trung bình cộng theo từng cột số của mọi scene** (không trọng số theo số ảnh/số Gaussian) — và dòng `frame.loc['MEAN', 'score']` chính là "điểm leaderboard (trung bình các scene)" được in ra (`pipeline/report.py:48`). Vì vậy leaderboard cuối cùng = trung bình `composite_score` của từng scene, đúng như mô tả kiến trúc: `Score` từng scene tính theo công thức ở trên, leaderboard = mean qua scene.
 
-★ Điểm được **tính lại** bằng `competition_score` chứ không đọc khoá `score_vgg` có sẵn —
-để cờ `--psnr_max` thật sự có tác dụng và để mọi con số trong một lần chạy script đều đến
-từ cùng một `psnr_max`. `--psnr_max` mặc định lấy từ `psnr_max` trong chính tệp
-(mặc định cuối cùng 30.0). `--net` chọn `vgg` (mặc định, khớp khoá `score` của `metrics.py`)
-hoặc `alex`.
+## 45. Bảng hằng số toàn hệ thống
 
-### 71.3 Ba câu trả lời
-
-| Bảng | Câu hỏi | Cơ chế |
-|---|---|---|
-| **[1]** `--worst N` (mặc định 8) | Ảnh nào tệ nhất? | `sorted(rows, key=score)[:N]` |
-| **[2]** Mất điểm ở số hạng nào? | `dominant_term` = số hạng hụt nhiều nhất so với **trung vị** của tập. `lpips` → "khác biệt tri giác (mờ/artefact/floater)"; `ssim` → "lệch cấu trúc – hình học hoặc pose sai"; `psnr` → "lệch cường độ – phơi sáng / màu lệch" | ★ SSIM và PSNR **cùng** tụt ⇒ hình học/pose (chữa bằng `--optimize_pose` hoặc mặt nạ); chỉ PSNR tụt còn SSIM giữ ⇒ sai phơi sáng (chữa rẻ hơn nhiều) |
-| **[3]** Trần điểm & tiềm năng | `lift_worst_to_median(scores, k)` = điểm trung bình **nếu** `k` ảnh tệ nhất được nâng lên trung vị (chỉ nâng, không hạ). `clamp_waste` = bao nhiêu ảnh đã vượt `PSNR_max` và "điểm ảo" bị `clamp` ăn mất | Số học để quyết định: kéo 5 ảnh đuôi lên thường rẻ hơn train thêm 20.000 vòng |
-
-Dùng **trung vị** làm mốc chứ không phải trung bình, vì chính cái đuôi ta đang đo sẽ kéo
-lệch trung bình.
-
-`--metrics a.json b.json` → thêm bảng **so sánh** hai lần chạy, tách riêng "thay đổi ở nửa
-dưới" khỏi "thay đổi ở nửa trên" (nửa trên hay bị `clamp` ăn mất). Cảnh báo nếu điểm tổng
-tăng mà nửa dưới **không** lên (chỉ nâng đỉnh — khả năng không đổi lại được điểm thi).
-
-`scripts/make_report.py` dùng **đúng** `build_rows` / `competition_score` này, nên bảng số
-và sáu hình trong `report/` không bao giờ nói hai chuyện khác nhau.
-
----
-
-## 71.4 Lịch sử các lần chạy — đối chiếu điểm thật
-
-Mọi lần chạy trên **Google Colab, Tesla T4 ~16 GB, PyTorch 2.11.0+cu128**. Điểm
-theo công thức thi (`0.4·(1−LPIPS) + 0.3·SSIM + 0.3·PSNR_norm`, thang 0–100,
-`psnr_max = 30`).
-
-| # | Ngày | Nhánh mã | Ảnh | Iter | Gaussian cuối | Test PSNR | Test SSIM | Test LPIPS | Điểm | Thời gian | Kết luận |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 29/08 | cài đặt riêng | 24 × 96² (toy) | 1.500 | 342 | 36,89 | 0,9835 | — | — | ~1,5 ph | pipeline chạy đúng đầu-cuối |
-| 2 | 29/08 | cài đặt riêng | 80 × 198×148 | 7.000 | 18.479 | 11,96 | 0,3001 | — | — | 22 ph 32 gy | **densify chết** (sai đơn vị ngưỡng) |
-| 3 | 29/08 | cài đặt riêng | 210 × 1320×987 | 8.000 | 938.712 | 9,57 | 0,3481 | 0,6515 | **33,96** | 40 ph 34 gy | vừa thiếu khớp vừa quá khớp |
-| 4 | 29/08 | cài đặt riêng | 210 × 1320×987 | 8.000 | 383.604 | 10,02 | 0,3282 | 0,7031 | **31,74** | 34 ph 12 gy | 4 sửa đổi phản tác dụng |
-| 5 | 30/08 | **DroneSplat ở gốc** | 210 × 1320×989 | 7.000 | *mất — hết RAM lúc lưu* | 21,98 | — | — | **72,98** | 44 ph 30 gy | hơn gấp đôi lần 3, nhưng mất mô hình |
-
-> ⚠ Lần 1–4 (bản cài đặt riêng) và lần 5 (nhánh DroneSplat đang mổ) **không so
-> trực tiếp được**: khác mã, khác cách chia train/test (lần 5 dùng
-> `train_list.txt` / `test_list.txt` đi kèm bộ dữ liệu chứ không cứ 8 ảnh giữ 1),
-> khác cả tập ảnh.
-
-### 71.4.1 Cấu hình đầy đủ lần 5 (nhánh DroneSplat, câu lệnh đang mổ)
-
-| Tham số | Giá trị |
-|---|---|
-| Lệnh | `python train.py -s data/HCM0539 -m output/HCM0539 --scene HCM0539 --iter 7000 --use_masks` |
-| Ảnh | 210 train / 30 test, 1320×989 (độ phân giải gốc) |
-| Khởi tạo | 218.846 Gaussian từ COLMAP (`SIMPLE_RADIAL`, bỏ hệ số méo `k1 = 8,1e-3`) |
-| Mặt nạ SAM2 | có (`--use_masks`); tiền xử lý 240 ảnh, 36 ph 44 gy (~9,19 gy/ảnh) |
-| Tinh chỉnh tư thế | **không** (`--optimize_pose` không bật) |
-| Lịch densify | **không** (`--schedule_densify_grad_threshold` không bật) |
-| `psnr_max` khi chấm | 30 |
-
-Chạy "bản trần" trước là **chủ ý**: có mốc rồi mới bật từng cờ một; bật cả bốn thứ
-riêng của DroneSplat cùng lúc thì lúc điểm đổi không biết cờ nào làm ra chuyện đó.
-
-### 71.4.2 Điểm theo tiến độ train (lần 5, 30 ảnh test)
-
-| Vòng | Điểm/100 | Δ | PSNR test |
+| Hằng số | Giá trị | Vị trí | Vai trò |
 |---|---|---|---|
-| 500 | 55,61 ±6,6 | — | 19,55 dB |
-| 1.500 | 63,11 ±7,7 | ▲ | 20,60 dB |
-| 3.000 | 68,02 ±7,7 | ▲ | 21,30 dB |
-| 4.500 | 70,03 ±9,3 | ▲ | 21,52 dB |
-| 6.000 | 72,21 ±9,5 | ▲ +0,48 | 21,90 dB |
-| **7.000** | **72,98 ±9,6** | ▲ +0,79 | **21,98 dB** |
+| SH degree tối đa | 3 | `arguments/__init__.py:49` (`ModelParams.sh_degree`) | Bậc cầu điều hoà tối đa cho màu phụ thuộc góc nhìn |
+| Nhịp tăng SH degree | mỗi 1000 iteration | `train.py:80-82` (`if iteration % 1000 == 0: gaussians.oneupSHdegree()`) | Tăng dần độ phức tạp màu sắc, tránh học SH bậc cao quá sớm |
+| `min_opacity` (giai đoạn densify) | 0.005 | `train.py:140` (gọi `densify_and_prune_fastgs`) | Ngưỡng opacity để prune trong pha densify |
+| `min_opacity` (giai đoạn cuối) | 0.1 | `train.py:158` (gọi `final_prune_fastgs`) | Ngưỡng opacity cao hơn khi prune lần cuối, dọn Gaussian yếu |
+| Ngưỡng kích thước màn hình (`max_screen_size`) | 20 | `train.py:133` (`size_threshold = 20 if iteration > opt.opacity_reset_interval else None`) | Pixel — Gaussian chiếm view lớn hơn ngưỡng này (sau lần reset opacity đầu) bị coi là "quá to", có thể bị prune |
+| `percent_dense` | 0.001 | `arguments/__init__.py:83` (`OptimizationParams.percent_dense`) | Đặt vào `self.percent_dense` của `GaussianModel` (`scene/gaussian_model.py:193`); tham chiếu tỉ lệ với `extent` cảnh để phân loại clone/split ở 3DGS gốc |
+| `dense` (FastGS, đóng vai trò percent_dense) | 0.001 | `arguments/__init__.py:95` (`OptimizationParams.dense`) | Dùng trực tiếp trong `densify_and_prune_fastgs`: `clone_qualifiers = scaling.max <= args.dense*extent`, `split_qualifiers = scaling.max > args.dense*extent` (`scene/gaussian_model.py:486-487`) |
+| `opacity_reset_interval` | 3000 | `arguments/__init__.py:86` | Chu kỳ (iteration) reset opacity về thấp; cũng là mốc bật ngưỡng screen-size 20 |
+| `densify_from_iter` | 500 | `arguments/__init__.py:87` | Iteration bắt đầu tính densify |
+| `densify_until_iter` | 15000 | `arguments/__init__.py:88` | Iteration dừng densify/prune theo gradient |
+| `densification_interval` | 100 (mặc định gốc) — nhưng pipeline Colab override thành **500** | `arguments/__init__.py:85`; override tại `pipeline/config.py:43` (`train_extra_args: ["--densification_interval", "500", ...]`) | Chu kỳ (số iteration) giữa hai lần chạy densify_and_prune |
+| `position_lr_max_steps` | 30000 | `arguments/__init__.py:76` | Số bước để lịch suy giảm learning-rate vị trí (`position_lr_init` → `position_lr_final`) hoàn tất — `pipeline/trainer.py::build_args` ghi đè bằng đúng số vòng train; đường CLI giữ nguyên 30000. |
+| `lambda_dssim` | 0.2 (mặc định gốc) — pipeline Colab override thành **0.25** | `arguments/__init__.py:82`; override `pipeline/config.py:44` | Trọng số D-SSIM trong loss: `loss = (1-λ)*L1 + λ*(1-SSIM)` (`train.py:103`) |
+| `mult` | 0.5 | `arguments/__init__.py:97` (`OptimizationParams.mult`); cũng là `Config.mult` (`pipeline/config.py:37`) | Hệ số nhân "compact box" kiểm soát số tile mỗi splat chiếm (đặc thù FastGS) |
+| `loss_thresh` | 0.1 (mặc định gốc) — pipeline Colab override thành **0.07** | `arguments/__init__.py:92`; override `pipeline/config.py:45` | Ngưỡng loss dùng trong tính điểm multi-view của FastGS (`utils/fast_utils.py`) |
+| `grad_abs_thresh` | 0.0012 | `arguments/__init__.py:93` (mặc định gốc trùng với override `pipeline/config.py:46`) | Ngưỡng gradient tuyệt đối để đánh dấu ứng viên "split" (`grad_qualifiers_abs`, `scene/gaussian_model.py:484`) |
+| `grad_thresh` | 0.0002 | `arguments/__init__.py:96` | Ngưỡng gradient (norm) để đánh dấu ứng viên "clone" (`grad_qualifiers`, `scene/gaussian_model.py:483`) |
+| `lowfeature_lr` | 0.0025 | `arguments/__init__.py:94` | Learning rate cho nhóm feature "thấp" (đặc thù FastGS, tách khỏi `feature_lr` gốc) |
+| `highfeature_lr` | 0.005 (mặc định gốc) — pipeline Colab override thành **0.02** | `arguments/__init__.py:91`; override `pipeline/config.py:45` | Learning rate cho nhóm feature "cao" |
+| Ngưỡng importance-score trong densify mask | `importance_score > 5` | `scene/gaussian_model.py:494` (`metric_mask = importance_score > 5`) | Gaussian phải được tối thiểu ~6 lượt "phiếu" đa góc nhìn mới được coi là ứng viên densify hợp lệ |
+| Ngưỡng pruning-score cuối | `pruning_score > 0.9` | `scene/gaussian_model.py:538` (`final_prune_fastgs`) | Gaussian có điểm nhất quán đa góc nhìn chuẩn hoá > 0.9 (tức rất kém — xem §48) bị prune ở bước dọn cuối |
+| Kích thước tile rasterizer | 16 × 16 pixel | `submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/config.h:16-17` (`BLOCK_X 16`, `BLOCK_Y 16`) | Kích thước ô lưới dùng để phân vùng màn hình khi rasterize |
+| `psnr_max` | 30.0 | `pipeline/config.py:38` (`Config.psnr_max`); mặc định trùng trong `pipeline/score.py:12,23` | Ngưỡng chuẩn hoá PSNR trong `composite_score` (xem §44) |
+| `llffhold` | 8 | `ModelParams.llffhold` (`arguments/__init__.py`, cờ `--llffhold`), mặc định hàm `readColmapSceneInfo` (`scene/dataset_readers.py:132`) và `Config.llffhold` (`pipeline/config.py`) — cả ba cùng giá trị 8; `Scene` truyền cờ này xuống reader. | Cứ 8 ảnh COLMAP thì 1 ảnh (`idx % llffhold == 0`) làm test/hold-out, còn lại làm train |
+| `ram_soft_limit_gb` | 10.5 | `pipeline/config.py:41` | Ngưỡng RAM mềm nội bộ pipeline Colab, không phải hằng số của lõi 3DGS/FastGS |
 
-- **Đã hơn mọi lần chạy cũ ngay từ vòng 500.** 19,55 dB ở vòng 500 cho thấy
-  9,57 dB của lần 3 là **lỗi hệ thống ở tập test** chứ không phải mô hình kém.
-- Nhịp tăng tắt dần: nửa đầu +4,19/500 vòng, nửa sau còn ~+0,5. Nhưng cú tắt dần
-  ở 6.000 → 7.000 (chỉ +0,77) **nhiều khả năng là hệ quả cú reset opacity ở vòng
-  6.000** (thời gian hồi phục ~600–1.000 bước, đúng bằng quãng còn lại) chứ không
-  phải bão hoà thật. "6.000 vòng gần như tương đương" chỉ đúng *với lịch hiện
-  tại*, không được đọc thành "train thêm là phí".
-- Độ lệch chuẩn ±9,6 **lớn hơn nhiều** mức tăng mỗi mốc → nâng đuôi phân bố
-  (`per_image` trong `metrics.json`, xem §71) ăn điểm nhanh hơn train thêm vòng.
+Lưu ý quan trọng: nhiều tham số của `OptimizationParams` (`arguments/__init__.py`) có **giá trị mặc định gốc** nhưng bị **override bởi `Config.train_extra_args`** (`pipeline/config.py:42-48`) khi chạy qua pipeline Colab — cụ thể `densification_interval` (100→500), `lambda_dssim` (0.2→0.25), `highfeature_lr` (0.005→0.02), `loss_thresh` (0.1→0.07), `grad_abs_thresh` (0.0012→0.0012, không đổi). Khi đọc log/`cfg_args` của một lần chạy cụ thể, giá trị hiệu lực là giá trị sau override, không phải giá trị mặc định trong `arguments/__init__.py`.
 
-### 71.4.3 Ba tham số lệch lịch — chẩn đoán đọc từ mã, chưa phải kết quả đo
+## 46. Bảng tra nhanh bước ↔ file ↔ hàm
 
-Ba hằng số vẫn giữ giá trị hiệu chỉnh cho lịch **30.000 vòng** trong khi lần 5
-dừng ở **7.000** (khi `--no_auto_schedule` — mặc định thì `ap_dung_lich_co` đã co,
-xem §74 và phần 1, §16):
-
-| Tham số | Giá trị gốc | Ở vòng 7.000 nghĩa là gì |
+| Bước | Đường CLI (`train.py`/`render.py`/`metrics.py`) | Đường `pipeline/` |
 |---|---|---|
-| `position_lr_max_steps` | 30.000 | lr vị trí mới đi được ~23% quãng anneal — Gaussian vẫn còn trôi khi train xong |
-| `densify_until_iter` | 15.000 | densify chạy tới tận vòng cuối, không có giai đoạn tinh chỉnh |
-| `opacity_reset_interval` | 3.000 | reset rơi vào vòng 3.000 và 6.000 — cú cuối chỉ còn 1.000 vòng hồi sức |
+| Cài đặt/thiết lập tham số | `arguments/__init__.py` (`ModelParams`, `OptimizationParams`, `PipelineParams`) | `pipeline/trainer.py::build_args` dựng `Namespace` rồi gọi thẳng các lớp trên |
+| Chuẩn bị dữ liệu / đọc scene COLMAP | `scene/__init__.py::Scene`, `scene/dataset_readers.py::readColmapSceneInfo` | `pipeline/data.py` (tìm scene, tải/giải nén dataset, tính `n_test` theo `llffhold`) |
+| Vòng lặp huấn luyện | `train.py` (hàm `training`, vòng `for iteration in range(...)`) | `pipeline/trainer.py::train_scene` (gọi `render_fastgs`, `compute_gaussian_score_fastgs`, `densify_and_prune_fastgs`) |
+| Đánh giá nhanh trong lúc train | `train.py::training_report` (bị comment ở dòng gọi, xem PHẦN VI) | `pipeline/score.py::evaluate_cameras`, gọi định kỳ từ `pipeline/trainer.py:157-158` theo `cfg.score_every` |
+| Lưu checkpoint `.ply` | `scene/__init__.py::Scene.save`, gọi tại `train.py` khi `iteration in saving_iterations` | `pipeline/trainer.py::_save_checkpoint`, điều khiển bởi `cfg.save_every` / `cfg.keep_last_checkpoint` |
+| Render ảnh test/train | `render.py` (`render_sets`, `render_set`) | `pipeline/submission.py::render_scene` |
+| Chấm điểm CLI (SSIM/PSNR/LPIPS-vgg) | `metrics.py::evaluate` → `results.json` + `per_view.json` | `pipeline/submission.py::render_scene` (score inline) + `pipeline/score.py::composite_score` |
+| Tổng hợp báo cáo/so sánh scene | không có tương đương CLI trực tiếp (`full_eval.py` gộp nhiều scene nhưng không tính leaderboard) | `pipeline/report.py::leaderboard`, `plot_training`, `plot_leaderboard`, `show_samples` |
+| Đóng gói nộp bài (submission.zip) | không có tương đương CLI | `pipeline/submission.py::render_scene` (ghi ảnh) rồi lệnh zip trong `pipeline/run.py`; kiểm tra bằng `pipeline/submission.py::verify` |
+| Tải kết quả về máy / lưu Drive | không có tương đương CLI | `pipeline/deliver.py::pack_models`, `copy_to_drive`, tải file `.zip` |
 
-> Nói rõ mức chắc chắn: **đây là chẩn đoán sau khi đọc mã, chưa phải kết quả đo.**
-> Chưa có lần chạy đối chứng nào với lịch đã co. Cả ba đều đánh vào độ nhoè —
-> L1 chịu ít, LPIPS và SSIM chịu nhiều — khớp với việc PSNR 21,98 dB đã khá mà
-> điểm tổng vẫn chỉ 72,98.
+## 47. Chẩn đoán sự cố
 
----
----
-
-# PHẦN XIII — PHỤ LỤC
-
-## 72. `preprocess.py` — nhánh khởi tạo hình học bằng DUSt3R (tuỳ chọn)
-
-**File:** `preprocess.py`. Không nằm trên đường của câu lệnh đang mổ (ta đã có `sparse/` từ
-COLMAP). Chạy khi COLMAP hỏng: cảnh ít texture, ảnh chồng lấn kém, mặt phẳng lớn đồng màu.
-
-```bash
-python preprocess.py --img_base_path data/HCM0539 --colmap_path HCM0539/sparse/0
-```
-
-```mermaid
-flowchart LR
-    IMG["images/*.jpg"] --> LI["load_images(size=512)"]
-    LI --> PAIRS["make_pairs(scene_graph='complete', symmetrize=True)"]
-    PAIRS --> INF["inference(pairs, AsymmetricCroCo3DStereo, batch_size=4)"]
-    INF --> GA["global_aligner(PointCloudOptimizer)"]
-    GA --> CGA["compute_global_alignment(niter=500, lr=0.01, schedule='linear')"]
-    CGA --> CLEAN["clean_pointcloud() + lọc theo confidence<br/>min_conf = exp(min_threshold=1.0)"]
-    CLEAN --> SAVE["save_colmap_cameras → cameras.txt<br/>save_colmap_images → images.txt<br/>storePly → points3D.ply (+ cột confidence)"]
-    SAVE --> OUT[("data/HCM0539/sparse/0/  (định dạng COLMAP)")]
-```
-
-- Mạng: `AsymmetricCroCo3DStereo.from_pretrained(args.model_path)` — mặc định
-  `checkpoints/DUSt3R_ViTLarge_BaseDecoder_512_linear.pth`.
-- `global_aligner(..., mode=GlobalAlignerMode.PointCloudOptimizer_0)` hợp nhất mọi cặp về
-  một hệ toạ độ, suy ra pose + tiêu cự. `compute_global_alignment` (`utils/dust3r_utils.py`)
-  chạy `--niter 500` bước tối ưu, `--lr 0.01`, `--schedule linear`.
-- Lọc điểm theo độ tin cậy: `min_conf_thr = exp(--min_threshold)` (mặc định `exp(1.0)`).
-- `--preset_pose`: đọc pose/tiêu cụ đã biết bằng `read_extrinsics_binary` /
-  `read_intrinsics_binary`, `scene.preset_pose(...)` + `scene.preset_focal(...)` (tiêu cự
-  chia `2.671875` để khớp `image_size 512`), chỉ dùng DUSt3R sinh **hình học** — hữu ích khi
-  pose COLMAP tin được nhưng đám mây thưa quá.
-- Xuất: `points3D.ply` / `points3D_test.ply` / `points3D_all.ply` (có thêm cột `confidence`),
-  `cameras.txt`, `images.txt`, cùng vài `*.npy` bản đồ tin cậy — **đúng định dạng COLMAP**,
-  nên phần còn lại của pipeline (`Scene` → …) không cần biết đám mây điểm đến từ đâu.
-- ⚠ Xung đột đã biết: `preprocess.py` mặc định `..._512_**linear**.pth` (`preprocess.py:21`),
-  còn README gốc / `scripts/run_dronesplat.py check` bảo tải bản `..._512_**dpt**.pth` (hai
-  đầu ra khác nhau: linear head vs DPT head). Phải tải đúng bản khớp `--model_path`, hoặc
-  truyền tay đường dẫn. Triệu chứng khi lệch: lỗi shape ở DUSt3R head.
-- Cần submodule `dust3r` + `croco`, checkpoint DUSt3R. Tuỳ chọn: biên dịch nhân CUDA RoPE
-  trong `submodules/dust3r/croco/models/curope/` cho nhanh hơn.
-
-### 72.1 Vì sao đồ thị cặp là điểm nghẽn — `O(n²)`
-
-`make_pairs(scene_graph='complete', symmetrize=True)` dựng đồ thị **đầy đủ**:
-`n(n−1)` cặp có hướng. Đây là lý do DroneSplat dùng **vài chục ảnh** mỗi cảnh chứ
-không phải hàng trăm:
-
-| `n` ảnh | Số cặp `n(n−1)` | Ghi chú |
+| Triệu chứng | Nguyên nhân (theo code) | Cách xử lý |
 |---|---|---|
-| 10 | 90 | nhanh |
-| 30 | 870 | vài phút trên GPU |
-| 60 | 3.540 | hàng chục phút |
-| 100 | 9.900 | không khả thi trên 1 GPU |
+| CUDA out of memory trên T4 | VRAM 16 GB của T4 không đủ khi số Gaussian tăng nhanh trong pha densify, hoặc `mult`/độ phân giải quá cao; `compute_gaussian_score_fastgs` giữ nhiều tensor tạm khi tính điểm đa góc nhìn | Giảm `resolution` (tăng `-r`), giảm `iterations`/tần suất densify, hoặc gọi `torch.cuda.empty_cache()` (đã có sau `densify_and_prune_fastgs`, `scene/gaussian_model.py:531`); giảm `eval_views`/`max_views` khi chấm điểm live |
+| RAM (CPU) OOM khi nén `submission.zip` | `pipeline/submission.py`/`pipeline/deliver.py` giữ nhiều ảnh/đường dẫn trong bộ nhớ khi zip nhiều scene liên tiếp trên Colab (RAM hệ thống giới hạn, xem `Config.ram_soft_limit_gb = 10.5`) | Zip theo từng scene rồi giải phóng, theo dõi `pipeline/env.py::mem`/`show_mem`; hạ `ram_soft_limit_gb` để cảnh báo sớm hơn |
+| `Could not recognize scene type!` | `scene/__init__.py:49` — `Scene.__init__` không tìm thấy `sparse/` (COLMAP) hoặc `transforms_train.json` (Blender) trong `source_path` | Kiểm tra đường dẫn `-s`/`data_root`, đảm bảo cấu trúc thư mục scene đúng chuẩn COLMAP (`sparse/0/...`) hoặc Blender |
+| Zero test camera / không chấm được | Chạy thiếu cờ `--eval`; khi đó `readColmapSceneInfo` không tách hold-out theo `llffhold` mà đưa hết ảnh vào train (`scene/dataset_readers.py:149-150` chỉ tách khi `eval=True`) | Luôn truyền `--eval` (đã có sẵn trong `pipeline/trainer.py::build_args`, `argv` chứa `"--eval"`); nếu chạy `train.py` tay thì phải tự thêm |
+| Ảnh submission sai kích thước | `Config.submission_resolution` khác 1 khiến `render_scene` render ở độ phân giải bị scale thay vì đúng kích thước ảnh gốc (`pipeline/config.py:55` ghi rõ "1 = render đúng kích thước ảnh gốc") | Đặt `submission_resolution = 1` trước khi render nộp bài; chạy `pipeline/submission.py::verify` để soi kích thước ảnh thực tế trong zip |
+| Tải trọng số LPIPS thất bại khi offline | `get_state_dict` (`lpipsPyTorch/modules/utils.py:17-20`) và backbone `torchvision.models.*(True/weights=...)` đều gọi `torch.hub`/tải từ Internet; không có cơ chế fallback cục bộ | Tải trước khi mất mạng (chạy một lần lúc còn mạng để cache vào `~/.cache/torch/hub`), hoặc chuẩn bị sẵn cache trên máy Colab |
+| `verify()` báo tên file không liên tục | `pipeline/submission.py:139-141` — so khớp danh sách file thực tế với dãy `0001.png, 0002.png, ...` sinh từ `_image_name`; lệch nghĩa là thiếu ảnh, đánh số nhảy cóc, hoặc ảnh nằm sai thư mục scene | Render lại toàn bộ scene bằng `render_scene` (đảm bảo không bị ngắt giữa chừng), kiểm tra `by_scene` trong log lỗi |
+| Phiên Colab bị ngắt giữa lúc train một scene | Không có auto-resume tích hợp; mất tiến trình iteration hiện tại nếu chưa tới mốc lưu | `save_every` (`Config.save_every`, mặc định 2000, `pipeline/config.py:34`) quyết định tần suất lưu `.ply` định kỳ — giảm giá trị này để hạn chế mất việc khi phiên chết giữa chừng; `keep_last_checkpoint=True` chỉ giữ checkpoint mới nhất nên không "quay lại" iteration cũ hơn được |
+| Thiếu điểm số cho một scene mà không có lỗi rõ ràng | Bẫy `except:` trần trong `metrics.py:92-93` nuốt mọi lỗi khi chấm CLI, chỉ in một dòng cảnh báo và bỏ qua scene, không ghi `results.json`/`per_view.json` (xem §41) | Không tin tưởng "chạy xong không crash" là đủ; luôn kiểm tra sự tồn tại của `results.json` cho từng scene sau khi chạy `metrics.py`, hoặc tạm sửa thành `except Exception as e: print(e)` khi debug |
 
-### 72.2 Nội tại camera phải nhân theo tỉ lệ thu nhỏ ảnh
+## 48. Thuật ngữ
 
-Không nằm trong `preprocess.py` nhưng cùng bước tiền xử lý: khi thu nhỏ ảnh một
-lần rồi ghi ra scene COLMAP mới (`scripts/prepare_colmap_scene.py`), **`fx, fy,
-cx, cy` phải nhân đúng cùng tỉ lệ đó**. Bỏ qua thì phép chiếu `u = fx·x/z + cx`
-cho toạ độ sai hệ số; mô hình vẫn hội tụ, vẫn ra ảnh trông được ở góc train,
-nhưng **hình học 3D sai hoàn toàn** — lộ ra ngay khi render góc nhìn mới. Ảnh
-HCM0539 là 1320×987, **nhỏ hơn** ngưỡng thu nhỏ 1600 px của bản gốc, nên
-`--scale 1.0` ở đây đúng là thứ bản gốc sẽ dùng (so sánh sòng phẳng).
-
-### 72.3 Lọc điểm nhiễu — vì `extent` chi phối hai thứ
-
-Cũng là **bổ sung của repo này** (bản gốc dùng nguyên đám mây COLMAP; phải ghi
-rõ khi tuyên bố "bám bản gốc"). `extent` (bán kính cảnh, `getNerfppNorm.radius`)
-được suy từ đám mây điểm đã lọc và nhân vào **hai** chỗ: `lr_position × extent`
-và ngưỡng prune theo scale `0,1 × extent`. Vài điểm rác bay xa làm `extent` phình
-gấp đôi là hỏng cả hai cùng lúc. Cắt theo **phân vị 1%–99%** từng trục (bền với
-ngoại lai hơn min/max) rồi nới biên 50%. HCM0539 sau khi lọc: `extent = 10,811`.
-
----
-
-## 73. `seg_all_instances.py` — nhánh mặt nạ SAM2 (tuỳ chọn)
-
-**File:** `seg_all_instances.py`. Bật khi `--use_masks` — **là trường hợp của câu lệnh đang
-mổ**, nên bước này **phải chạy trước** `train.py` (notebook `bước 6`).
-
-```bash
-python seg_all_instances.py --image_dir data/HCM0539
-python scripts/run_dronesplat.py fix-masks --scene-dir data/HCM0539   # §11 của phần 1
-```
-
-- `build_sam2(model_cfg, model_checkpoint)` + `SAM2AutomaticMaskGenerator` chạy trên **từng
-  ảnh**; gộp các mặt nạ lồng nhau; ghi ra một *label map* nguyên (mỗi pixel một id thực thể)
-  vào `data/HCM0539/masks/masks.json`, kèm ảnh mask `masks/<stem>.jpg`.
-- `--model_checkpoint` mặc định `checkpoints/sam2_hiera_large.pt`, `--model_cfg`
-  `sam2_hiera_l.yaml`.
-- ★ Import `from sam2.build_sam import build_sam2` — qua **gói `sam2` đã cài** (`pip install
-  -e submodules/sam2`), **không** qua đường dẫn `submodules.sam2.sam2`. Hai đường tạo ra hai
-  module khác nhau, mỗi cái chạy `sam2/__init__.py` một lần, và lần thứ hai chết vì
-  `ValueError: GlobalHydra is already initialized`.
-- `setup_gpu_acceleration()` bật autocast bf16 + TF32 (nếu GPU ≥ Ampere).
-- `masks.json` được vòng train nạp qua `load_label_maps_from_json` và dùng ở
-  `compute_instance_losses` — xem **phần 2, PHẦN VII (§37–40)**.
-- ⚠ `seg_all_instances.py` ghi khoá JSON theo **tên tệp gốc** (ví dụ `IMG_1.JPG`), trong khi
-  `train.py` tra cứu bằng `<stem>.jpg` chữ thường → mọi tra cứu trượt, mã vẫn chạy nhưng mất
-  sạch tín hiệu instance. `fix-masks` (phần 1, §11) đổi khoá về đúng dạng và cảnh báo nếu
-  thiếu ảnh mask nào.
-- Cần submodule `sam2` + checkpoint `sam2_hiera_large.pt`.
-
-```mermaid
-flowchart LR
-    subgraph OPT["Hai nhánh tuỳ chọn — chạy TRƯỚC train.py"]
-        direction TB
-        P["preprocess.py + DUSt3R<br/>(thay COLMAP khi SfM hỏng)"] --> SP[("data/&lt;scene&gt;/sparse/0/")]
-        S["seg_all_instances.py + SAM2<br/>(--use_masks)"] --> MK[("data/&lt;scene&gt;/masks/masks.json")]
-    end
-    SP --> TR["train.py"]
-    MK --> TR
-    TR --> RN["render.py"] --> MT["metrics.py"] --> J[("metrics.json")]
-    style OPT fill:#eef2ff
-    style J fill:#0b7a3b,color:#fff
-```
-
----
-
-## 74. Bảng hằng số toàn hệ thống
-
-| Hằng số | Giá trị | File:dòng | Ý nghĩa |
-|---|---|---|---|
-| `sh_degree` | `3` | `arguments/__init__.py:49` | bậc SH tối đa → 16 hệ số/kênh, 45 cột `f_rest` |
-| `iterations` | `30_001` | `arguments/__init__.py:73` | mặc định; câu lệnh đang mổ ép `--iter 7000` |
-| `position_lr_init / _final` | `1.6e-4 / 1.6e-6` | `:74–75` | ×`spatial_lr_scale`; lịch giảm mũ |
-| `position_lr_delay_mult` | `0.01` | `:76` | (delay_steps=0 nên không có tác dụng) |
-| `position_lr_max_steps` | `30_000` | `:77` | auto-schedule kéo về `= iterations` khi < 30k |
-| `feature_lr` | `2.5e-3` | `:78` | `f_dc`; `f_rest` = `feature_lr / 20` (`gaussian_model.py:293`) |
-| `opacity_lr` | `0.05` | `:79` | |
-| `scaling_lr` | `0.005` | `:80` | |
-| `rotation_lr` | `0.001` | `:81` | |
-| `percent_dense` | `0.01` | `:82` | ngưỡng "Gaussian lớn": `max(scale) > percent_dense · extent` |
-| `lambda_dssim` | `0.2` | `:83` | trọng số D-SSIM trong loss: `(1−λ)·L1 + λ·(1−SSIM)` |
-| `densification_interval` | `100` | `:84` | densify mỗi 100 vòng |
-| `opacity_reset_interval` | `3000` | `:85` | auto-schedule → `min(3000, max(1000, 3000·n/30000))` |
-| `densify_from_iter` | `500` | `:86` | auto-schedule → `min(500, max(100, until−100))` |
-| `densify_until_iter` | `15_000` | `:87` | auto-schedule → `min(max(500, round(0.5n)), n−1)` (`train.py:117`) |
-| `densify_grad_threshold` | `0.0002` | `:88` | `--schedule_densify_grad_threshold`: nội suy `→ 0.001` (`train.py:437`) |
-| opacity prune min | `0.005` | `train.py:478` | tham số `min_opacity` của `densify_and_prune` |
-| `size_threshold` | `20` | `train.py:477` | prune theo `max_radii2D` px, chỉ sau lần reset opacity đầu |
-| reset opacity floor | `0.01` | `gaussian_model.py:354` | `inverse_sigmoid(min(opacity, 0.01))` |
-| split `N` | `2` | `gaussian_model.py:495` | mỗi Gaussian lớn tách thành 2 |
-| split scale | `/(0.8·N)` | `gaussian_model.py:509` | thu nhỏ Gaussian con |
-| knn | 3 điểm gần nhất | `gaussian_model.py:268` (`distCUDA2`) | khởi tạo `scale = log(sqrt(mean knn dist²))` |
-| opacity khởi tạo | `0.1` | `gaussian_model.py:274` | qua `inverse_sigmoid` |
-| resolution cap | `1920` px | `camera_utils.py:29–34` | `-r -1` + ảnh > 1.92K → hạ xuống 1920 (cảnh báo một lần) |
-| `znear / zfar` | `0.01 / 100.0` | `cameras.py:48–49` | mặt phẳng cắt của `getProjectionMatrix` |
-| `PSNR_max` | `30.0` | `train.py:591`, `metrics.py:200`, `score_utils.py:73` | phỏng đoán — BTC chưa công bố |
-| trọng số điểm | `0.4 / 0.3 / 0.3` | `score_utils.py:81–87` | LPIPS / SSIM / PSNR_norm |
-| `PSNR_MAX_CANDIDATES` | `{25, 30, 35, 40}` | `score_utils.py:48` | bảng `score_sensitivity` |
-| `mask_start_iter` | `500` | `train.py:584` | trước mốc này dùng loss thường |
-| `threshold_local` | `0.4` | `train.py:582` | biên độ giảm tuyến tính của ngưỡng instance |
-| `preset_instance_threshold` | `0.4` | `train.py:581` | ⚠ truyền vào `compute_instance_losses` nhưng **không dùng** |
-| `pose_lr_init / _final` | `1e-3 / 1e-5` | `train.py:595–596` | chỉ khi `--optimize_pose` |
-| `pose_from_iter` | `500` | `train.py:597` | hoãn `step_pose` tới mốc này |
-| auto-schedule baseline | `30_000` | `train.py:113–114` | mốc gốc của lịch 3DGS |
-| `test_iterations` | `range(500, 7001, 500)` | `train.py:570–571` | chấm mỗi 500 vòng |
-| `save_iterations` | `[3000, 5000, 7000]` (+`iterations`) | `train.py:575, 609` | mốc lưu bảo hiểm |
-| low-pass filter (BLUR) | `0.3` | `forward.cu` (`h_var = 0.3f`) | cộng `0.3·I` vào `Σ₂D` — mọi splat phủ ≥ ~1 px |
-| α clamp | `0.99` | rasterizer | chặn opacity thực tế mỗi pixel |
-| dừng sớm blend | `T < 1e-4` | rasterizer | thoát vòng khi độ truyền qua cạn |
-| bỏ đóng góp mờ | `alpha < 1/255` | rasterizer + parity PyTorch | dưới một mức lượng tử 8 bit; PHẢI cài ở **cả hai** bản nếu không parity vô nghĩa |
-| ε chống chia 0 (perspective) | `1e-7` | `forward.cu` | `p_w = 1/(p_hom.w + 1e-7)` — chống `inf`/`NaN` khi Gaussian trên mặt phẳng camera |
-| `M` (hệ số SH/kênh) | `16` | `= (sh_degree+1)²` | 1 (`f_dc`) + 15 (`f_rest`) |
-| `lr_opacity` | `0.05` (bài báo 2023) → có nhánh hạ `0.025` | `arguments/__init__.py:79` | nếu tuyên bố bám bản gốc phải nói rõ bám *nhánh nào* |
-| `extent` HCM0539 | `10.811` | suy từ đám mây đã lọc | nhân vào `lr_position` và ngưỡng prune scale |
-
----
-
-## 75. Bảng tra nhanh bước ↔ file ↔ hàm
-
-| Giai đoạn | File | Hàm chính |
-|---|---|---|
-| Dò scene, chia train/test, vá mask | `scripts/run_dronesplat.py` | `find_scene`, `_write_splits`, `cmd_fix_masks`, `cmd_check` |
-| Điểm vào train | `train.py` | `__main__`, `training`, `ap_dung_lich_co` |
-| Đọc COLMAP → `SceneInfo` | `scene/dataset_readers.py` | `readColmapSceneInfo`, `readColmapCameras`, `getNerfppNorm`, `storePly` |
-| Đọc `.bin`/`.txt` COLMAP | `scene/colmap_loader.py` | `read_extrinsics_*`, `read_intrinsics_*`, `qvec2rotmat`, `read_points3D_*` |
-| Dựng camera | `scene/cameras.py`, `utils/camera_utils.py` | `Camera.__init__`, `loadCam`, `cameraList_from_camInfos` |
-| Khởi tạo Gaussian | `scene/gaussian_model.py` | `create_from_pcd`, `training_setup`, `init_RT_seq` |
-| Một vòng train | `train.py` | vòng `for iteration`, `compute_combined_loss`, `compute_instance_losses` |
-| Render một khung | `gaussian_renderer/__init__.py` | `render` |
-| Toán tư thế | `utils/pose_utils.py` | `get_camera_from_tensor`, `quadmultiply`, `get_tensor_from_camera` |
-| Loss | `utils/loss_utils.py` | `l1_loss`, `ssim` |
-| Kiểm soát mật độ | `scene/gaussian_model.py` | `densify_and_prune`, `densify_and_clone`, `densify_and_split`, `_prune_optimizer` |
-| Đánh giá trong train | `train.py` | `training_report`, `do_mot_cap` |
-| Chấm điểm | `utils/score_utils.py` | `competition_score`, `summarize`, `format_score` |
-| Lưu | `scene/gaussian_model.py`, `train.py` | `save_ply`, `save_pose`, `prepare_output_and_logger` |
-| Render lại | `render.py` | `render_sets`, `get_combined_args` |
-| Đo PSNR/SSIM/LPIPS | `metrics.py` | `process_folders`, `_index_by_stem`, `calculate_metrics` |
-| Mổ đuôi / báo cáo | `scripts/analyze_tail.py`, `scripts/make_report.py` | `build_rows`, `dominant_term`, `lift_worst_to_median` |
-| Video / GIF | `render_video.py`, `scripts/make_gif.py` | `interpolate_camera_list`, `dung_gif` |
-| DUSt3R init | `preprocess.py`, `utils/dust3r_utils.py` | `compute_global_alignment`, `save_colmap_*` |
-| SAM2 mask | `seg_all_instances.py` | `SAM2AutomaticMaskGenerator` |
-
-### 75.1 Tệp nào ở gốc repo là của DroneSplat
-
-Mã DroneSplat (Tang et al., CVPR 2025 Highlight) nay là **pipeline duy nhất** của
-repo — `third_party/dronesplat/` đã bị xoá, các tệp nằm thẳng ở gốc. Lý do gộp:
-DroneSplat dùng import tuyệt đối (`from utils.… import`, `from scene import …`),
-chỉ chạy đúng khi thư mục làm việc là gốc cây mã của chính nó.
-
-| Đường dẫn | Vai trò |
+| Thuật ngữ | Giải thích |
 |---|---|
-| `train.py` | vòng lặp train chính: 3DGS + mặt nạ vật nhiễu thích nghi + lịch ngưỡng densify. Điểm vào |
-| `render.py` / `render_video.py` | render lại ảnh train/test; render đường bay nội suy thành video |
-| `metrics.py` | chấm PSNR/SSIM/LPIPS + điểm thi |
-| `preprocess.py` | khởi tạo hình học bằng DUSt3R, xuất định dạng COLMAP |
-| `seg_all_instances.py` | phân đoạn thực thể bằng SAM2 → `masks/masks.json` + ảnh mặt nạ |
-| `scene/` | `gaussian_model.py`, `cameras.py`, `colmap_loader.py`, `dataset_readers.py`, `__init__.py` |
-| `gaussian_renderer/` | `__init__.py` (bản có tinh chỉnh tư thế, mẹo view matrix đơn vị); `__init__3dgs.py` (bản 3DGS gốc để đối chiếu); `network_gui.py` |
-| `arguments/` | `ModelParams` / `OptimizationParams` / `PipelineParams` — toàn bộ siêu tham số 3DGS |
-| `utils/` | `pose_utils.py`, `graphics_utils.py`, `loss_utils.py`, `sh_utils.py`, `dust3r_utils.py`, `camera_utils.py`, … |
-| `lpipsPyTorch/` | LPIPS đóng gói sẵn, đường lui của `metrics.py` (§62) |
-| `submodules/` | năm submodule git (§75.3) |
-| `LICENSE-DroneSplat` | giấy phép gốc DroneSplat; `LICENSE` ở gốc là MIT của dự án này |
-
-⚠ Ba tên gói `scene/`, `utils/`, `arguments/` **chiếm chỗ ở cấp cao nhất của
-`sys.path`**: bất kỳ `import utils` nào chạy từ gốc repo từ nay là của DroneSplat,
-kể cả `import` phát ra từ thư viện bên thứ ba. Mọi lệnh phải chạy với `cwd` = gốc
-repo, và đừng thêm gói trùng tên với thư viện phổ biến.
-
-### 75.2 Bốn thuật toán riêng của DroneSplat
-
-3DGS gốc giả định pose COLMAP đúng, mọi pixel đáng tin, điểm khởi tạo lấy từ đám
-mây thưa COLMAP. Ảnh drone in-the-wild phá cả ba.
-
-| Thuật toán | Nằm ở | Trạng thái | Δ điểm ước tính (thấp tin cậy) |
-|---|---|---|---|
-| Tinh chỉnh tư thế camera | `gaussian_model.init_RT_seq` / `get_RT`, `gaussian_renderer.render` | **bộ khung có, bị TẮT** (§53.1) | +5 … +20 |
-| Khởi tạo hình học bằng DUSt3R | `preprocess.py` (§72) | chạy được, cần checkpoint | +3 … +8 |
-| Mặt nạ vật nhiễu bằng SAM2 | `seg_all_instances.py` (§73) + `compute_instance_losses` | chạy được, cần checkpoint | +0 … +3 |
-| Lịch tăng dần `densify_grad_threshold` | cờ `--schedule_densify_grad_threshold` (`train.py:436`) | chạy được, đúng một dòng | +0 … +1 |
-
-Lịch densify: `densify_grad_threshold += (0.001 − densify_grad_threshold) ·
-(iteration / opt.iterations)` — nội suy tuyến tính `0.0002 → 0.001` (gấp 5× vào
-cuối): cho phép mọc thoải mái lúc đầu, siết dần về sau. Cùng với
-`densify_until_iter` tạo hai tầng phanh — một liên tục, một cắt hẳn.
-
-### 75.3 Năm submodule + hai checkpoint cần có
-
-Khai báo trong `.gitmodules` ở gốc (không được commit nội dung vào repo này):
-
-| Submodule | Đường dẫn | URL |
-|---|---|---|
-| `simple-knn` | `submodules/simple-knn` | `gitlab.inria.fr/bkerbl/simple-knn.git` |
-| `diff-gaussian-rasterization` | `submodules/diff-gaussian-rasterization` | `github.com/graphdeco-inria/diff-gaussian-rasterization` |
-| `dust3r` | `submodules/dust3r` | `github.com/naver/dust3r` |
-| `croco` | `submodules/croco` | `github.com/naver/croco` |
-| `sam2` | `submodules/sam2` | `github.com/facebookresearch/sam2` |
-
-```bash
-git submodule update --init --recursive
-pip install submodules/simple-knn
-pip install submodules/diff-gaussian-rasterization
-cd submodules/sam2 && pip install -e . && cd ../..
-mkdir -p checkpoints/
-wget .../DUSt3R_ViTLarge_BaseDecoder_512_dpt.pth -P checkpoints/   # xem ⚠ §72 linear vs dpt
-wget .../sam2_hiera_large.pt -P checkpoints/
-```
-
-⚠ `.gitignore` từng có dòng `submodules/` nên **5 gitlink chưa bao giờ được
-commit**; clone mới không có thư mục `submodules/`, `git submodule update --init
---recursive` chạy xong báo thành công mà không làm gì (đã sửa ở `b6a6ff0`).
-
----
-
-## 76. Câu hỏi thường gặp
-
-**Q. Ảnh render bị lộn ngược / soi gương.**
-Quy ước hệ trục. Repo dùng COLMAP/OpenCV (x phải, y **xuống**, z **vào màn hình**).
-`readCamerasFromTransforms` (`dataset_readers.py:258`) lật cột 1–2 của `c2w`
-(`c2w[:3, 1:3] *= -1`) khi đọc `transforms.json` kiểu NeRF/OpenGL. Nếu bạn tự nạp pose từ
-nguồn khác mà quên bước lật này, ảnh sẽ lộn.
-
-**Q. `metrics.json` chạy xong nhưng `per_image` rỗng / `analyze_tail` trắng tay.**
-Ghép cặp trượt (§61): `render_test/` là `.jpg` chữ thường, `images/` là `.JPG` chữ hoa. Bản
-hiện tại `raise SystemExit` khi 0 cặp; nếu bạn thấy tệp rỗng thì đang chạy bản `metrics.py`
-cũ. Kiểm tra dòng `"... -> N cap ghep duoc"`.
-
-**Q. Điểm trên thanh tiến độ khác điểm cuối cùng của `metrics.py`?**
-Không khác về **đường đo** — `do_mot_cap` (phần 2, §51) cố ý dùng `skimage` + `uint8` + LPIPS
-`[-1,1]` **y hệt** `metrics.py`. Khác là **tập ảnh** (thanh tiến độ chấm trên `getTestCameras`
-trong bộ nhớ, render bằng tư thế `test_P`; `metrics.py` chấm trên tệp `.jpg` đã ghi ra đĩa)
-và **thời điểm** (mốc 500·k so với checkpoint cuối).
-
-**Q. Tư thế camera có được tối ưu không?**
-Chỉ khi truyền `--optimize_pose` (mặc định **tắt**): khi đó `self.P` (tập **train**) thành
-`nn.Parameter` với `pose_optimizer` riêng. `test_P` (tập test) **không bao giờ** được tối
-ưu — tối ưu tư thế ảnh test là nhìn trộm đáp án. Xem phần 1, §6 và phần 2, §32, §48.
-
-**Q. Chạy 7000 vòng mà lịch canh cho 30000 — có sao không?**
-`ap_dung_lich_co` (phần 1, §16) tự co `position_lr_max_steps`, `densify_until_iter`,
-`densify_from_iter`, `opacity_reset_interval` theo `--iter`. Tắt bằng `--no_auto_schedule`
-khi cần chạy đối chứng đúng như 3DGS gốc.
-
-**Q. `render.py` báo không tìm thấy `cfg_args`.**
-`-m` không trỏ đúng thư mục đã train. `get_combined_args` cần `output/<scene>/cfg_args` do
-`train.py` ghi (§54).
-
-**Q. Vì sao rasterize là CUDA chứ không phải PyTorch thuần?**
-Rasterizer chia ảnh thành tile 16×16, sắp Gaussian theo độ sâu trong từng tile rồi blend;
-forward + backward viết tay trong CUDA, không giữ activation. PyTorch thuần chậm hơn ~hai
-bậc và tốn bộ nhớ cho activation của mọi Gaussian ở mọi tile. Xem phần 2, §33.
-
-**Q. Test PSNR chỉ 9–10 dB ở các lần chạy cũ — mô hình hỏng à?**
-9,57 dB **thấp hơn cả một bức ảnh xám phẳng** (đoán màu trung bình thường được
-12–15 dB). Đó không phải quá khớp — quá khớp thì test tụt về mức ảnh xám chứ
-không xuống dưới. Lần 5 (nhánh DroneSplat) đạt 19,55 dB ngay ở vòng 500 trên cùng
-scene → 9,57 dB kia là **lỗi hệ thống ở tập test** (tư thế camera ảnh test lệch
-hệ quy chiếu, hoặc ~40% khung hình HCM0539 thiếu ảnh nên quỹ đạo COLMAP có lỗ
-hổng lớn), không phải mô hình kém. Việc đầu tiên phải làm: render một ảnh test
-cạnh ảnh thật của nó và **nhìn bằng mắt** (`scripts/analyze_tail.py --copy-worst`,
-hoặc `hinh5_dinh_tinh` của `make_report.py`). Lệch chỗ → sai pose; đúng chỗ sai
-sáng → lệch phơi sáng; cháo pixel → gradient bệnh lý sau reset opacity.
-
-**Q. Các cải tiến đang có đủ chạm mốc ~78 không?**
-Ước tính (giả định lỗi tập test ở trên đã sửa xong, tức đang ở ~63 điểm; **con số
-là ước lượng, không phải đo**):
-
-| Cải tiến | Trạng thái | Δ điểm | Tin cậy |
-|---|---|---|---|
-| Nhân CUDA khâu blend (chạy được nhiều bước hơn) | đã cài | +4 … +6 | cao — nhưng chỉ mua *thời gian*, đường cong chất lượng theo bước đã bão hoà (8k→30k chỉ +1–2 dB) |
-| Bù phơi sáng (`model/exposure.py`) | đã cài, chưa đo | +2 … +8 | thấp — biến thiên lớn |
-| Chính quy hoá độ sâu (`inverse_depth_l1`) | hàm loss có, **đang tắt** (`depth_l1_weight_init = 0` và scene không kèm bản đồ độ sâu) | +2 … +5 | trung bình — cần chạy Depth Anything V2 sinh `<scene>/depths/*.png` trước |
-| Khử răng cưa (lọc EWA kiểu Mip-Splatting) | đã cài | +1 … +2 | cao |
-| Tách `prune_screen_radius` khỏi `opacity_reset_every` | chưa làm | +0 … +2 | trung bình |
-| Truy gradient `1e+12` sau reset opacity | chưa làm | +0 … +4 | thấp |
-
-Cộng dồn thực tế rơi vào khoảng **72 … 90** — quá rộng để hứa 78. Cận dưới 72
-nghĩa là *trượt*; khác biệt 72↔90 gần như hoàn toàn nằm ở hai mục tin cậy thấp
-nhất (bù phơi sáng, gradient bệnh lý). Miếng to nhất trên bàn (33,96 → 63) là
-**sửa lỗi**, không cải tiến nào nhắm vào nó.
-
-**Q. `PSNR_max` đáng bao nhiêu điểm?**
-Xem §70.1 — chênh tới ~10 điểm giữa `PSNR_max ∈ {25, 40}` cho cùng một mô hình.
-Báo cáo kết quả kèm cả dải, và đọc `score_sensitivity` trong `metrics.json`.
-
----
-
-## 77. Chẩn đoán sự cố
-
-| Triệu chứng | Nguyên nhân | Sửa |
-|---|---|---|
-| `CUDA out of memory` khi train | ảnh 1.3K + hàng triệu Gaussian trên T4 16 GB | thêm `-r 2` (render **phải** dùng cùng `-r`); hoặc giảm `--iter`; hoặc bật `--schedule_densify_grad_threshold` (đang bật) |
-| `FileNotFoundError: train_list.txt` | chưa chạy bước `prepare` | `python scripts/run_dronesplat.py prepare --scene <S> --drive-root <...>` |
-| Train chạy nhưng mặt nạ vô tác dụng | khoá `masks.json` là `IMG.JPG` còn `train.py` tra `img.jpg` | `python scripts/run_dronesplat.py fix-masks --scene-dir data/<S>` |
-| OOM-killer giết ở bước `"Saving Gaussians"` | (đã sửa) `list(map(tuple,...))` cấp ~3 GB; hoặc thật sự quá nhiều Gaussian | chạy `scripts/check_save_ram.py`; giảm số Gaussian (siết densify); dùng bản `save_ply` điền theo cột (đã là mặc định) |
-| `metrics.py`: "khong ghep duoc cap nao" | tên/đuôi lệch hoa-thường giữa `render_test/` và `images/` | không cần sửa gì — `_index_by_stem` đã hạ chữ thường; nếu vẫn 0 cặp thì `--gt` trỏ sai thư mục |
-| `check`: "thieu hoac hong checkpoint" | `wget` tải về trang lỗi 404 vài KB | tải lại đúng URL trong thông báo của `check` |
-| `preprocess.py` lỗi shape ở DUSt3R head | tải nhầm `..._512_dpt.pth` khi mã mặc định `..._512_linear.pth` (hoặc ngược lại) | tải bản khớp `--model_path`, hoặc truyền tay đường dẫn |
-| `seg_all_instances.py`: `GlobalHydra is already initialized` | import qua hai đường (`sam2` và `submodules.sam2.sam2`) | chỉ `pip install -e submodules/sam2` rồi `import sam2...` |
-| `assert len(extra_f_names) == ...` khi `render.py` | PLY train ở `sh_degree` khác lúc render | render với đúng `sh_degree` đã train (mặc định 3) |
-
-### 77.1 Chuỗi chẩn đoán SAI → ĐÚNG (từ nhật ký thật)
-
-Phần có giá trị của một báo cáo là chuỗi đo dẫn tới nguyên nhân, kể cả các giả
-thuyết sai — hằng số mượn từ bản cài khác **không mang theo đơn vị**, nên nó im
-lặng sai chứ không báo lỗi.
-
-**① `+0 clone, +0 split` ở mọi vòng densify** (số Gaussian tụt dần: 40.000 →
-18.479; 218.251 → 217.333; test PSNR 11,96 dB).
-
-| | Chẩn đoán |
-|---|---|
-| SAI 1 | "Do độ phân giải — gradient pixel nhỏ đi theo ảnh". Cài `densify_grad_ref_width`, nhân ngưỡng `W/1600`. → Chạy lại ở 1320 px vẫn `+0 clone`. |
-| SAI 2 | "Gradient không chảy về". → Thêm chẩn đoán vào log: `218.251 Gaussian được thấy`, gradient CÓ chảy. |
-| **ĐÚNG** | **Sai đơn vị.** Bản gốc nhân gradient với `0.5·W` để đổi sang NDC (`backward.cu:527`); ngưỡng `2e-4` hiệu chỉnh cho đại lượng *đã nhân*. Gradient của repo này là pixel thuần, nhỏ hơn ~`0.5·(W+H)/2` lần (≈ 660× ở ảnh 1320 px). Sửa: `ngưỡng_pixel = ngưỡng_gốc / (0.5·(W+H)/2)`. Sau khi sửa: grad max `1,09e-07 → 4,80e-07`, densify bùng nổ ở ~bước 500. |
-
-**② Test tụt xa train — mô hình "vừa thiếu khớp vừa quá khớp"** (lần 3: train
-63,28 / test 33,96; chênh 29,3 điểm).
-
-| | Chẩn đoán |
-|---|---|
-| ĐÚNG một phần | "Quá khớp" — bằng chứng: chênh train/test giảm thật khi siết. |
-| SAI (liều lượng) | Hạ `max_points` 1,2 M → 450 k **và** dời `opacity_reset_every` 800 → 3.000. Cả hai chỉ nhắm vế quá khớp (một cái cắt thẳng capacity, cái kia hoãn densify 3.000 bước). → Điểm test 33,96 → **31,74**: LPIPS xấu đi 0,05, mà LPIPS mang trọng số 0,4 — lớn nhất. |
-| **ĐÚNG** | Khi vừa thiếu vừa quá khớp, cắt capacity làm vế thiếu khớp tệ đi nhanh hơn phần thu. Phải **tách hai vấn đề, hai công cụ**: quá khớp bằng regularization (prune tiếp tục, reset opacity), thiếu khớp bằng thêm bước học hiệu quả — không vặn cùng một núm hai chiều ngược nhau. |
-
-**③ Densify chỉ khởi động SAU lần reset opacity đầu tiên.** Suốt 3.000 bước đầu:
-`+0 clone`, số Gaussian đứng nguyên 217k. Ngay sau reset ở bước 3.000, `grad max`
-nhảy `7,5e-07 → 1,26e+05 → 2,98e+12`, densify thêm ~40.000 Gaussian mỗi vòng.
-
-| | Chẩn đoán |
-|---|---|
-| SAI (rút lại) | "Reset opacity quá dày, lần cuối rơi đúng lúc kết thúc". → Lệnh reset nằm trong `if densify_from_iter <= it <= densify_until_iter` nên không bao giờ chạy sau khi densify kết thúc; tính theo tỉ lệ cửa sổ densify thì bản gốc và bản này **bằng nhau** (cứ 20% cửa sổ reset một lần). |
-| **ĐANG NGHI** | Chuỗi nhân quả thật là `reset opacity → sốc gradient 1e+12 → densify mới nổ`. Bản gốc **không** thiết kế vậy. Gradient `1e+12` khi trung bình `1e-07` là **bệnh lý** — nhiều khả năng có Gaussian gần suy biến làm conic (nghịch đảo hiệp phương sai) tràn số. Phải truy trước khi tối ưu thêm: nếu densify đang chạy nhờ một bug số học thì mọi con số điểm đứng trên nền không vững. Việc kèm theo: tách `prune_screen_radius` khỏi `opacity_reset_every` — hiện chúng bị buộc vào nhau trong `densify.py`, dời mốc reset là dời luôn mốc bật prune, làm mọi thí nghiệm về `opacity_reset_every` bị nhiễu. |
-
-**④ OOM-killer giết ở bước `"Saving Gaussians"`** — xem §52.2 và §55. Nguyên nhân:
-`list(map(tuple, attributes))` cấp ~3 GB object Python cùng lúc, sau khi train đã
-xong. Sửa: điền theo cột (đã là mặc định) + `--save_iterations` mặc định
-`3000 5000 7000` để một lần chạy 45 phút không mất trắng.
-
----
-
-## 78. Thuật ngữ
-
-| Thuật ngữ | Nghĩa trong repo này |
-|---|---|
-| **splat** | "bôi" một Gaussian 3D lên mặt phẳng ảnh — hình elip mờ có màu và độ đục |
-| **SH (spherical harmonics)** | biểu diễn màu phụ thuộc hướng nhìn; bậc 0 = màu cơ bản (`f_dc`), bậc 1–3 = phần phụ thuộc góc (`f_rest`, 45 hệ số) |
-| **opacity** | độ đục α của Gaussian; lưu ở dạng thô, `get_opacity = sigmoid(_opacity)` |
-| **densify** | tăng số Gaussian: **clone** (Gaussian nhỏ + gradient lớn → nhân đôi tại chỗ), **split** (Gaussian lớn + gradient lớn → 2 mẫu nhỏ hơn, xoá bản gốc) |
-| **prune** | xoá Gaussian: `opacity < 0.005`, hoặc bán kính màn hình > 20 px, hoặc `max(scale) > 0.1·extent` |
-| **opacity reset** | ép mọi opacity về ≤ 0.01 định kỳ, buộc mô hình "học lại" độ đục thay vì tích luỹ Gaussian đục mãi |
-| **spatial_lr_scale / cameras_extent** | bán kính cảnh (`getNerfppNorm.radius`); nhân vào learning rate vị trí để bước dịch tỉ lệ với kích thước cảnh |
-| **viewspace / screenspace gradient** | `screenspace_points.grad[..., :2]` — gradient của vị trí Gaussian trên màn hình; chuẩn của nó tích luỹ vào `xyz_gradient_accum`, là tiêu chí quyết định densify |
-| **holdout** | cứ mỗi `HOLD` (=8) ảnh giữ 1 ảnh làm test; ảnh test không bao giờ vào bước huấn luyện |
-| **PSNR_norm** | `clamp(PSNR / PSNR_max, 0, 1)` — PSNR đã chuẩn hoá về `[0,1]` cho công thức chấm |
-| **score_partial** | `0.3·SSIM + 0.3·PSNR_norm` — điểm khi thiếu LPIPS, trần 0.6 |
-| **score_of_means** | điểm tính từ (PSNR, SSIM, LPIPS) đã lấy trung bình trước — chỉ để đối chiếu, không phải điểm chính |
-| **DUSt3R** | mạng dự đoán point map trực tiếp từ cặp ảnh; `preprocess.py` dùng nó thay COLMAP, xuất ra định dạng COLMAP |
-| **SAM2 label map** | ảnh nguyên, mỗi pixel mang id thực thể; `masks/masks.json`; id `0` = nền |
-| **auto-schedule (`ap_dung_lich_co`)** | tự co `position_lr_max_steps` / `densify_*` / `opacity_reset_interval` theo `--iter` (mốc gốc 30.000) |
-| **identity view matrix trick** | đặt `viewmatrix = I` cho rasterizer rồi dịch cả đám Gaussian sang hệ camera bằng PyTorch, để gradient chảy được về tensor tư thế |
-
-### 78.1 Ký hiệu toán kèm ví dụ số
-
-Chữ cái chỉ là **cái hộp đựng số**. Bảng dưới thay ngay ký hiệu bằng nghĩa tiếng
-Việt và một con số thật lấy từ cấu hình HCM0539.
-
-| Ký hiệu | Nghĩa | Giá trị / ví dụ số |
-|---|---|---|
-| `P` | số Gaussian trong mô hình | 218.846 khởi tạo → vài trăm nghìn tới ~1,5 triệu khi train |
-| `μ` | tâm một Gaussian (world, 3 số) | `_xyz[i]` |
-| `Σ` | hiệp phương sai 3D (3×3), "hình dạng" | dựng từ `Σ = R S Sᵀ Rᵀ` — luôn nửa xác định dương với mọi `s, q` vì `vᵀΣv = ‖(SR)v‖² ≥ 0` |
-| `Σ'` | hiệp phương sai sau khi chiếu (2×2) | `Σ' = J W Σ Wᵀ Jᵀ` + `0.3·I` (low-pass) |
-| `s = exp(ℓ)` | scale thật từ `_scaling` (lưu ở log) | `dℓ = +0,1` → `s` đổi **+10,5 %** bất kể `s` đang `0,007` hay `20` — vì `ds/dℓ = s` |
-| `o = σ(_opacity)` | opacity, `σ` = sigmoid | khởi tạo `_opacity` qua `inverse_sigmoid(0.1)`; reset ép về `≤ 0,01` |
-| `α = o · G` | độ mờ thực tế tại một pixel | `≤ 0,99` (bị clamp) |
-| `T = ∏_{j<i}(1−α_j)` | độ truyền qua tích luỹ | bắt đầu `1`, dừng sớm khi `< 1e-4`; cập nhật tăng dần trong một biến → `O(n̄)` thay vì `O(n̄²)` mỗi pixel (`n̄ ≈ 200` → nhanh 200×) |
-| `L` | bậc SH tối đa | `L = 3` → `M = (L+1)² = 16` hệ số/kênh (1 `f_dc` + 15 `f_rest`) |
-| `θ` | ngưỡng gradient màn hình để densify | `2×10⁻⁴` (đã nhân NDC); pixel thuần tương đương `3,465e-07` ở 1320 px |
-| `r` (extent) | bán kính cảnh `cameras_extent` | HCM0539: `10,811` |
-| `λ` | trọng số — **ba nghĩa**: D-SSIM `0,2`; hệ số ngưỡng mặt nạ instance `0,4`; trị riêng `λ₁, λ₂` của `Σ'` (bán trục ellipse) |
-| `τ_t` | ngưỡng mặt nạ instance tại bước `t` | `μ_H + σ_H + 0,4·σ_H·(T−t)/T` → đi từ `μ+1,4σ` (đầu) xuống `μ+1,0σ` (cuối) |
-| bán kính `3σ` | cắt splat ở `⌈3√λ_max⌉` | giữ **98,89 %** khối lượng (`1 − e^{-9/2}`), phủ 9× diện tích so với `1σ`; lên `4σ` chỉ thêm 1,08 % mà trả 78 % diện tích — không đáng |
-| PSNR | `20·log₁₀(1/√MSE)` | **+3 dB ⇔ MSE giảm một nửa**; "chênh 1 dB" = sai số bình phương giảm 26 % |
-| `⌈P/256⌉` | số block CUDA | `(P + 255) // 256`; `P = 300 000` → 1172 block, thừa 32 thread (bị `if idx ≥ P: return` chặn) |
-| `ε` | số nhỏ chống chia 0 | `1e-7` ở perspective divide, `1e-15` ở normalize |
-
-> ⚠ Bẫy ký hiệu trong repo này:
-> - `T` có **ba** nghĩa: độ truyền qua (render); vector dịch camera (`cam.T`);
->   ma trận trung gian `T = W·J` trong `computeCov2D`.
-> - `R` vừa là ma trận quay, vừa là số bản sao Gaussian–tile (`num_rendered`,
->   viết `R_inst` cho nghĩa thứ hai).
-> - `Σ` (hoa) là **ma trận hiệp phương sai**, KHÔNG phải phép cộng dồn `∑`.
-> - `S` là **ma trận tỉ lệ**, không phải "diện tích" hay "tổng".
-
----
-
-→ Quay lại [Phần 1 — PHẦN I–V](DIGITAL-TWIN-GS-PIPELINE-1.md) · [Phần 2 — PHẦN VI–X](DIGITAL-TWIN-GS-PIPELINE-2.md)
+| Gaussian (3D Gaussian) | Đơn vị biểu diễn cảnh: một phân bố Gauss 3D có vị trí, hiệp phương sai (scale + rotation), opacity và màu (SH), được rasterize thành "vết" (splat) trên ảnh |
+| SH (Spherical Harmonics — cầu điều hoà) | Khai triển hàm màu phụ thuộc góc nhìn; bậc (degree) càng cao càng biểu diễn được hiệu ứng phản chiếu/góc nhìn phức tạp, đổi lại tốn bộ nhớ hơn |
+| Opacity | Độ mờ/đục của một Gaussian, dùng sigmoid nghịch đảo (`inverse_sigmoid`) để tham số hoá; Gaussian có opacity quá thấp bị coi là "vô hình" và bị prune |
+| Densify (làm dày) | Quá trình thêm Gaussian mới ở vùng thiếu chi tiết, gồm hai thao tác: clone và split |
+| Clone | Nhân đôi một Gaussian nhỏ (đang thiếu chi tiết nhưng đã đủ nhỏ) thành hai bản giữ nguyên scale, dịch nhẹ vị trí |
+| Split | Tách một Gaussian lớn thành N Gaussian con nhỏ hơn (scale chia nhỏ theo hệ số `0.8*N`), dùng khi Gaussian đã đủ lớn nhưng vẫn thiếu chi tiết |
+| Prune (tỉa) | Xoá Gaussian không cần thiết: opacity quá thấp, kích thước màn hình/không gian quá lớn, hoặc bị đánh dấu bởi pruning-score cao |
+| Tile | Ô lưới 16×16 pixel (`BLOCK_X`, `BLOCK_Y`) mà rasterizer CUDA dùng để phân vùng và song song hoá việc vẽ splat lên ảnh |
+| Splat | Kết quả chiếu 2D của một Gaussian 3D lên mặt phẳng ảnh khi rasterize |
+| Importance score | Số nguyên đếm số lượt (qua nhiều camera lấy mẫu) một Gaussian được "bỏ phiếu" là quan trọng cho chất lượng render đa góc nhìn; dùng để lọc ứng viên densify (`metric_mask = importance_score > 5`) |
+| Pruning score | Điểm chuẩn hoá 0..1 đo mức độ *kém* nhất quán đa góc nhìn của một Gaussian (giá trị càng cao càng nên loại bỏ); dùng trong cả pha densify (lấy mẫu theo trọng số `1/(1e-6+1-pruning_score)`) và pha cuối (`pruning_score > 0.9` → prune) |
+| Hold-out | Tập ảnh/camera bị giữ lại không dùng để train, dùng làm test để đo khả năng tổng quát hoá — chọn bằng `idx % llffhold == 0` |
+| Novel view synthesis | Tổng hợp ảnh từ góc nhìn (camera pose) mới không có trong tập ảnh gốc, dựa trên mô hình 3D đã học |
+| LPIPS | "Learned Perceptual Image Patch Similarity" — chỉ số khác biệt cảm nhận, dùng đặc trưng mạng CNN đã học (AlexNet/VGG16/SqueezeNet) thay vì so khớp pixel; càng thấp càng giống |
+| SSIM | "Structural Similarity Index" — đo độ tương đồng cấu trúc (độ sáng, tương phản, cấu trúc cục bộ) qua cửa sổ trượt Gauss; càng cao (gần 1) càng giống |
+| PSNR | "Peak Signal-to-Noise Ratio" — đo sai khác pixel-wise qua MSE, đơn vị dB; càng cao càng giống |
+| Compact box | Vùng bao (bounding) được co gọn quanh mỗi splat để giới hạn số tile nó chạm tới khi rasterize, điều khiển bởi hệ số `mult` |
+| COLMAP sparse | Kết quả tái tạo camera pose + point cloud thưa từ COLMAP structure-from-motion, đọc bởi `scene/dataset_readers.py::readColmapSceneInfo`, nằm trong thư mục `sparse/0/` của scene |
+| Extent | Kích thước (bán kính) không gian của cảnh, tính từ vị trí các camera (`scene.cameras_extent`); dùng làm đơn vị co giãn cho các ngưỡng clone/split và ngưỡng kích thước loại bỏ Gaussian quá to (`0.1 * extent`) |

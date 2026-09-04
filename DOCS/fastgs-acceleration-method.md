@@ -3,6 +3,7 @@
 > Tài liệu này giải thích **FastGS làm gì để huấn luyện 3D Gaussian Splatting trong ~100 giây**.
 > Cách trình bày giống hệt [gaussian-splatting-math.md](gaussian-splatting-math.md): mỗi cơ chế đi kèm công thức, bảng ký hiệu, ví dụ số và phần "vì sao".
 > Tên hàm/tham số trong bài trỏ thẳng tới mã nguồn: `utils/fast_utils.py`, `scene/gaussian_model.py`, `gaussian_renderer/__init__.py`, `train.py`.
+> Mỗi cơ chế còn có một mô phỏng NumPy chạy được (không cần CUDA) trong [`demos/fastgs_mechanisms.py`](../demos/fastgs_mechanisms.py) — tên hàm tương ứng được ghi kèm ngay đầu mỗi phần.
 
 ---
 
@@ -27,6 +28,8 @@ Kết quả: cùng số vòng lặp nhưng mỗi vòng rẻ hơn nhiều, và s�
 ---
 
 ## Phần 1: Bản đồ lỗi nhị phân trên mỗi góc nhìn
+
+> Mô phỏng chạy được: `normalize_minmax()`, `error_mask()` và `accum_metric_counts()` trong [`demos/fastgs_mechanisms.py`](../demos/fastgs_mechanisms.py) (mục "1." khi chạy `python demos/fastgs_mechanisms.py`).
 
 Hàm `compute_gaussian_score_fastgs` (`utils/fast_utils.py:45`) là đóng góp chính. Nó chạy trước mỗi lần densify, lấy mẫu **10 camera ngẫu nhiên** (`sampling_cameras`, `fast_utils.py:10`) và với từng camera làm 3 bước.
 
@@ -62,6 +65,8 @@ trả về ở `render_pkg["accum_metric_counts"]`. Trực giác: **Gaussian $i$
 ---
 
 ## Phần 2: Gộp nhiều góc nhìn thành hai điểm số
+
+> Mô phỏng chạy được: `merge_views()` trong [`demos/fastgs_mechanisms.py`](../demos/fastgs_mechanisms.py) (mục "2.").
 
 Sau khi lặp qua cả 10 camera, hàm gộp lại thành hai đại lượng per-Gaussian.
 
@@ -122,6 +127,8 @@ Chuẩn hoá: $\text{Pruning}_A=1.0$, $\text{Pruning}_B=\dfrac{2.40-0.30}{2.60-0
 
 ## Phần 3: Densification có điều kiện kép
 
+> Mô phỏng chạy được: `densify_masks()` (điều kiện AND khi densify) và `final_prune_fastgs()` (tầng pruning cuối) trong [`demos/fastgs_mechanisms.py`](../demos/fastgs_mechanisms.py) (mục "3.").
+
 Hàm `densify_and_prune_fastgs` (`scene/gaussian_model.py:468`). Một Gaussian chỉ được nhân bản khi **thoả đồng thời hai điều kiện độc lập**.
 
 ### 3.1 — Điều kiện gradient (chọn *ở đâu* cần thêm chi tiết)
@@ -168,6 +175,8 @@ Tầng thứ ba là "dọn dẹp mạnh tay" ở giai đoạn cuối: sau ~15k v
 
 ## Phần 4: Compact box — giảm số tile mỗi splat (`--mult`)
 
+> Mô phỏng chạy được: `tiles_touched()` trong [`demos/fastgs_mechanisms.py`](../demos/fastgs_mechanisms.py) (mục "4.").
+
 3DGS gán mỗi splat 2D cho **mọi tile 16×16 mà bounding box hình chữ nhật của nó chạm tới**. Bounding box tính theo $3\sigma$ của ellipse là **lỏng** — nhiều tile ở góc hộp gần như không nhận đóng góp nào nhưng vẫn phải vào bước sort + blend.
 
 FastGS nhân bán trục của hộp với hệ số `mult`:
@@ -178,7 +187,7 @@ $$\text{half-extent}_{x} = \texttt{mult}\cdot 3\sqrt{\Sigma'_{11}},\qquad
 | `mult` | Hệ quả |
 |---|---|
 | `0.5` (mặc định) | Hộp co còn nửa → số cặp (tile, Gaussian) giảm mạnh → sort & rasterize nhanh hơn |
-| `0.7` (dùng cho Tanks&Temples, Deep Blending trong `train_big.sh`) | Cân bằng an toàn hơn khi splat lớn/nền phức tạp |
+| `0.7` (dùng cho Tanks&Temples, Deep Blending trong cả `train_base.sh` và `train_big.sh`) | Cân bằng an toàn hơn khi splat lớn/nền phức tạp |
 | → 1.0 | Quay về hành vi 3DGS gốc |
 
 Vì đuôi Gaussian ở ngoài ~$2\sigma$ đóng góp $\alpha$ rất nhỏ (công thức (4) trong tài liệu toán), cắt bớt phần rìa hộp gần như **không đổi ảnh** nhưng bỏ được nhiều phép tính. `mult` phải truyền **nhất quán cho cả `train.py` và `render.py`** (thấy rõ trong `train_base.sh`).
@@ -186,6 +195,8 @@ Vì đuôi Gaussian ở ngoài ~$2\sigma$ đóng góp $\alpha$ rất nhỏ (côn
 ---
 
 ## Phần 5: Tách learning rate cho Spherical Harmonics
+
+> Mô phỏng chạy được: `steps_to_converge()` trong [`demos/fastgs_mechanisms.py`](../demos/fastgs_mechanisms.py) (mục "5.").
 
 3DGS dùng một `feature_lr = 0.0025` cho toàn bộ hệ số SH. FastGS chia đôi:
 
@@ -196,11 +207,13 @@ Vì đuôi Gaussian ở ngoài ~$2\sigma$ đóng góp $\alpha$ rất nhỏ (côn
 
 Lý do tách: thành phần bậc thấp mang phần lớn năng lượng màu, dễ bất ổn nếu lr cao; thành phần bậc cao nhỏ và cần nhiều bước để "nở" ra. Cho phần bậc cao một lr lớn hơn giúp màu phụ thuộc góc nhìn **đạt được trong ít vòng lặp hơn** — quan trọng khi tổng ngân sách chỉ ~vài nghìn vòng hiệu dụng.
 
-Xem `train_base.sh`: các cảnh `garden`, `room`, `counter`, `kitchen`, `bonsai` đều đặt `--highfeature_lr 0.02`; các cảnh Tanks&Temples đặt `0.04`.
+Xem `train_base.sh`: các cảnh `garden`, `room`, `counter`, `kitchen`, `bonsai` đều đặt `--highfeature_lr 0.02`; Tanks&Temples đặt `0.04` (`truck`) / `0.042` (`train`); riêng Deep Blending (`playroom`, `drjohnson`) lại đặt *thấp* hơn mặc định (`0.0015`–`0.0025`) vì cảnh trong nhà ít phản xạ specular.
 
 ---
 
 ## Phần 6: Vì sao cộng lại thành "100 giây"?
+
+> Mô phỏng chạy được: `gaussian_trajectory()` trong [`demos/fastgs_mechanisms.py`](../demos/fastgs_mechanisms.py) (mục "6.") — vẽ quỹ đạo số Gaussian 3DGS so với FastGS qua 30.000 vòng, minh hoạ hiệu ứng cộng dồn của các đòn bẩy dưới đây.
 
 | Cơ chế | Cắt giảm cái gì | Đòn bẩy |
 |---|---|---|
@@ -256,8 +269,10 @@ Mặc định trong `arguments/__init__.py` là `100`, nhưng `train_base.sh` th
 
 | Tài liệu | Nội dung |
 |---|---|
-| [gaussian-splatting-math.md](gaussian-splatting-math.md) | Nền tảng toán học 3DGS |
-| [colab-t4-guide.md](colab-t4-guide.md) | Huấn luyện thật trên Colab free T4: preset A, điểm Score theo dõi mỗi 1000 vòng, chống tràn RAM, ba nâng cấp thuần Python, roadmap tầng CUDA |
-| [`fastgs-acceleration-method.ipynb`](../fastgs-acceleration-method.ipynb) | Notebook: Phần 1–6 là mô phỏng chạy được của tài liệu này (không cần CUDA); Phần 7–9 là pipeline huấn luyện thật |
+| [`demos/fastgs_mechanisms.py`](../demos/fastgs_mechanisms.py) | Mô phỏng NumPy chạy được cho từng cơ chế ở trên (`python demos/fastgs_mechanisms.py`, không cần GPU) — hàm tương ứng được ghi ngay đầu mỗi Phần |
+| [`fastgs-acceleration-method.ipynb`](../fastgs-acceleration-method.ipynb) | Notebook chỉ còn phần glue tiếng Anh: dựng pipeline `pipeline/` thật trên Colab T4 (check GPU → config → load dataset → smoke test → train → analytics → submission.zip) — cần GPU |
+| [colab-t4-guide.md](colab-t4-guide.md) | Hướng dẫn vận hành pipeline Colab T4 ở trên: preset, theo dõi tiến độ, xử lý sự cố |
+| [README.md](README.md) | Tổng quan repo và cách bắt đầu |
+| [gaussian-splatting-math.md](gaussian-splatting-math.md) | Nền tảng toán học 3DGS mà tài liệu này giả định người đọc đã biết |
 
 Mã nguồn tương ứng: `utils/fast_utils.py`, `scene/gaussian_model.py:468–540`, `train.py:126–158`, `gaussian_renderer/__init__.py`.

@@ -7,30 +7,28 @@ Tài liệu của fork này. `docs/` và `docs2/` đã được gộp làm một
 | Tài liệu | Nội dung | Đi kèm |
 |---|---|---|
 | [gaussian-splatting-math.md](gaussian-splatting-math.md) | Nền tảng toán học 3DGS: chiếu covariance, alpha blending, loss | — |
-| [fastgs-acceleration-method.md](fastgs-acceleration-method.md) | Cơ chế tăng tốc của FastGS: điểm số nhất quán đa góc nhìn, densify điều kiện kép, compact box `--mult`, tách lr SH | `fastgs-acceleration-method.ipynb` Phần 1–6 |
-| [colab-t4-guide.md](colab-t4-guide.md) | Huấn luyện thật trên Colab free T4: preset A, điểm Score theo dõi, chống tràn RAM, ba nâng cấp thuần Python, roadmap tầng CUDA | `fastgs-acceleration-method.ipynb` Phần 7–9 |
+| [fastgs-acceleration-method.md](fastgs-acceleration-method.md) | Cơ chế tăng tốc của FastGS: điểm số nhất quán đa góc nhìn, densify điều kiện kép, compact box `--mult`, tách lr SH | `demos/fastgs_mechanisms.py` |
+| [colab-t4-guide.md](colab-t4-guide.md) | Huấn luyện thật trên Colab free T4: preset A, điểm Score theo dõi, chống tràn RAM, roadmap tầng CUDA | `fastgs-acceleration-method.ipynb`, `pipeline/` |
+| [pipeline-and-submission.md](pipeline-and-submission.md) | Tham chiếu gói `pipeline/`: bảng cell↔hàm, các trường `Config`, công thức điểm (LPIPS/SSIM/PSNR) và nơi triển khai, hợp đồng `submission.zip`, cách chạy trên dữ liệu riêng | `pipeline/`, `fastgs-acceleration-method.ipynb` |
 
-Notebook nằm ở gốc repo: [`fastgs-acceleration-method.ipynb`](../fastgs-acceleration-method.ipynb).
-Phần 1–6 chạy được không cần CUDA (mô phỏng thu nhỏ bằng NumPy); Phần 7–9 cần GPU.
+### Cấu trúc repo hiện tại
 
-## Lưu trữ — mô tả codebase DroneSplat cũ, **đã lỗi thời**
+- `pipeline/` — toàn bộ logic Python thuần (không phụ thuộc Colab để import): `config.py` (tham số), `env.py` (máy/GPU/RAM), `data.py` (tải & liệt kê scene), `score.py` (công thức điểm chính thức), `trainer.py` (vòng train FastGS), `submission.py` (render test pose + đóng gói/kiểm tra zip), `report.py` (bảng/biểu đồ), `deliver.py` (đóng gói model + tải về), `run.py` (điều phối toàn bộ). Chi tiết: [pipeline-and-submission.md](pipeline-and-submission.md).
+- `fastgs-acceleration-method.ipynb` (gốc repo) — chỉ còn **glue code tiếng Anh**, 9 code cell (clone → GPU → config → data → smoke test → train → analytics → submission+download); mọi logic nằm trong `pipeline/*.py`; cần GPU.
+- `demos/fastgs_mechanisms.py` — các mô phỏng thu nhỏ bằng NumPy của cơ chế FastGS (không cần CUDA), tách ra khỏi notebook: `python demos/fastgs_mechanisms.py`.
 
-| Tài liệu | Nội dung |
-|---|---|
-| [DIGITAL-TWIN-GS-PIPELINE-1.md](DIGITAL-TWIN-GS-PIPELINE-1.md) | Giải phẫu một phiên train: khởi tạo `Scene`, `GaussianModel`, tư thế camera |
-| [DIGITAL-TWIN-GS-PIPELINE-2.md](DIGITAL-TWIN-GS-PIPELINE-2.md) | Thân vòng lặp train, mặt nạ, backward, densify, lưu |
-| [DIGITAL-TWIN-GS-PIPELINE-3.md](DIGITAL-TWIN-GS-PIPELINE-3.md) | Lưu, render, chấm điểm, đối chiếu output |
+## Tham chiếu sâu — giải phẫu toàn bộ một phiên train
 
-> ⚠️ **Ba tài liệu này mô tả một `train.py` khác.** Chúng mổ xẻ lệnh
-> `python train.py -s data/HCM0539 --scene HCM0539 --iter 7000 --use_masks --schedule_densify_grad_threshold`,
-> nhưng `train.py` hiện tại **không còn** các cờ `--scene`, `--iter`, `--use_masks`,
-> `--schedule_densify_grad_threshold`, cũng như luồng mặt nạ SAM2 / tinh chỉnh tư thế DUSt3R.
->
-> Giữ lại vì phần **giải phẫu chung của 3DGS** (đọc COLMAP, dựng camera, backward qua rasterizer,
-> ghi `.ply`, chấm PSNR/SSIM/LPIPS) vẫn đúng và rất chi tiết. Nhưng **mọi tên cờ, đường dẫn và
-> chữ ký hàm phải đối chiếu lại với mã nguồn** trước khi tin.
->
-> Muốn hiểu luồng train hiện tại: đọc `fastgs-acceleration-method.md` + `colab-t4-guide.md`.
+Bộ ba tài liệu chi tiết nhất repo: mỗi file, mỗi hàm, mỗi hằng số, mỗi nhánh `if` mà một phiên
+train chạm tới, theo đúng thứ tự thực thi. Đánh số mục §1–§48 chạy liên tục qua cả ba tài liệu.
+Đã viết lại hoàn toàn theo mã nguồn FastGS hiện tại (bản cũ mô tả codebase DroneSplat với
+`--use_masks`, SAM2, DUSt3R, `pose_optimizer` — những thứ **không còn tồn tại**).
+
+| Tài liệu | Mục | Nội dung |
+|---|---|---|
+| [DIGITAL-TWIN-GS-PIPELINE-1.md](DIGITAL-TWIN-GS-PIPELINE-1.md) | §1–§18 | Từ câu lệnh tới dữ liệu sẵn sàng: hai đường chạy (CLI vs `pipeline/`), bản đồ hệ thống, toàn bộ cờ CLI, dựng `Scene` từ COLMAP, `GaussianModel.create_from_pcd` + `training_setup` |
+| [DIGITAL-TWIN-GS-PIPELINE-2.md](DIGITAL-TWIN-GS-PIPELINE-2.md) | §19–§33 | Một vòng lặp train: `render_fastgs` + compact box, rasterizer CUDA, loss, `backward`, điểm số đa góc nhìn, densify điều kiện kép, ba tầng prune, phẫu thuật trạng thái Adam |
+| [DIGITAL-TWIN-GS-PIPELINE-3.md](DIGITAL-TWIN-GS-PIPELINE-3.md) | §34–§48 | Lưu `.ply`, render, chấm điểm, `submission.zip`, bảng hằng số toàn hệ thống, bảng tra nhanh, chẩn đoán sự cố, thuật ngữ |
 
 ## Bản đồ tài liệu ↔ mã nguồn
 

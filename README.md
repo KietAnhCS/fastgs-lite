@@ -31,18 +31,25 @@ Extra task branches from upstream (dynamic scenes, sparse view, surface reconstr
 
 ### Colab (the path this fork is built for)
 
-Open [`fastgs-acceleration-method.ipynb`](fastgs-acceleration-method.ipynb) in Colab, set the runtime to **T4 GPU**, and run top to bottom.
+Open [`fastgs-acceleration-method.ipynb`](fastgs-acceleration-method.ipynb) in Colab, set the runtime to **T4 GPU**, and run top to bottom. The notebook is glue only — every step is a function in [`pipeline/`](pipeline).
 
-| Part | Contents | Needs a GPU |
+| Step | Notebook cell | Module |
 |---|---|---|
-| 1–6 | How FastGS works, each mechanism paired with a runnable NumPy micro-simulation | no |
-| 7 | Real training: tuned preset, `Score` every 1000 iterations, RAM cleanup, render + per-view statistics, model download | yes |
-| 8 | Three pure-Python upgrades and an ablation plotting **Score against wall-clock minutes** | yes |
-| 9 | Roadmap for CUDA-level work (Mip-Splatting, StopThePop, 2DGS/GOF, gsplat-MCMC) | — |
+| Install deps, check the GPU | 1 | `pipeline/env.py` |
+| One config object, everything in one place | 2 | `pipeline/config.py` |
+| Download data, list scenes, data profile | 3 | `pipeline/data.py` |
+| Smoke test (a few hundred iterations) | 4 | `pipeline/run.py` |
+| Train every scene, live `Score` + progress % | 5 | `pipeline/trainer.py`, `pipeline/score.py` |
+| Analytics: per-scene tables and plots | 6 | `pipeline/report.py` |
+| `submission.zip`, format check, auto-download | 7 | `pipeline/submission.py`, `pipeline/deliver.py` |
 
-**Run all works out of the box.** Every switch lives in one config cell (7.0): the demo scene downloads itself, training defaults to 7000 iterations so the run finishes in 15–25 minutes, and the ablation plus the browser download are off by default. Every heavy cell is guarded — a missing dataset or a skipped training prints a message instead of raising, so Run all never breaks midway.
+Scoring follows the competition definition: `Score = 0.4 (1 - LPIPS) + 0.3 SSIM + 0.3 clamp(PSNR / PSNR_max, 0, 1)`,
+averaged over scenes. The submission is `submission.zip` with one folder per scene holding `0001.png`, `0002.png`, ...
+at the ground-truth resolution.
 
-To use your own data, set `USE_DEMO_DATASET = False` and point `SOURCE_PATH` at a COLMAP folder. For full-quality results set `ITERATIONS = 30000`.
+To use your own data, point `data_root` at a folder of COLMAP scenes (or set `dataset_url` to a ZIP). For full-quality
+results set `iterations=30000`. The FastGS mechanisms themselves are simulated, CUDA-free, in
+[`demos/fastgs_mechanisms.py`](demos/fastgs_mechanisms.py).
 
 ### Local
 
