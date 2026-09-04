@@ -45,7 +45,8 @@ at the ground-truth resolution.
 
 To use your own data, point `data_root` at a folder of COLMAP scenes (or set `dataset_url` to a ZIP). For full-quality
 results set `iterations=30000`. The FastGS mechanisms themselves are simulated, CUDA-free, in
-[`demos/fastgs_mechanisms.py`](demos/fastgs_mechanisms.py).
+[`demos/fastgs_mechanisms.py`](demos/fastgs_mechanisms.py); the per-iteration cost model and the FastGS-lite vs 3DGS
+measurement are in [`demos/fastgs_cost_model.py`](demos/fastgs_cost_model.py).
 
 ### Local
 
@@ -323,8 +324,7 @@ Deep dives live in [`DOCS/`](DOCS/README.md). **They are written in Vietnamese**
 
 | Document | Covers | Notebook part |
 |---|---|---|
-| [DOCS/gaussian-splatting-math.md](DOCS/gaussian-splatting-math.md) | 3DGS foundations: covariance projection, alpha blending, the loss | — |
-| [DOCS/fastgs-acceleration-method.md](DOCS/fastgs-acceleration-method.md) | FastGS mechanisms: multi-view consistency score, dual-condition densification, compact box, split SH learning rates | 1–6 |
+| [DOCS/fastgs-acceleration-method.md](DOCS/fastgs-acceleration-method.md) | Self-contained: 3DGS math foundations (covariance projection, alpha blending, the loss) → a per-iteration cost model → the three acceleration levers (multi-view consistency score, compact box, sparse Adam schedule) → **the FastGS-lite vs 3DGS measurement** | 1–6 |
 | [DOCS/colab-t4-guide.md](DOCS/colab-t4-guide.md) | Colab T4 playbook: tuned preset with per-parameter reasoning, the progress score and where its marginal value lies, the anti-OOM rules, three upgrades, CUDA roadmap | 7–9 |
 | [DOCS/DIGITAL-TWIN-GS-PIPELINE-{1,2,3}.md](DOCS/README.md) | Archived line-by-line anatomy of an older DroneSplat-era `train.py`. The general 3DGS walkthrough still holds, but **every flag name must be re-checked against the code** | — |
 

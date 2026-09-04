@@ -3,7 +3,7 @@
 > Tài liệu đồng hành của notebook [`fastgs-acceleration-method.ipynb`](../fastgs-acceleration-method.ipynb) và gói [`pipeline/`](../pipeline).
 > Notebook chỉ gọi hàm trong `pipeline/`; toàn bộ code trong notebook và trong `pipeline/*.py` là **tiếng Anh** (tài liệu này viết bằng tiếng Việt).
 > Mô phỏng thu nhỏ các cơ chế fastgs-lite (không cần CUDA): [`demos/fastgs_mechanisms.py`](../demos/fastgs_mechanisms.py) — xem [fastgs-acceleration-method.md](fastgs-acceleration-method.md).
-> Nền tảng toán học 3DGS: [gaussian-splatting-math.md](gaussian-splatting-math.md).
+> Nền tảng toán học 3DGS: [fastgs-acceleration-method.md](fastgs-acceleration-method.md) Phần I.
 
 Mục tiêu: **chất lượng cao nhất trên mỗi phút GPU** với ràng buộc của Colab free, và train xong vẫn **lấy được mô hình về máy**.
 
