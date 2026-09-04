@@ -1,6 +1,6 @@
 # DIGITAL TWIN GS PIPELINE (2/3) — Một vòng lặp train: render, loss, backward, densify
 
-Tài liệu này mổ xẻ đúng một vòng lặp `for iteration in range(...)` của FastGS: từ lúc bốc camera, gọi rasterizer CUDA, tính loss, `loss.backward()`, đến các bước điều khiển mật độ Gaussian (densify/prune/reset) và bước `optimizer.step()`. Toàn bộ nội dung được đối chiếu trực tiếp với `train.py` (đường dòng lệnh) và `pipeline/trainer.py::train_scene()` (đường notebook), không mang lại bất kỳ khái niệm nào từ bản tài liệu cũ (mask SAM2, DUSt3R, `pose_optimizer`, `compute_combined_loss`... — những thứ đó **không tồn tại** trong mã nguồn hiện tại).
+Tài liệu này mổ xẻ đúng một vòng lặp `for iteration in range(...)` của fastgs-lite: từ lúc bốc camera, gọi rasterizer CUDA, tính loss, `loss.backward()`, đến các bước điều khiển mật độ Gaussian (densify/prune/reset) và bước `optimizer.step()`. Toàn bộ nội dung được đối chiếu trực tiếp với `train.py` (đường dòng lệnh) và `pipeline/trainer.py::train_scene()` (đường notebook), không mang lại bất kỳ khái niệm nào từ bản tài liệu cũ (mask SAM2, DUSt3R, `pose_optimizer`, `compute_combined_loss`... — những thứ đó **không tồn tại** trong mã nguồn hiện tại).
 
 ## MỤC LỤC
 
@@ -129,7 +129,7 @@ _ = viewpoint_indices.pop(rand_idx)
 def render_fastgs(viewpoint_camera, pc: GaussianModel, pipe, bg_color, mult,
                    scaling_modifier=1.0, override_color=None, get_flag=None, metric_map=None)
 ```
-Vòng lặp train luôn gọi `render_fastgs(viewpoint_cam, gaussians, pipe, bg, opt.mult)` — không truyền `get_flag`/`metric_map` (dùng giá trị mặc định `None`); hai tham số này chỉ được truyền tường minh bởi `compute_gaussian_score_fastgs` khi cần thu thập điểm số FastGS (xem §28).
+Vòng lặp train luôn gọi `render_fastgs(viewpoint_cam, gaussians, pipe, bg, opt.mult)` — không truyền `get_flag`/`metric_map` (dùng giá trị mặc định `None`); hai tham số này chỉ được truyền tường minh bởi `compute_gaussian_score_fastgs` khi cần thu thập điểm số fastgs-lite (xem §28).
 
 **`screenspace_points`** (dòng 27):
 ```python
@@ -139,7 +139,7 @@ screenspace_points = torch.zeros((pc.get_xyz.shape[0], 4), dtype=pc.get_xyz.dtyp
 
 **`tanfovx`/`tanfovy`** (dòng 34-35): `tan(FoVx/2)`, `tan(FoVy/2)` — nửa góc nhìn ngang/dọc của camera, dùng để rasterizer chuyển toạ độ camera-space sang screen-space (tham số chuẩn của phép chiếu perspective).
 
-**`metric_map`** (dòng 37-38): nếu không truyền, khởi tạo tensor 0 kiểu `int` dài `H*W` trên CUDA — buffer để rasterizer cộng dồn số liệu (đếm) phục vụ chấm điểm FastGS khi `get_flag=True` (xem §28); trong render bình thường của vòng lặp train nó chỉ là buffer rỗng không dùng tới.
+**`metric_map`** (dòng 37-38): nếu không truyền, khởi tạo tensor 0 kiểu `int` dài `H*W` trên CUDA — buffer để rasterizer cộng dồn số liệu (đếm) phục vụ chấm điểm fastgs-lite khi `get_flag=True` (xem §28); trong render bình thường của vòng lặp train nó chỉ là buffer rỗng không dùng tới.
 
 **`GaussianRasterizationSettings`** (dòng 40-56) — mọi field và nguồn gốc:
 
@@ -157,15 +157,15 @@ screenspace_points = torch.zeros((pc.get_xyz.shape[0], 4), dtype=pc.get_xyz.dtyp
 | `prefiltered` | `False` | luôn tắt (không lọc trước Gaussian ngoài frustum ở phía Python) |
 | `debug` | `pipe.debug` | bật dump `snapshot_fw.dump`/`snapshot_bw.dump` khi lỗi CUDA (xem §19, `--debug_from`) |
 | `get_flag` | tham số hàm (mặc định `None`) | cờ bật thu thập `metric_map` trong kernel CUDA |
-| `metric_map` | tính ở trên hoặc truyền vào | buffer đếm cho chấm điểm FastGS |
+| `metric_map` | tính ở trên hoặc truyền vào | buffer đếm cho chấm điểm fastgs-lite |
 
-**Compact box — `mult`**: giá trị này đi thẳng vào `GaussianRasterizationSettings.mult` rồi xuống kernel CUDA `duplicateToTilesTouched` (`submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/auxiliary.h:318-358`). Kernel tính ngưỡng cắt hộp bao (bounding box) mỗi splat theo kiểu SNUGBOX: `t = 2*log(opacity*255)`, sau đó `t = mult * t` (dòng 337-338, biến `t` được chú thích là "beta in Compact Box"). `t` càng nhỏ (mult càng nhỏ) → hộp bao ellipse càng hẹp → splat chạm ít tile 16×16 hơn → ít công việc rasterize hơn (nhanh hơn) nhưng có nguy cơ cắt mất phần đuôi mờ của Gaussian nếu `mult` quá nhỏ. Giá trị mặc định `opt.mult = 0.5` (`arguments/__init__.py:100`), các preset lớn (`train_big.sh`, README) dùng `--mult 0.7` cho scene lớn/nhiều chi tiết. **`--mult` phải khớp giữa `train.py` và `render.py`** khi render lại sau train (ghi rõ trong `README.md:137`) vì nó ảnh hưởng trực tiếp đến hình dạng splat được rasterize.
+**Compact box — `mult`**: giá trị này đi thẳng vào `GaussianRasterizationSettings.mult` rồi xuống kernel CUDA `duplicateToTilesTouched` (`submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/auxiliary.h:318-358`). Kernel tính ngưỡng cắt hộp bao (bounding box) mỗi splat theo kiểu SNUGBOX: `t = 2*log(opacity*255)`, sau đó `t = mult * t` (dòng 337-338, biến `t` được chú thích là "beta in Compact Box"). `t` càng nhỏ (mult càng nhỏ) → hộp bao ellipse càng hẹp → splat chạm ít tile 16×16 hơn → ít công việc rasterize hơn (nhanh hơn) nhưng có nguy cơ cắt mất phần đuôi mờ của Gaussian nếu `mult` quá nhỏ. Giá trị mặc định `opt.mult = 0.5` (`arguments/__init__.py:101`), các preset lớn (`train_big.sh`, README) dùng `--mult 0.7` cho scene lớn/nhiều chi tiết. **`--mult` phải khớp giữa `train.py` và `render.py`** khi render lại sau train (ghi rõ trong `README.md:137`) vì nó ảnh hưởng trực tiếp đến hình dạng splat được rasterize.
 
 **`compute_cov3D_python` / `convert_SHs_python`** (dòng 70-88, cả hai mặc định `False` trong `PipelineParams`, `arguments/__init__.py:67-68`):
 - Nếu `pipe.compute_cov3D_python=True`: `cov3D_precomp = pc.get_covariance(scaling_modifier)` — hiệp phương sai 3D được tính sẵn ở phía Python (chậm hơn, dùng để debug/so sánh), rasterizer CUDA sẽ nhận `cov3D_precomp` thay vì tự tính từ `scales`/`rotations`.
-- Nếu `False` (mặc định): `scales = pc.get_scaling`, `rotations = pc.get_rotation` được truyền thẳng, rasterizer CUDA tự dựng ma trận hiệp phương sai — nhanh hơn, đường đi mặc định của FastGS.
+- Nếu `False` (mặc định): `scales = pc.get_scaling`, `rotations = pc.get_rotation` được truyền thẳng, rasterizer CUDA tự dựng ma trận hiệp phương sai — nhanh hơn, đường đi mặc định của fastgs-lite.
 - Nếu `pipe.convert_SHs_python=True`: SH được eval thành RGB ngay ở Python qua `eval_sh(...)` (`utils/sh_utils.py`), kết quả clamp `max(sh2rgb+0.5, 0)` rồi truyền làm `colors_precomp` — rasterizer không cần làm việc với hệ số SH nữa.
-- Nếu `False` (mặc định): `dc, shs = pc.get_features_dc, pc.get_features_rest` được truyền thẳng, kernel CUDA tự eval SH→RGB theo từng tia nhìn — đây là đường mặc định, tách riêng `dc` (bậc 0, màu nền) khỏi `shs` (các bậc còn lại) vì FastGS xử lý learning-rate hai nhóm này riêng (`lowfeature_lr` cho `f_dc`, `highfeature_lr` cho `f_rest`, xem §20).
+- Nếu `False` (mặc định): `dc, shs = pc.get_features_dc, pc.get_features_rest` được truyền thẳng, kernel CUDA tự eval SH→RGB theo từng tia nhìn — đây là đường mặc định, tách riêng `dc` (bậc 0, màu nền) khỏi `shs` (các bậc còn lại) vì fastgs-lite xử lý learning-rate hai nhóm này riêng (`lowfeature_lr` cho `f_dc`, `highfeature_lr` cho `f_rest`, xem §20).
 
 ## 23. Gọi rasterizer CUDA
 
@@ -173,7 +173,7 @@ screenspace_points = torch.zeros((pc.get_xyz.shape[0], 4), dtype=pc.get_xyz.dtyp
 ```python
 rendered_image, radii, accum_metric_counts = rasterizer(...)
 ```
-Xác nhận bằng chữ ký `forward` của `_RasterizeGaussians` trong submodule (`submodules/diff-gaussian-rasterization_fastgs/diff_gaussian_rasterization_fastgs/__init__.py:110`: `return color, radii, accum_metric_counts`). Khác với 3DGS gốc (chỉ trả `color, radii`), FastGS **thêm** `accum_metric_counts` — buffer đếm tích luỹ theo `metric_map`, dùng cho chấm điểm/pruning đa góc nhìn (§28); trong render bình thường của vòng lặp train, `render_fastgs` trả nó ra trong dict (`"accum_metric_counts"`, dòng 109) nhưng `train.py`/`train_scene` **không đọc** giá trị này ở đường train chính — chỉ `compute_gaussian_score_fastgs` mới dùng.
+Xác nhận bằng chữ ký `forward` của `_RasterizeGaussians` trong submodule (`submodules/diff-gaussian-rasterization_fastgs/diff_gaussian_rasterization_fastgs/__init__.py:110`: `return color, radii, accum_metric_counts`). Khác với 3DGS gốc (chỉ trả `color, radii`), fastgs-lite **thêm** `accum_metric_counts` — buffer đếm tích luỹ theo `metric_map`, dùng cho chấm điểm/pruning đa góc nhìn (§28); trong render bình thường của vòng lặp train, `render_fastgs` trả nó ra trong dict (`"accum_metric_counts"`, dòng 109) nhưng `train.py`/`train_scene` **không đọc** giá trị này ở đường train chính — chỉ `compute_gaussian_score_fastgs` mới dùng.
 
 `render_fastgs` build dict trả về (dòng 106-110):
 ```python
@@ -193,7 +193,7 @@ alpha = min(0.99, opacity * exp(power))      # power: hàm mũ Gaussian 2D tại
 C    += color * alpha * T                     # cộng dồn màu, trọng số bởi độ trong suốt còn lại T
 T    *= (1 - alpha)                           # cập nhật độ trong suốt còn lại cho lớp sau
 ```
-Vòng lặp dừng sớm khi `T < 0.0001` (tile coi như đã bão hoà, các Gaussian xa hơn không còn đóng góp đáng kể) — đây là early-termination chuẩn của 3DGS, không phải cơ chế riêng của FastGS.
+Vòng lặp dừng sớm khi `T < 0.0001` (tile coi như đã bão hoà, các Gaussian xa hơn không còn đóng góp đáng kể) — đây là early-termination chuẩn của 3DGS, không phải cơ chế riêng của fastgs-lite.
 
 ## 24. `l1_loss` và `fused_ssim`
 
@@ -229,7 +229,7 @@ Giá trị mặc định: `self.lambda_dssim = 0.2` (`arguments/__init__.py:86`,
 
 Preset notebook ghi đè: `pipeline/config.py:44` truyền `"--lambda_dssim", "0.25"` vào `build_args` — tức đường train qua notebook luôn train với `λ = 0.25`, coi trọng SSIM (cấu trúc ảnh) hơn một chút so với mặc định CLI `0.2`. Đây là ví dụ minh hoạ số cụ thể của cấu hình mặc định notebook, không phải quy tắc cố định — người dùng CLI hoàn toàn có thể tự truyền `--lambda_dssim` khác.
 
-**Không có mask loss, không có pose loss trong codebase hiện tại.** Toàn bộ `loss` chỉ gồm hai số hạng L1 và DSSIM ở trên — không có `compute_combined_loss`, không có `compute_instance_losses`, không có nhánh cộng thêm theo mask SAM2 hay theo sai số pose như tài liệu cũ mô tả; những hàm/khái niệm đó không tồn tại trong `train.py`, `pipeline/trainer.py`, `utils/loss_utils.py`, hay `utils/fast_utils.py` của codebase hiện tại (đã kiểm tra: hàm `get_loss`/`compute_photometric_loss` trong `utils/fast_utils.py` chỉ được dùng nội bộ trong luồng chấm điểm FastGS ở PHẦN V, không nằm trong công thức loss chính của vòng lặp train).
+**Không có mask loss, không có pose loss trong codebase hiện tại.** Toàn bộ `loss` chỉ gồm hai số hạng L1 và DSSIM ở trên — không có `compute_combined_loss`, không có `compute_instance_losses`, không có nhánh cộng thêm theo mask SAM2 hay theo sai số pose như tài liệu cũ mô tả; những hàm/khái niệm đó không tồn tại trong `train.py`, `pipeline/trainer.py`, `utils/loss_utils.py`, hay `utils/fast_utils.py` của codebase hiện tại (đã kiểm tra: hàm `get_loss`/`compute_photometric_loss` trong `utils/fast_utils.py` chỉ được dùng nội bộ trong luồng chấm điểm fastgs-lite ở PHẦN V, không nằm trong công thức loss chính của vòng lặp train).
 
 ---
 
@@ -293,7 +293,7 @@ gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visib
 
 Tất cả các bộ đếm này (`xyz_gradient_accum`, `xyz_gradient_accum_abs`, `denom`, `max_radii2D`) bị **reset về 0** mỗi khi có Gaussian mới sinh ra hoặc bị xoá, trong `densification_postfix` (dòng 426-429) và `prune_points` (dòng 375-379) — chúng chỉ tích luỹ *giữa hai lần densify liên tiếp*, không phải trong suốt quá trình train.
 
-## 28. `sampling_cameras` + `compute_gaussian_score_fastgs` — trái tim của FastGS
+## 28. `sampling_cameras` + `compute_gaussian_score_fastgs` — trái tim của fastgs-lite
 
 Toàn bộ logic nằm trong `utils/fast_utils.py` (106 dòng). Đây là cơ chế "đa góc nhìn" thay thế cho gradient thuần của 3DGS gốc.
 
@@ -371,7 +371,7 @@ all_splits = split_qualifiers AND grad_qualifiers_abs       # Gaussian lớn + g
 ```
 `extent = scene.cameras_extent` truyền từ caller — kích thước cảnh (bán kính bao camera), nên `args.dense * extent` là ngưỡng kích thước tương đối theo scale thực của scene, không phải hằng số tuyệt đối.
 
-**Bước B — điều kiện kép với `importance_score`** (dòng 492-497): đây là đóng góp chính của FastGS so với 3DGS gốc.
+**Bước B — điều kiện kép với `importance_score`** (dòng 492-497): đây là đóng góp chính của fastgs-lite so với 3DGS gốc.
 ```python
 metric_mask = importance_score > 5
 densify_and_clone_fastgs(metric_mask, all_clones)
@@ -397,7 +397,15 @@ if iteration < opt.densify_until_iter:              # 15_000
     if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:   # 500, 100
         ... gọi compute_gaussian_score_fastgs rồi densify_and_prune_fastgs
 ```
-(`train.py:127,132-145`; `pipeline/trainer.py:120,124-132`) — tức **mỗi 100 iteration** (`densification_interval = 100`), bắt đầu sau iteration 500 (`densify_from_iter = 500`), và dừng hẳn khi `iteration >= densify_until_iter = 15_000`. Với cấu hình notebook mặc định `iterations = 7000` (`pipeline/config.py:31`), điều kiện `iteration < 15_000` luôn đúng suốt toàn bộ quá trình train — nghĩa là densify chạy đều đặn mỗi 100 iteration từ iteration 600 đến 6900 mà không bao giờ chạm mốc dừng 15k.
+(`train.py:127,132-145`; `pipeline/trainer.py:120,124-132`) — bắt đầu sau iteration 500 (`densify_from_iter = 500`) và dừng hẳn khi `iteration >= densify_until_iter = 15_000`. Nhịp densify khác nhau giữa hai đường chạy:
+
+| Đường chạy | `densification_interval` | Nguồn |
+|---|---|---|
+| `train.py` không truyền cờ | **100** | mặc định `arguments/__init__.py:88` |
+| `train_base.sh` / `train_big.sh` | **500** | truyền `--densification_interval 500` |
+| Notebook / `pipeline/` | **500** | `Config.train_extra_args`, `pipeline/config.py:43` |
+
+Với cấu hình notebook mặc định `iterations = 7000` (`pipeline/config.py:31`), điều kiện `iteration < 15_000` luôn đúng suốt toàn bộ quá trình train — densify chạy mỗi 500 iteration từ iteration 1000 đến 6500 mà không bao giờ chạm mốc dừng 15k.
 
 ## 30. Ba tầng pruning + `final_prune_fastgs`
 
@@ -407,7 +415,7 @@ if iteration < opt.densify_until_iter:              # 15_000
 | 2. Lấy mẫu ngân sách xoá (không phải một tầng độc lập, mà là cách *thực thi* tầng 1) | Cùng lúc với tầng 1, ngay sau khi tính `prune_mask` | Trong số các điểm đã bị `prune_mask` đánh dấu, chỉ xoá `remove_budget = floor(0.5 * số điểm bị đánh dấu)` điểm, lấy mẫu có trọng số `1/(pruning_score_inverse)` bằng `torch.multinomial` không hoàn lại | `remove_budget = int(0.5 * to_remove)`; trọng số = `1/(1e-6 + (1 - pruning_score))` | `scene/gaussian_model.py:505-518` |
 | 3. `final_prune_fastgs` (hậu kỳ) | Mỗi 3000 iter, chỉ khi `15_000 < iteration < 30_000` | `opacity < min_opacity` HOẶC `pruning_score > 0.9` | `min_opacity = 0.1` (khác hẳn 0.005 của tầng 1); ngưỡng `pruning_score` cố định `0.9` | `scene/gaussian_model.py:533-540`; gọi ở `train.py:153-158`/`pipeline/trainer.py:137-140` |
 
-Ghi chú quan trọng: **tầng 2 không phải là một cơ chế "prune điểm-mờ theo mẫu" tách biệt** — comment trong code còn nói thẳng "The budget is not necessary for our method" (`scene/gaussian_model.py:509`), tức nhóm tác giả tự nhận đây là phần thừa kế từ code cũ (kiểu Taming-3DGS) mà không có tác dụng bắt buộc gì trong FastGS. Nó vẫn **chạy thật** mỗi lần densify: giới hạn số điểm bị prune ở tầng 1 xuống còn phân nửa, ưu tiên xoá trước những điểm có `pruning_score` thấp (vì trọng số tỉ lệ nghịch với `pruning_score`, `scores = 1 - pruning_score`, nên điểm có `pruning_score` càng nhỏ, `scores` càng lớn, trọng số lấy mẫu `1/(1e-6+scores)` càng nhỏ — nghĩa là thực ra trọng số lấy mẫu tỉ lệ **nghịch** với `1 - pruning_score`, tức các điểm **pruning_score cao** (được multi-view đánh giá là tệ) mới có xác suất bị chọn xoá cao hơn — khớp với vai trò của `pruning_score` là "điểm càng cao càng nên xoá").
+Ghi chú quan trọng: **tầng 2 không phải là một cơ chế "prune điểm-mờ theo mẫu" tách biệt** — comment trong code còn nói thẳng "The budget is not necessary for our method" (`scene/gaussian_model.py:509`), tức nhóm tác giả tự nhận đây là phần thừa kế từ code cũ (kiểu Taming-3DGS) mà không có tác dụng bắt buộc gì trong fastgs-lite. Nó vẫn **chạy thật** mỗi lần densify: giới hạn số điểm bị prune ở tầng 1 xuống còn phân nửa, ưu tiên xoá trước những điểm có `pruning_score` thấp (vì trọng số tỉ lệ nghịch với `pruning_score`, `scores = 1 - pruning_score`, nên điểm có `pruning_score` càng nhỏ, `scores` càng lớn, trọng số lấy mẫu `1/(1e-6+scores)` càng nhỏ — nghĩa là thực ra trọng số lấy mẫu tỉ lệ **nghịch** với `1 - pruning_score`, tức các điểm **pruning_score cao** (được multi-view đánh giá là tệ) mới có xác suất bị chọn xoá cao hơn — khớp với vai trò của `pruning_score` là "điểm càng cao càng nên xoá").
 
 Đúng như phần task đề cập, cần xác minh xem có tầng "prune ngẫu nhiên theo opacity thấp" độc lập nào khác không — không có; toàn bộ logic pruning nằm trong hai hàm `densify_and_prune_fastgs` (đuôi hàm) và `final_prune_fastgs`, không có hàm riêng biệt nào khác gọi `prune_points` trong `train.py`/`pipeline/trainer.py`.
 

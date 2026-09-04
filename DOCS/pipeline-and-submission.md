@@ -2,7 +2,7 @@
 
 > Tài liệu tham chiếu cho gói `pipeline/*.py` — logic đứng sau notebook
 > [`fastgs-acceleration-method.ipynb`](../fastgs-acceleration-method.ipynb) (nay chỉ còn 9 code cell, tiếng Anh, thuần glue-code).
-> Cơ chế tăng tốc FastGS: [fastgs-acceleration-method.md](fastgs-acceleration-method.md).
+> Cơ chế tăng tốc fastgs-lite: [fastgs-acceleration-method.md](fastgs-acceleration-method.md).
 > Vận hành thật trên Colab T4 (ràng buộc RAM/VRAM, preset, roadmap): [colab-t4-guide.md](colab-t4-guide.md).
 > Mọi số liệu (tên hàm, mặc định, chữ ký) trong tài liệu này lấy trực tiếp từ mã nguồn trong `pipeline/`.
 
@@ -33,7 +33,7 @@ Ghi chú: `pipeline/__init__.py` hiện chỉ re-export `Config` và các hàm c
 | `pipeline/env.py` | Môi trường máy | `check_gpu`, `install_dependencies`, `mem`, `show_mem`, `free_memory`, `clone_repo` |
 | `pipeline/data.py` | Dữ liệu vào | `download_dataset`, `find_scenes`, `scene_path`, `profile_scenes` |
 | `pipeline/score.py` | Công thức điểm chính thức | `composite_score`, `evaluate_cameras` |
-| `pipeline/trainer.py` | Vòng lặp train FastGS + theo dõi | `build_args`, `train_scene` |
+| `pipeline/trainer.py` | Vòng lặp train fastgs-lite + theo dõi | `build_args`, `train_scene` |
 | `pipeline/submission.py` | Render test pose + đóng gói/kiểm tra zip | `render_scene`, `render_all`, `build_zip`, `verify` |
 | `pipeline/report.py` | Bảng + biểu đồ | `history_frame`, `leaderboard`, `plot_training`, `plot_leaderboard`, `show_samples` |
 | `pipeline/deliver.py` | Đóng gói model + tải về máy | `pack_models`, `copy_to_drive`, `download` |
@@ -66,12 +66,12 @@ Ghi chú: `pipeline/__init__.py` hiện chỉ re-export `Config` và các hàm c
 | | `save_every` | `2000` | tần suất ghi checkpoint `.ply` giữa chừng; `0` = chỉ lưu ở vòng cuối |
 | | `keep_last_checkpoint` | `True` | xoá checkpoint trung gian cũ, đĩa chỉ giữ bản mới nhất |
 | | `eval_views` | `6` | số camera hold-out dùng để chấm điểm sống |
-| | `mult` | `0.5` | hệ số compact-box của FastGS renderer |
+| | `mult` | `0.5` | hệ số compact-box của renderer của fastgs-lite |
 | | `psnr_max` | `30.0` | mốc chuẩn hoá PSNR — đúng giá trị ban tổ chức dùng |
 | | `lpips_net_live` | `"alex"` | mạng LPIPS dùng khi theo dõi trong lúc train (nhanh) |
 | | `lpips_net_report` | `"vgg"` | mạng LPIPS dùng khi chấm điểm báo cáo lúc render submission |
 | | `ram_soft_limit_gb` | `10.5` | ngưỡng RAM để chủ động `gc.collect()` |
-| | `train_extra_args` | `["--densification_interval","500", "--lambda_dssim","0.25", "--highfeature_lr","0.02", "--loss_thresh","0.07", "--grad_abs_thresh","0.0012"]` | cờ CLI FastGS bổ sung, nối thẳng vào `build_args` |
+| | `train_extra_args` | `["--densification_interval","500", "--lambda_dssim","0.25", "--highfeature_lr","0.02", "--loss_thresh","0.07", "--grad_abs_thresh","0.0012"]` | cờ CLI riêng của fastgs-lite bổ sung, nối thẳng vào `build_args` |
 | submission | `submission_dir` | `/content/submission` | thư mục gốc chứa `<scene>/000N.png` |
 | | `submission_zip` | `/content/submission.zip` | đường dẫn zip cuối cùng |
 | | `submission_ext` | `.png` | đuôi file ảnh nộp |
@@ -189,5 +189,5 @@ cfg = Config(
 
 - `find_scenes` (trong `pipeline/data.py`) tự nhận diện một thư mục là scene nếu có `sparse/` (COLMAP) hoặc `transforms_train.json` (kiểu Blender), quét tối đa `max_depth=3` cấp thư mục con.
 - Muốn chỉ train một tập con: đặt `scenes=("scene_a", "scene_b")` — scene không tìm thấy sẽ được in cảnh báo và bỏ qua.
-- `iterations=30000` là ngân sách đầy đủ mà lịch optimizer/densify của FastGS được thiết kế theo (xem `colab-t4-guide.md` mục 2.1) — dùng giá trị nhỏ hơn (mặc định demo `7000`, hoặc test nhanh bằng `smoke_iterations=300`) chỉ để thử nghiệm, không phải để nộp bài.
+- `iterations=30000` là ngân sách đầy đủ mà lịch optimizer/densify của fastgs-lite được thiết kế theo (xem `colab-t4-guide.md` mục 2.1) — dùng giá trị nhỏ hơn (mặc định demo `7000`, hoặc test nhanh bằng `smoke_iterations=300`) chỉ để thử nghiệm, không phải để nộp bài.
 - Phần còn lại của quy trình (`run.load_data` → `run.smoke_test` → `run.run_all` → `run.analytics` → `run.finish`) giữ nguyên, không cần sửa gì thêm.

@@ -1,6 +1,6 @@
 # DIGITAL TWIN GS PIPELINE (1/3) — Từ câu lệnh tới dữ liệu sẵn sàng
 
-> **Tài liệu tham chiếu kỹ thuật đầy đủ cho codebase FastGS hiện hành.**
+> **Tài liệu tham chiếu kỹ thuật đầy đủ cho codebase fastgs-lite hiện hành.**
 > Mỗi file, mỗi hàm, mỗi hằng số, mỗi nhánh `if` mà một lần train chạm tới — theo
 > đúng thứ tự thực thi, kèm sơ đồ Mermaid, bảng đối chiếu và trace dữ liệu.
 > Số cụ thể (số Gaussian, dB, dung lượng, thời gian) đều là **ví dụ minh hoạ**,
@@ -59,7 +59,7 @@ tối ưu trong lúc train" vì hiện tượng đó không tồn tại — xem 
 
 ### PHẦN II — ĐIỂM VÀO `train.py`
 - 7. `train.py::__main__`
-- 8. `ParamGroup` và ba `GroupParams` — toàn bộ cờ FastGS
+- 8. `ParamGroup` và ba `GroupParams` — toàn bộ cờ fastgs-lite
 - 9. `pipeline.trainer.build_args`
 - 10. `safe_state` và khởi tạo RNG
 
@@ -133,7 +133,7 @@ nghĩa cờ đó):
 | `--loss_thresh` | `OptimizationParams` | `0.1` | Ngưỡng lỗi photometric chuẩn hoá để đánh dấu pixel "high-error" trong `compute_gaussian_score_fastgs` |
 | `--highfeature_lr` | `OptimizationParams` | `0.005` | LR nhóm `f_rest` (SH bậc cao), thực dùng `/20.0` trong `training_setup` |
 | `--lowfeature_lr` | `OptimizationParams` | `0.0025` | LR nhóm `f_dc` (SH bậc 0 / màu nền) |
-| `--mult` | `OptimizationParams` | `0.5` | Hệ số nhân "compact box" kiểm soát số tile mỗi splat chạm tới trong rasterizer FastGS |
+| `--mult` | `OptimizationParams` | `0.5` | Hệ số nhân "compact box" kiểm soát số tile mỗi splat chạm tới trong rasterizer fastgs-lite |
 | `--optimizer_type` | `OptimizationParams` | `"default"` | `"default"` (Adam kép, xem §Phần III/`training_setup`) hoặc `"sparse_adam"` |
 | `--test_iterations` | cờ rời trong `__main__` | `[30000]` | Các mốc vòng lặp gọi `training_report` (đường CLI **không** tự chấm điểm nếu dòng gọi bị comment — xem bảng 1.3) |
 | `--save_iterations` | cờ rời trong `__main__` | `[30000]`, tự thêm `args.iterations` | Các mốc gọi `scene.save()` (ghi `.ply`) |
@@ -142,7 +142,7 @@ nghĩa cờ đó):
 `scaling_lr`, `rotation_lr`, `percent_dense`, `lambda_dssim`,
 `random_background` cũng tồn tại trong `OptimizationParams` nhưng không xuất
 hiện trong hai script preset — chúng giữ giá trị mặc định. Danh sách đầy đủ và
-lý do từng cờ FastGS được trình bày lại chi tiết ở §8 (PHẦN II, do agent khác
+lý do từng cờ fastgs-lite được trình bày lại chi tiết ở §8 (PHẦN II, do agent khác
 viết).
 
 ⚠ Không có `--scene`, không có `--iter` (chỉ có `--iterations`), không có
@@ -185,7 +185,7 @@ không làm (dòng gọi `training_report` trong `train.py` đã bị **comment*
 | Ai ghi `cfg_args` | `prepare_output_and_logger()` trong `train.py` | `build_args()` (khi `write_cfg=True`, mặc định) |
 | Chấm điểm trong lúc train | **Không** — `training_report()` tồn tại nhưng dòng gọi nó bị comment trong `training()` | **Có** — gọi `evaluate_cameras()` mỗi `cfg.score_every` vòng, ghi vào `history` |
 | Nguồn camera test để chấm | N/A (không chấm) | `scene_obj.getTestCameras()`; nếu rỗng thì lấy `getTrainCameras()[::8]` làm `holdout` |
-| Vòng lặp Densify/Prune FastGS | Y hệt: `densify_and_prune_fastgs` mỗi `densification_interval` vòng trong `(densify_from_iter, densify_until_iter)`, `final_prune_fastgs` mỗi 3000 vòng trong khoảng `(15000, 30000)` | Y hệt (đọc `pipeline/trainer.py` phần còn lại ngoài đoạn đã trích ở trên — cùng gọi `compute_gaussian_score_fastgs`, `densify_and_prune_fastgs`, `final_prune_fastgs`) |
+| Vòng lặp Densify/Prune fastgs-lite | Y hệt: `densify_and_prune_fastgs` mỗi `densification_interval` vòng trong `(densify_from_iter, densify_until_iter)`, `final_prune_fastgs` mỗi 3000 vòng trong khoảng `(15000, 30000)` | Y hệt (đọc `pipeline/trainer.py` phần còn lại ngoài đoạn đã trích ở trên — cùng gọi `compute_gaussian_score_fastgs`, `densify_and_prune_fastgs`, `final_prune_fastgs`) |
 | Quản lý bộ nhớ giữa các scene | Không áp dụng (1 tiến trình = 1 scene) | `pipeline.env.free_memory()` gọi `gc.collect()` + `torch.cuda.empty_cache()` giữa các scene trong `run_all()` |
 | Sau train | Người dùng tự chạy `render.py` rồi `metrics.py` (xem cuối `train_base.sh`) | `run_all()` tự gọi `submission.render_scene()` ngay sau mỗi scene; `finish()` đóng gói `submission.zip` + `.ply` rồi tải về |
 | Websocket viewer trực tiếp | Có, qua cờ `--websockets` → `gaussian_renderer.network_gui_ws` | Không có trong `pipeline/` |
@@ -204,7 +204,7 @@ xung quanh cùng một lõi.
 flowchart TD
     subgraph Entry["Điểm vào"]
         CLI["train.py CLI\n(sys.argv, ArgumentParser)"]
-        NB["fastgs-acceleration-method.ipynb\n(glue, tiếng Anh)"]
+        NB["fastgs-acceleration-method.ipynb\n"]
     end
 
     subgraph Pipeline["pipeline/ (chỉ dùng ở đường notebook)"]
@@ -292,7 +292,26 @@ flowchart TD
     CLI --> LU & IU
     RENDER --> GR
     METRICS --> LU & IU & LP
+
+    classDef core fill:#ffd8a8,stroke:#d9480f,stroke-width:2.5px,color:#3b1a06
+    classDef mixed fill:#fff3bf,stroke:#e67700,stroke-width:2px,color:#3b2f06
+    classDef fork fill:#d0ebff,stroke:#1864ab,stroke-width:2px,color:#0b2e4f
+
+    class FU,GR,RAST core
+    class GM,OP mixed
+    class NB,CFG,ENV,DATA,TRAINER,SCORE,SUB,REPORT,DELIVER,RUN fork
 ```
+
+**Chú giải màu**
+
+| Màu | Nghĩa | Node |
+|---|---|---|
+| 🟧 Cam | **Cơ chế khác 3DGS** — tồn tại chỉ vì fastgs-lite | `fast_utils.py` (điểm số đa góc nhìn), `render_fastgs` (truyền `mult`), rasterizer CUDA (compact box) |
+| 🟨 Vàng | **Kế thừa 3DGS nhưng đã bị sửa** | `GaussianModel` (`densify_and_prune_fastgs`, `final_prune_fastgs`, `shoptimizer`, `optimizer_step`); `OptimizationParams` (7 cờ riêng: `loss_thresh`, `grad_thresh`, `grad_abs_thresh`, `dense`, `mult`, `highfeature_lr`, `lowfeature_lr`) |
+| 🟦 Xanh | **Hạ tầng riêng của fork này** — không có trong upstream, chỉ phục vụ đường Colab | toàn bộ `pipeline/` + notebook |
+| ⬜ Trắng | Kế thừa nguyên vẹn từ 3DGS/INRIA | `scene/`, phần còn lại của `utils/`, `render.py`, `metrics.py`, `lpipsPyTorch` |
+
+Chi tiết từng cơ chế cam/vàng: [fastgs-acceleration-method.md](fastgs-acceleration-method.md).
 
 ★ `pipeline/` không hề gọi trực tiếp `train.py`; nó dùng lại `scene/`,
 `gaussian_renderer/`, `utils/` như một thư viện. `arguments/__init__.py` được cả
@@ -311,7 +330,7 @@ hai đường import độc lập.
 | `metrics.py` | Đọc ảnh render + ground-truth, tính PSNR/SSIM/LPIPS, ghi `results.json`/`per_view.json` |
 | `convert.py` | Tiện ích chạy COLMAP (feature extractor/matcher/mapper) để tạo `sparse/0` từ ảnh thô — không nằm trên đường train, chỉ tiền xử lý |
 | `full_eval.py` | Script tiện ích chạy hàng loạt train + render + metrics qua nhiều scene bằng `subprocess` |
-| `demos/fastgs_mechanisms.py` | Script minh hoạ độc lập (không import bởi pipeline train) mô phỏng lại các công thức FastGS (mask lỗi, đếm tile, quỹ đạo số Gaussian) cho mục đích giải thích |
+| `demos/fastgs_mechanisms.py` | Script minh hoạ độc lập (không import bởi pipeline train) mô phỏng lại các công thức fastgs-lite (mask lỗi, đếm tile, quỹ đạo số Gaussian) cho mục đích giải thích |
 | `fastgs-acceleration-method.ipynb` | Notebook "glue" tiếng Anh, gọi các hàm trong `pipeline/` theo thứ tự |
 | `arguments/__init__.py` | `ParamGroup`, `ModelParams`, `OptimizationParams`, `PipelineParams`, `get_combined_args` |
 | `pipeline/config.py` | `Config` — dataclass gom mọi tham số của luồng notebook |
@@ -328,19 +347,19 @@ hai đường import độc lập.
 | `scene/colmap_loader.py` | Đọc nhị phân/text COLMAP: `read_extrinsics_binary`, `read_intrinsics_binary`, `read_points3D_binary`, `qvec2rotmat` |
 | `scene/cameras.py` | `CameraInfo` (NamedTuple thô từ COLMAP), `Camera` (nn.Module dùng khi train/render), `MiniCam` (dùng cho network viewer) |
 | `scene/gaussian_model.py` | `GaussianModel` — toàn bộ tham số Gaussian, `create_from_pcd`, `training_setup`, `densify_and_prune_fastgs`, `final_prune_fastgs`, `save_ply`/`load_ply` |
-| `gaussian_renderer/__init__.py` | `render_fastgs` — gọi rasterizer CUDA FastGS, trả `render`/`viewspace_points`/`radii`/`accum_metric_counts` |
+| `gaussian_renderer/__init__.py` | `render_fastgs` — gọi rasterizer CUDA fastgs-lite, trả `render`/`viewspace_points`/`radii`/`accum_metric_counts` |
 | `gaussian_renderer/network_gui.py` | Viewer mạng kiểu socket TCP gốc 3DGS (không dùng trong `training()` hiện tại — chỉ còn `network_gui_ws`) |
 | `gaussian_renderer/network_gui_ws.py` | Viewer qua WebSocket (`asyncio`), bật bằng cờ `--websockets` |
 | `utils/camera_utils.py` | `loadCam` (resize ảnh theo `--resolution`), `cameraList_from_camInfos`, `camera_to_JSON` |
 | `utils/general_utils.py` | `safe_state` (seed RNG + gắn timestamp log), `inverse_sigmoid`, `PILtoTorch`, `get_expon_lr_func`, `build_rotation`, `build_scaling_rotation`, `identity_gate` |
 | `utils/graphics_utils.py` | `BasicPointCloud`, `getWorld2View2`, `getProjectionMatrix`, `fov2focal`/`focal2fov` |
-| `utils/fast_utils.py` | `sampling_cameras`, `get_loss`, `compute_photometric_loss`, `normalize`, `compute_gaussian_score_fastgs` — lõi thuật toán multi-view scoring của FastGS |
+| `utils/fast_utils.py` | `sampling_cameras`, `get_loss`, `compute_photometric_loss`, `normalize`, `compute_gaussian_score_fastgs` — lõi thuật toán multi-view scoring của fastgs-lite |
 | `utils/loss_utils.py` | `l1_loss`, `l2_loss`, `ssim` (bản CPU/python; bản nhanh dùng `fused_ssim`) |
 | `utils/image_utils.py` | `mse`, `psnr` |
 | `utils/sh_utils.py` | `eval_sh`, `RGB2SH`, `SH2RGB` — chuyển đổi hệ số cầu điều hoà ↔ RGB |
 | `utils/system_utils.py` | `mkdir_p`, `searchForMaxIteration` (tìm mốc `.ply` mới nhất để `load_ply`) |
 | `lpipsPyTorch/__init__.py` + `modules/` | Cài đặt LPIPS thuần PyTorch (không phụ thuộc package `lpips` ngoài để tính gradient được) |
-| `submodules/diff-gaussian-rasterization_fastgs/` | Rasterizer CUDA bản FastGS: `GaussianRasterizationSettings`, `GaussianRasterizer`, `SparseGaussianAdam` |
+| `submodules/diff-gaussian-rasterization_fastgs/` | Rasterizer CUDA bản fastgs-lite: `GaussianRasterizationSettings`, `GaussianRasterizer`, `SparseGaussianAdam` |
 | `submodules/fused-ssim/` | Kernel CUDA tính SSIM nhanh, dùng làm `fast_ssim` trong loss |
 | `submodules/simple-knn/` | Kernel CUDA `distCUDA2` — khoảng cách k-NN dùng để khởi tạo `scaling` ban đầu |
 
@@ -596,25 +615,25 @@ Nhờ bước 1 dùng `fill_none`, một cờ không gõ trên dòng lệnh mớ
 | `position_lr_final` | `--position_lr_final` | `0.0000016` | LR cuối cho `xyz` trong lịch giảm mũ. |
 | `position_lr_delay_mult` | `--position_lr_delay_mult` | `0.01` | Hệ số trễ khởi động của `get_expon_lr_func`. |
 | `position_lr_max_steps` | `--position_lr_max_steps` | `30000` | `max_steps` truyền vào `get_expon_lr_func`. Trên đường CLI, cờ này **không** tự khớp `--iterations` — đổi `--iterations` thì phải đổi luôn cờ này (xem §18). Đường notebook đã được nối dây: `build_args` luôn truyền `--position_lr_max_steps` bằng đúng số vòng train (§9). |
-| `feature_lr` | `--feature_lr` | `0.0025` | **Định nghĩa nhưng không được đọc ở đâu khác** — `training_setup` (`scene/gaussian_model.py:198-205`) dùng `lowfeature_lr`/`highfeature_lr` cho `f_dc`/`f_rest`, không dùng `feature_lr`. Đã grep toàn repo: không có `.feature_lr` nào khác ngoài dòng định nghĩa. **Cờ chết** (tàn dư từ 3DGS gốc, bị FastGS thay bằng `lowfeature_lr`/`highfeature_lr`). |
+| `feature_lr` | `--feature_lr` | `0.0025` | **Định nghĩa nhưng không được đọc ở đâu khác** — `training_setup` (`scene/gaussian_model.py:198-205`) dùng `lowfeature_lr`/`highfeature_lr` cho `f_dc`/`f_rest`, không dùng `feature_lr`. Đã grep toàn repo: không có `.feature_lr` nào khác ngoài dòng định nghĩa. **Cờ chết** (tàn dư từ 3DGS gốc, bị fastgs-lite thay bằng `lowfeature_lr`/`highfeature_lr`). |
 | `shfeature_lr` | `--shfeature_lr` | `0.005` | **Cũng không được đọc ở đâu khác** — grep toàn repo chỉ thấy dòng định nghĩa này. **Cờ chết.** |
 | `opacity_lr` | `--opacity_lr` | `0.025` | LR cho `_opacity` (`scene/gaussian_model.py:201`). |
 | `scaling_lr` | `--scaling_lr` | `0.005` | LR cho `_scaling` (`:202`). |
 | `rotation_lr` | `--rotation_lr` | `0.001` | LR cho `_rotation` (`:203`). |
-| `percent_dense` | `--percent_dense` | `0.001` | Được gán vào `self.percent_dense` trong `training_setup` (`scene/gaussian_model.py:193`) nhưng sau đó `self.percent_dense` **không được đọc ở đâu khác trong `scene/gaussian_model.py`** (đã grep toàn file: chỉ 2 dòng gán, dòng khởi tạo `= 0` ở `__init__` và dòng gán từ `training_args`). Logic densify của FastGS (`densify_and_prune_fastgs`) dùng ngưỡng riêng `args.dense` (xem hàng `dense` bên dưới), không dùng `percent_dense`. **Cờ gần như chết** — có ảnh hưởng phụ (ghi vào state model, ai đó gọi trực tiếp `gaussians.percent_dense` từ ngoài mới thấy) nhưng không có nhánh logic nào tiêu thụ nó trong luồng train hiện tại. |
+| `percent_dense` | `--percent_dense` | `0.001` | Được gán vào `self.percent_dense` trong `training_setup` (`scene/gaussian_model.py:193`) nhưng sau đó `self.percent_dense` **không được đọc ở đâu khác trong `scene/gaussian_model.py`** (đã grep toàn file: chỉ 2 dòng gán, dòng khởi tạo `= 0` ở `__init__` và dòng gán từ `training_args`). Logic densify của fastgs-lite (`densify_and_prune_fastgs`) dùng ngưỡng riêng `args.dense` (xem hàng `dense` bên dưới), không dùng `percent_dense`. **Cờ gần như chết** — có ảnh hưởng phụ (ghi vào state model, ai đó gọi trực tiếp `gaussians.percent_dense` từ ngoài mới thấy) nhưng không có nhánh logic nào tiêu thụ nó trong luồng train hiện tại. |
 | `lambda_dssim` | `--lambda_dssim` | `0.2` | Trọng số SSIM trong loss: `loss = (1-λ)*L1 + λ*(1-SSIM)` (`train.py:103`). |
 | `densification_interval` | `--densification_interval` | `100` | Chu kỳ (số iteration) giữa hai lần chạy khối densify (`train.py:132`). |
 | `opacity_reset_interval` | `--opacity_reset_interval` | `3000` | Chu kỳ reset opacity (`train.py:147`) và ngưỡng chuyển `size_threshold` từ `None` sang `20` (`:133`). |
 | `densify_from_iter` | `--densify_from_iter` | `500` | Iteration bắt đầu chạy densify (`train.py:132`) và cũng là mốc reset-opacity đặc biệt khi nền trắng (`:147`). |
 | `densify_until_iter` | `--densify_until_iter` | `15000` | Sau mốc này ngừng tích luỹ gradient/densify (`train.py:127`). |
-| `densify_grad_threshold` | `--densify_grad_threshold` | `0.0002` | **Định nghĩa nhưng không được đọc ở đâu khác trong repo** (grep toàn bộ `.py`: chỉ 1 kết quả, chính dòng định nghĩa). Đây là ngưỡng gradient của 3DGS gốc; FastGS thay bằng `grad_thresh`/`grad_abs_thresh` (xem bên dưới). **Cờ chết.** |
-| `loss_thresh` | `--loss_thresh` | `0.1` | **FastGS.** Ngưỡng nhị phân hoá bản đồ lỗi L1 chuẩn hoá theo camera trong `utils/fast_utils.py:82`: `metric_map = (l1_loss_norm > args.loss_thresh).int()`. Ngưỡng càng thấp, càng nhiều pixel bị đánh dấu "lỗi" → càng nhiều Gaussian được tính vào `importance_score`/`pruning_score` qua `compute_gaussian_score_fastgs`. |
-| `grad_abs_thresh` | `--grad_abs_thresh` | `0.0012` | **FastGS.** Ngưỡng cho gradient "abs" (kênh 2 trở đi của viewspace gradient, tích luỹ trong `xyz_gradient_accum_abs`) dùng để chọn ứng viên **split**: `scene/gaussian_model.py:485`: `grad_qualifiers_abs = norm(grads_abs) >= args.grad_abs_thresh`, kết hợp với `split_qualifiers` (Gaussian đã "to") ở `:490` để ra `all_splits`. |
-| `highfeature_lr` | `--highfeature_lr` | `0.005` | **FastGS.** LR cho các hệ số SH bậc cao `_features_rest`. Tại `scene/gaussian_model.py:205`: `sh_l = [{'params': [self._features_rest], 'lr': training_args.highfeature_lr / 20.0, "name": "f_rest"}]` — **được chia cho 20.0 trước khi dùng**, đã xác nhận đúng trong mã nguồn. |
-| `lowfeature_lr` | `--lowfeature_lr` | `0.0025` | **FastGS.** LR cho SH bậc 0 (DC) `_features_dc`, dùng trực tiếp không qua chia: `scene/gaussian_model.py:200`. |
-| `grad_thresh` | `--grad_thresh` | `0.0002` | **FastGS.** Ngưỡng gradient "thường" (kênh xy) để chọn ứng viên **clone**: `scene/gaussian_model.py:484`: `grad_qualifiers = norm(grad_vars) >= args.grad_thresh`, kết hợp `clone_qualifiers` (Gaussian còn "nhỏ") ở `:489` → `all_clones`. |
-| `dense` | `--dense` | `0.001` | **FastGS.** Ngưỡng kích thước (nhân với `extent = cameras_extent`) phân biệt Gaussian "nhỏ" (được clone, `max_scaling <= dense*extent`, `:486`) và "lớn" (được split, `max_scaling > dense*extent`, `:487`). Đây là vai trò mà `percent_dense` đảm nhiệm ở 3DGS gốc, nay FastGS dùng `dense` thay thế — `percent_dense` bị bỏ lại thành cờ chết như đã nêu ở trên. |
-| `mult` | `--mult` | `0.5` | **FastGS.** Hệ số nhân "compact box" kiểm soát số tile mỗi splat chiếm khi rasterize — truyền thẳng vào `render_fastgs(..., opt.mult)` ở mọi nơi gọi render (`train.py:71,96`; `pipeline/trainer.py:106`; `render.py:37`; `utils/fast_utils.py:75,84`) rồi xuống tới `raster_settings.mult` trong `submodules/diff-gaussian-rasterization_fastgs/diff_gaussian_rasterization_fastgs/__init__.py:87` — tức là một tham số của rasterizer CUDA, không chỉ là hằng số Python. |
+| `densify_grad_threshold` | `--densify_grad_threshold` | `0.0002` | **Định nghĩa nhưng không được đọc ở đâu khác trong repo** (grep toàn bộ `.py`: chỉ 1 kết quả, chính dòng định nghĩa). Đây là ngưỡng gradient của 3DGS gốc; fastgs-lite thay bằng `grad_thresh`/`grad_abs_thresh` (xem bên dưới). **Cờ chết.** |
+| `loss_thresh` | `--loss_thresh` | `0.1` | **fastgs-lite.** Ngưỡng nhị phân hoá bản đồ lỗi L1 chuẩn hoá theo camera trong `utils/fast_utils.py:82`: `metric_map = (l1_loss_norm > args.loss_thresh).int()`. Ngưỡng càng thấp, càng nhiều pixel bị đánh dấu "lỗi" → càng nhiều Gaussian được tính vào `importance_score`/`pruning_score` qua `compute_gaussian_score_fastgs`. |
+| `grad_abs_thresh` | `--grad_abs_thresh` | `0.0012` | **fastgs-lite.** Ngưỡng cho gradient "abs" (kênh 2 trở đi của viewspace gradient, tích luỹ trong `xyz_gradient_accum_abs`) dùng để chọn ứng viên **split**: `scene/gaussian_model.py:485`: `grad_qualifiers_abs = norm(grads_abs) >= args.grad_abs_thresh`, kết hợp với `split_qualifiers` (Gaussian đã "to") ở `:490` để ra `all_splits`. |
+| `highfeature_lr` | `--highfeature_lr` | `0.005` | **fastgs-lite.** LR cho các hệ số SH bậc cao `_features_rest`. Tại `scene/gaussian_model.py:205`: `sh_l = [{'params': [self._features_rest], 'lr': training_args.highfeature_lr / 20.0, "name": "f_rest"}]` — **được chia cho 20.0 trước khi dùng**, đã xác nhận đúng trong mã nguồn. |
+| `lowfeature_lr` | `--lowfeature_lr` | `0.0025` | **fastgs-lite.** LR cho SH bậc 0 (DC) `_features_dc`, dùng trực tiếp không qua chia: `scene/gaussian_model.py:200`. |
+| `grad_thresh` | `--grad_thresh` | `0.0002` | **fastgs-lite.** Ngưỡng gradient "thường" (kênh xy) để chọn ứng viên **clone**: `scene/gaussian_model.py:484`: `grad_qualifiers = norm(grad_vars) >= args.grad_thresh`, kết hợp `clone_qualifiers` (Gaussian còn "nhỏ") ở `:489` → `all_clones`. |
+| `dense` | `--dense` | `0.001` | **fastgs-lite.** Ngưỡng kích thước (nhân với `extent = cameras_extent`) phân biệt Gaussian "nhỏ" (được clone, `max_scaling <= dense*extent`, `:486`) và "lớn" (được split, `max_scaling > dense*extent`, `:487`). Đây là vai trò mà `percent_dense` đảm nhiệm ở 3DGS gốc, nay fastgs-lite dùng `dense` thay thế — `percent_dense` bị bỏ lại thành cờ chết như đã nêu ở trên. |
+| `mult` | `--mult` | `0.5` | **fastgs-lite.** Hệ số nhân "compact box" kiểm soát số tile mỗi splat chiếm khi rasterize — truyền thẳng vào `render_fastgs(..., opt.mult)` ở mọi nơi gọi render (`train.py:71,96`; `pipeline/trainer.py:106`; `render.py:37`; `utils/fast_utils.py:75,84`) rồi xuống tới `raster_settings.mult` trong `submodules/diff-gaussian-rasterization_fastgs/diff_gaussian_rasterization_fastgs/__init__.py:87` — tức là một tham số của rasterizer CUDA, không chỉ là hằng số Python. |
 | `random_background` | `--random_background` | `False` | Nếu bật, mỗi iteration lấy nền ngẫu nhiên `torch.rand(3)` thay vì nền cố định (`train.py:64`). |
 | `optimizer_type` | `--optimizer_type` | `"default"` | Chọn giữa `torch.optim.Adam` (2 optimizer riêng `optimizer`/`shoptimizer`) và `SparseGaussianAdam` (1 optimizer gộp) — xem §18 và `train.py:162-167`. |
 
@@ -716,7 +735,7 @@ def safe_state(silent):
 - **Bọc `sys.stdout`**: thay `sys.stdout` toàn cục bằng đối tượng `F`. Khi `silent=False`, mỗi lần `write` kết thúc bằng `"\n"`, nó chèn thêm timestamp `[dd/mm HH:MM:SS]` ngay trước ký tự xuống dòng — mọi `print()` sau lời gọi này sẽ có timestamp gắn kèm. Khi `silent=True`, `write` là no-op hoàn toàn (không in gì, kể cả các dòng không có `\n`) — nghĩa là `safe_state(True)` **tắt toàn bộ output ra stdout** cho đến khi `sys.stdout` bị thay lại.
 - **Seed cố định**: `random.seed(0)`, `np.random.seed(0)`, `torch.manual_seed(0)` — cả ba đều ghim cứng giá trị `0`, không đọc từ bất kỳ cờ CLI nào (không có `--seed`). Điều này áp dụng cho toàn bộ tiến trình Python kể từ lúc gọi, bao gồm cả việc chọn camera ngẫu nhiên mỗi iteration (`randint` trong `train.py:88` dùng `from random import randint`, cùng module `random` đã bị seed) và `random.shuffle` trong `Scene.__init__` (§11).
 - **`torch.cuda.set_device(torch.device("cuda:0"))`**: ghim cứng GPU 0 làm device mặc định, không đọc `CUDA_VISIBLE_DEVICES` hay cờ nào khác trong hàm này.
-- Không có nhánh nào set `torch.backends.cudnn.deterministic` hay tương tự — seed chỉ đảm bảo tái lập ở mức RNG Python/NumPy/PyTorch CPU-side, không đảm bảo determinism tuyệt đối của các kernel CUDA không xác định (rasterizer FastGS, `distCUDA2`, v.v.).
+- Không có nhánh nào set `torch.backends.cudnn.deterministic` hay tương tự — seed chỉ đảm bảo tái lập ở mức RNG Python/NumPy/PyTorch CPU-side, không đảm bảo determinism tuyệt đối của các kernel CUDA không xác định (rasterizer fastgs-lite, `distCUDA2`, v.v.).
 
 `train.py:267` gọi `safe_state(args.quiet)` — mức độ im lặng phụ thuộc cờ `--quiet` người dùng gõ. Ngược lại, `pipeline.trainer.train_scene` (`pipeline/trainer.py:68`) gọi cứng `safe_state(True)` — **luôn im lặng** bất kể cấu hình gì trong `Config`, vì bản thân `train_scene` tự in tiến trình qua `tqdm`/`tqdm.write` (không phụ thuộc `stdout` bị bọc câm — `tqdm` ghi trực tiếp ra `sys.stderr` theo mặc định, không bị ảnh hưởng bởi việc `sys.stdout` bị thay).
 
@@ -950,9 +969,9 @@ Sáu tensor tham số (`nn.Parameter` sau khi `create_from_pcd`/`load_ply` gán,
 
 Bộ đệm phụ trợ:
 - `max_radii2D`: bán kính lớn nhất (pixel-space) từng thấy của mỗi Gaussian qua các iteration — dùng để prune "big points" (`train.py:129`, `scene/gaussian_model.py:501`).
-- `xyz_gradient_accum` / `xyz_gradient_accum_abs`: tích luỹ chuẩn gradient viewspace (kênh xy thường / kênh "abs" — xem `add_densification_stats`, `:528-531`) — **`xyz_gradient_accum_abs` là bộ đệm FastGS-specific**, không tồn tại trong 3DGS gốc (vốn chỉ có 1 accum). Dùng để tính `grad_qualifiers`/`grad_qualifiers_abs` (§8, dòng `grad_thresh`/`grad_abs_thresh`).
+- `xyz_gradient_accum` / `xyz_gradient_accum_abs`: tích luỹ chuẩn gradient viewspace (kênh xy thường / kênh "abs" — xem `add_densification_stats`, `:528-531`) — **`xyz_gradient_accum_abs` là bộ đệm fastgs-lite-specific**, không tồn tại trong 3DGS gốc (vốn chỉ có 1 accum). Dùng để tính `grad_qualifiers`/`grad_qualifiers_abs` (§8, dòng `grad_thresh`/`grad_abs_thresh`).
 - `denom`: đếm số lần mỗi Gaussian được cộng dồn gradient (để chia trung bình ở `densify_and_prune_fastgs:477,481`).
-- `shoptimizer`: **FastGS-specific** — optimizer Adam thứ hai, riêng cho `_features_rest` (SH bậc cao), tách khỏi optimizer chính (`optimizer`) để cho phép lịch cập nhật khác nhau (`optimizer_step`, §18).
+- `shoptimizer`: **fastgs-lite-specific** — optimizer Adam thứ hai, riêng cho `_features_rest` (SH bậc cao), tách khỏi optimizer chính (`optimizer`) để cho phép lịch cập nhật khác nhau (`optimizer_step`, §18).
 - `tmp_radii`: không được khởi tạo trong `__init__` (không có dòng `self.tmp_radii = ...` ở đây) — chỉ được gán động trong `densify_and_prune_fastgs` (`self.tmp_radii = radii`, `:479`) rồi xoá về `None` cuối hàm (`:524`) và được `prune_points`/`densification_postfix` đọc/nối. Đây là một buffer tồn tại "tạm thời trong phạm vi một lần gọi densify", không phải thuộc tính thường trực như các buffer khác.
 
 ### `setup_functions` (`:31-45`)
@@ -1054,4 +1073,4 @@ self.xyz_scheduler_args = get_expon_lr_func(
 - `15000 < iteration <= 20000`: cả `optimizer` và `shoptimizer` chỉ step mỗi 32 iteration, và **luôn cùng lúc** (nằm trong cùng `if iteration % 32 == 0`).
 - `iteration > 20000`: cả hai chỉ step mỗi 64 iteration.
 
-Đây là cơ chế FastGS thay thế cho việc dùng `SparseGaussianAdam` để tăng tốc (comment trong mã nguồn: `"An optimization schdeuler. The goal is similar to the sparse Adam of taming 3dgs."`, `:226`) — càng về cuối quá trình train, gradient được tích luỹ (qua `loss.backward()` mỗi iteration vẫn chạy bình thường, chỉ có bước `optimizer.step()` là bị giãn ra) rồi mới áp dụng, giảm số lần cập nhật tham số thật sự để tiết kiệm thời gian mà (theo giả thuyết thiết kế) không ảnh hưởng nhiều tới chất lượng ở giai đoạn hội tụ.
+Đây là cơ chế fastgs-lite thay thế cho việc dùng `SparseGaussianAdam` để tăng tốc (comment trong mã nguồn: `"An optimization schdeuler. The goal is similar to the sparse Adam of taming 3dgs."`, `:226`) — càng về cuối quá trình train, gradient được tích luỹ (qua `loss.backward()` mỗi iteration vẫn chạy bình thường, chỉ có bước `optimizer.step()` là bị giãn ra) rồi mới áp dụng, giảm số lần cập nhật tham số thật sự để tiết kiệm thời gian mà (theo giả thuyết thiết kế) không ảnh hưởng nhiều tới chất lượng ở giai đoạn hội tụ.

@@ -149,9 +149,10 @@ Hai cảnh Deep Blending (trong nhà) đạt 0.80–0.82; hai cảnh Tanks&Templ
 >
 > Đây chính là lý do thâm hụt rơi vào `psnr_norm` (0.66 so với 0.91 của `drjohnson`) chứ không phải LPIPS
 > (0.3202 so với 0.3293, gần như bằng nhau): trời chiếm rất nhiều pixel nên chi phối metric theo pixel như PSNR,
-> còn metric tri giác thì cho nó trọng số thấp hơn nhiều. Suy ra cách sửa rẻ nhất cho cảnh ngoài trời là **tăng
-> `--dense`** (giá trị outdoor trong `train_base.sh` là `0.004`–`0.01`, so với `0.001` đang dùng), chứ không
-> phải kéo dài lịch train.
+> còn metric tri giác thì cho nó trọng số thấp hơn nhiều. Suy ra cách sửa rẻ nhất là **tăng `--dense`** —
+> `train_base.sh` cho chính cảnh `train` giá trị `0.01`, so với `0.001` đang dùng — chứ không phải kéo dài lịch
+> train. (Lưu ý `--dense` trong `train_base.sh` không chia theo trong nhà/ngoài trời: `drjohnson` là cảnh trong
+> nhà nhưng dùng `0.013`, cao nhất cả file.)
 
 Thành phần kéo tụt là PSNR chứ không phải LPIPS: `psnr_norm` 0.66 (train) so với 0.95 (playroom), trong khi
 LPIPS của `truck` (0.2742) thực ra **tốt nhất bảng**. Cảnh ngoài trời có độ sâu lớn, nền trời và tán cây khó
@@ -181,8 +182,9 @@ Kiểm tra định dạng: **PASS** — `problems = []`, 4 cảnh với 33/29/38
    (Adam chỉ bước mỗi 32/64 vòng) nhưng vẫn chạy `final_prune_fastgs` → LPIPS tốt hơn, `.ply` nhỏ hơn.
    Ước tính ~20–25 phút/cảnh khi kết hợp full-res, tức ~1.5 giờ cho 4 cảnh — vẫn vừa một phiên Colab.
 3. **Theo dõi RAM, không phải VRAM** — con số đáng lo là 9.58 GB, không phải 1.16 GB.
-4. **Tinh chỉnh riêng cho `train` / `truck`**: lấy `grad_abs_thresh` / `dense` của cảnh tương ứng trong
-   `train_base.sh` đưa vào `Config.train_extra_args`.
+4. **Tinh chỉnh riêng cho `train` / `truck`**: copy thẳng `grad_abs_thresh` / `dense` / `highfeature_lr` của đúng
+   cảnh đó trong `train_base.sh` vào `Config.train_extra_args` (`train`: `--dense 0.01 --grad_abs_thresh 0.0015
+   --highfeature_lr 0.042`; `truck`: `--grad_abs_thresh 0.0009 --highfeature_lr 0.04`).
 5. Đặt `score_every=1100` để đường cong tiến trình không rơi vào vòng reset opacity.
 
 ### 1.10 — Bẫy khi đọc log

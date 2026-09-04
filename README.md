@@ -167,7 +167,7 @@ not what separates these scenes; absolute radiometric accuracy on large-depth ou
 
 For reference, the pipeline's smoke test on `drjohnson` at 300 iterations already scores 0.6012 under the live
 protocol (PSNR 20.93, SSIM 0.7073, LPIPS 0.5506) — 67% of that scene's final live Score of 0.8966 in 4.3% of the
-iteration budget, consistent with FastGS's claim that its multi-view score front-loads Gaussian placement.
+iteration budget, consistent with the multi-view score front-loading Gaussian placement, though this repository contains no ablation isolating that mechanism.
 
 ### Qualitative results
 
@@ -196,8 +196,9 @@ extremes of Table 1 — the strongest indoor result and the weakest outdoor one.
 > This is precisely why the deficit lands in `psnr_norm` (0.66 vs `drjohnson`'s 0.91) and not in LPIPS, which is
 > nearly identical for the two scenes (0.3202 vs 0.3293): sky occupies a large fraction of the pixels, so its
 > error dominates a per-pixel metric like PSNR, while a perceptual metric weights it far less. It also suggests
-> the cheapest available fix for outdoor scenes is a larger `--dense` (the `train_base.sh` outdoor values are
-> `0.004`–`0.01`, against the `0.001` used here) rather than a longer schedule.
+> the cheapest available fix here is a larger `--dense` (`train_base.sh` gives `train` itself `0.01`, against the
+> `0.001` used in this run) rather than a longer schedule. Note `--dense` does not split cleanly along indoor/outdoor
+> in `train_base.sh` — `drjohnson` is indoor and uses `0.013`, the highest value in the file.
 
 Regenerate these, or the two scenes not shown, with one call per scene:
 
@@ -369,7 +370,7 @@ python render.py  -m output/counter --skip_train --mult 0.5
 python metrics.py -m output/counter
 ```
 
-`-r 2` for indoor and `-r 4` for outdoor are the standard MipNeRF360 evaluation resolutions, not a compromise. `--mult` must match between `train.py` and `render.py`. Per-scene values for `--grad_abs_thresh`, `--dense` and `--highfeature_lr` are in `train_base.sh` — start from the scene most like yours.
+`-r 2` for indoor and `-r 4` for outdoor are the standard MipNeRF360 evaluation resolutions, not a compromise. `--mult` must match between `train.py` and `render.py`. Per-scene values for `--grad_abs_thresh`, `--dense` and `--highfeature_lr` are in `train_base.sh` — copy the line for the scene most like yours rather than guessing from an indoor/outdoor rule.
 
 <details>
 <summary><b>Full command line reference</b></summary>
@@ -381,8 +382,8 @@ python metrics.py -m output/counter
 | `--loss_thresh` | `0.1` | Threshold on the normalized loss map. Lower keeps more Gaussians. `garden` uses `0.06` |
 | `--grad_thresh` | `0.0002` | Gradient threshold for clone (as in vanilla 3DGS) |
 | `--grad_abs_thresh` | `0.0012` | Absolute-gradient threshold for split (as in Abs-GS) |
-| `--dense` | `0.001` | Fraction of scene extent above which a point is split rather than cloned. Outdoor scenes use `0.004`–`0.01` |
-| `--highfeature_lr` | `0.005` | LR for high-order SH (`features_rest`). Note `gaussian_model.py:205` divides it by 20, so `0.02` means an effective `0.001` |
+| `--dense` | `0.001` | Fraction of scene extent above which a point is split rather than cloned. `train_base.sh` uses `0.003`–`0.013` per scene; the value does not track indoor/outdoor |
+| `--highfeature_lr` | `0.005` | LR for high-order SH (`features_rest`). `gaussian_model.py:205` divides it by 20, so `0.02` means an effective `0.001` — still below `--lowfeature_lr`. Its optimizer also steps only every 16th iteration up to 15k |
 | `--lowfeature_lr` | `0.0025` | LR for low-order SH (`features_dc`) |
 | `--mult` | `0.5` | Compact-box multiplier controlling how many tiles each splat touches. `0.7` for large or cluttered scenes |
 | `--optimizer_type` | `default` | `default` uses the staged Adam cadence; `sparse_adam` steps only visible Gaussians every iteration |

@@ -248,7 +248,7 @@ line khác `None`). Nhờ vậy chỉ cần `--model_path` + `--iteration` là �
 | `--skip_train` | `False` (action `store_true`) | bỏ qua render tập train |
 | `--skip_test` | `False` | bỏ qua render tập test |
 | `--quiet` | `False` | truyền vào `safe_state` |
-| `--mult` | `0.5` | hệ số compact-box FastGS truyền thẳng vào `render_fastgs` |
+| `--mult` | `0.5` | hệ số compact-box fastgs-lite truyền thẳng vào `render_fastgs` |
 
 ### `render_sets` → `render_set`
 
@@ -561,25 +561,25 @@ Hàng `MEAN` là **trung bình cộng theo từng cột số của mọi scene**
 | `min_opacity` (giai đoạn cuối) | 0.1 | `train.py:158` (gọi `final_prune_fastgs`) | Ngưỡng opacity cao hơn khi prune lần cuối, dọn Gaussian yếu |
 | Ngưỡng kích thước màn hình (`max_screen_size`) | 20 | `train.py:133` (`size_threshold = 20 if iteration > opt.opacity_reset_interval else None`) | Pixel — Gaussian chiếm view lớn hơn ngưỡng này (sau lần reset opacity đầu) bị coi là "quá to", có thể bị prune |
 | `percent_dense` | 0.001 | `arguments/__init__.py:83` (`OptimizationParams.percent_dense`) | Đặt vào `self.percent_dense` của `GaussianModel` (`scene/gaussian_model.py:193`); tham chiếu tỉ lệ với `extent` cảnh để phân loại clone/split ở 3DGS gốc |
-| `dense` (FastGS, đóng vai trò percent_dense) | 0.001 | `arguments/__init__.py:95` (`OptimizationParams.dense`) | Dùng trực tiếp trong `densify_and_prune_fastgs`: `clone_qualifiers = scaling.max <= args.dense*extent`, `split_qualifiers = scaling.max > args.dense*extent` (`scene/gaussian_model.py:486-487`) |
+| `dense` (fastgs-lite, đóng vai trò percent_dense) | 0.001 | `arguments/__init__.py:100` (`OptimizationParams.dense`) | Dùng trực tiếp trong `densify_and_prune_fastgs`: `clone_qualifiers = scaling.max <= args.dense*extent`, `split_qualifiers = scaling.max > args.dense*extent` (`scene/gaussian_model.py:486-487`) |
 | `opacity_reset_interval` | 3000 | `arguments/__init__.py:86` | Chu kỳ (iteration) reset opacity về thấp; cũng là mốc bật ngưỡng screen-size 20 |
 | `densify_from_iter` | 500 | `arguments/__init__.py:87` | Iteration bắt đầu tính densify |
 | `densify_until_iter` | 15000 | `arguments/__init__.py:88` | Iteration dừng densify/prune theo gradient |
 | `densification_interval` | 100 (mặc định gốc) — nhưng pipeline Colab override thành **500** | `arguments/__init__.py:85`; override tại `pipeline/config.py:43` (`train_extra_args: ["--densification_interval", "500", ...]`) | Chu kỳ (số iteration) giữa hai lần chạy densify_and_prune |
 | `position_lr_max_steps` | 30000 | `arguments/__init__.py:76` | Số bước để lịch suy giảm learning-rate vị trí (`position_lr_init` → `position_lr_final`) hoàn tất — `pipeline/trainer.py::build_args` ghi đè bằng đúng số vòng train; đường CLI giữ nguyên 30000. |
 | `lambda_dssim` | 0.2 (mặc định gốc) — pipeline Colab override thành **0.25** | `arguments/__init__.py:82`; override `pipeline/config.py:44` | Trọng số D-SSIM trong loss: `loss = (1-λ)*L1 + λ*(1-SSIM)` (`train.py:103`) |
-| `mult` | 0.5 | `arguments/__init__.py:97` (`OptimizationParams.mult`); cũng là `Config.mult` (`pipeline/config.py:37`) | Hệ số nhân "compact box" kiểm soát số tile mỗi splat chiếm (đặc thù FastGS) |
-| `loss_thresh` | 0.1 (mặc định gốc) — pipeline Colab override thành **0.07** | `arguments/__init__.py:92`; override `pipeline/config.py:45` | Ngưỡng loss dùng trong tính điểm multi-view của FastGS (`utils/fast_utils.py`) |
+| `mult` | 0.5 | `arguments/__init__.py:101` (`OptimizationParams.mult`); cũng là `Config.mult` (`pipeline/config.py:37`) | Hệ số nhân "compact box" kiểm soát số tile mỗi splat chiếm (đặc thù fastgs-lite) |
+| `loss_thresh` | 0.1 (mặc định gốc) — pipeline Colab override thành **0.07** | `arguments/__init__.py:95`; override `pipeline/config.py:46` | Ngưỡng loss dùng trong tính điểm multi-view của fastgs-lite (`utils/fast_utils.py`) |
 | `grad_abs_thresh` | 0.0012 | `arguments/__init__.py:93` (mặc định gốc trùng với override `pipeline/config.py:46`) | Ngưỡng gradient tuyệt đối để đánh dấu ứng viên "split" (`grad_qualifiers_abs`, `scene/gaussian_model.py:484`) |
 | `grad_thresh` | 0.0002 | `arguments/__init__.py:96` | Ngưỡng gradient (norm) để đánh dấu ứng viên "clone" (`grad_qualifiers`, `scene/gaussian_model.py:483`) |
-| `lowfeature_lr` | 0.0025 | `arguments/__init__.py:94` | Learning rate cho nhóm feature "thấp" (đặc thù FastGS, tách khỏi `feature_lr` gốc) |
+| `lowfeature_lr` | 0.0025 | `arguments/__init__.py:98` | Learning rate cho nhóm feature "thấp" (đặc thù fastgs-lite, tách khỏi `feature_lr` gốc) |
 | `highfeature_lr` | 0.005 (mặc định gốc) — pipeline Colab override thành **0.02** | `arguments/__init__.py:91`; override `pipeline/config.py:45` | Learning rate cho nhóm feature "cao" |
 | Ngưỡng importance-score trong densify mask | `importance_score > 5` | `scene/gaussian_model.py:494` (`metric_mask = importance_score > 5`) | Gaussian phải được tối thiểu ~6 lượt "phiếu" đa góc nhìn mới được coi là ứng viên densify hợp lệ |
 | Ngưỡng pruning-score cuối | `pruning_score > 0.9` | `scene/gaussian_model.py:538` (`final_prune_fastgs`) | Gaussian có điểm nhất quán đa góc nhìn chuẩn hoá > 0.9 (tức rất kém — xem §48) bị prune ở bước dọn cuối |
 | Kích thước tile rasterizer | 16 × 16 pixel | `submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/config.h:16-17` (`BLOCK_X 16`, `BLOCK_Y 16`) | Kích thước ô lưới dùng để phân vùng màn hình khi rasterize |
 | `psnr_max` | 30.0 | `pipeline/config.py:38` (`Config.psnr_max`); mặc định trùng trong `pipeline/score.py:12,23` | Ngưỡng chuẩn hoá PSNR trong `composite_score` (xem §44) |
 | `llffhold` | 8 | `ModelParams.llffhold` (`arguments/__init__.py`, cờ `--llffhold`), mặc định hàm `readColmapSceneInfo` (`scene/dataset_readers.py:132`) và `Config.llffhold` (`pipeline/config.py`) — cả ba cùng giá trị 8; `Scene` truyền cờ này xuống reader. | Cứ 8 ảnh COLMAP thì 1 ảnh (`idx % llffhold == 0`) làm test/hold-out, còn lại làm train |
-| `ram_soft_limit_gb` | 10.5 | `pipeline/config.py:41` | Ngưỡng RAM mềm nội bộ pipeline Colab, không phải hằng số của lõi 3DGS/FastGS |
+| `ram_soft_limit_gb` | 10.5 | `pipeline/config.py:41` | Ngưỡng RAM mềm nội bộ pipeline Colab, không phải hằng số của lõi 3DGS/fastgs-lite |
 
 Lưu ý quan trọng: nhiều tham số của `OptimizationParams` (`arguments/__init__.py`) có **giá trị mặc định gốc** nhưng bị **override bởi `Config.train_extra_args`** (`pipeline/config.py:42-48`) khi chạy qua pipeline Colab — cụ thể `densification_interval` (100→500), `lambda_dssim` (0.2→0.25), `highfeature_lr` (0.005→0.02), `loss_thresh` (0.1→0.07), `grad_abs_thresh` (0.0012→0.0012, không đổi). Khi đọc log/`cfg_args` của một lần chạy cụ thể, giá trị hiệu lực là giá trị sau override, không phải giá trị mặc định trong `arguments/__init__.py`.
 

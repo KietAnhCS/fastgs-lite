@@ -2,27 +2,27 @@
 
 Tài liệu của fork này. `docs/` và `docs2/` đã được gộp làm một thư mục `DOCS/`.
 
-## Đang dùng — bám sát mã nguồn hiện tại (FastGS)
+## Đang dùng — bám sát mã nguồn hiện tại (fastgs-lite)
 
 | Tài liệu | Nội dung | Đi kèm |
 |---|---|---|
 | [gaussian-splatting-math.md](gaussian-splatting-math.md) | Nền tảng toán học 3DGS: chiếu covariance, alpha blending, loss | — |
-| [fastgs-acceleration-method.md](fastgs-acceleration-method.md) | Cơ chế tăng tốc của FastGS: điểm số nhất quán đa góc nhìn, densify điều kiện kép, compact box `--mult`, tách lr SH | `demos/fastgs_mechanisms.py` |
+| [fastgs-acceleration-method.md](fastgs-acceleration-method.md) | Cơ chế tăng tốc của fastgs-lite, đối chiếu từng công thức với mã nguồn: điểm số nhất quán đa góc nhìn, densify điều kiện kép, compact box `--mult` (ngưỡng level-set, kernel CUDA), tách lr SH và phép chia 20 | `demos/fastgs_mechanisms.py` |
 | [colab-t4-guide.md](colab-t4-guide.md) | Huấn luyện thật trên Colab free T4: preset A, điểm Score theo dõi, chống tràn RAM, roadmap tầng CUDA | `fastgs-acceleration-method.ipynb`, `pipeline/` |
 | [pipeline-and-submission.md](pipeline-and-submission.md) | Tham chiếu gói `pipeline/`: bảng cell↔hàm, các trường `Config`, công thức điểm (LPIPS/SSIM/PSNR) và nơi triển khai, hợp đồng `submission.zip`, cách chạy trên dữ liệu riêng | `pipeline/`, `fastgs-acceleration-method.ipynb` |
 | [history-train.md](history-train.md) | Nhật ký các phiên train thật: cấu hình, bảng điểm từng cảnh, diễn biến theo vòng lặp, tài nguyên đo được, việc cần làm cho phiên sau | `fastgs-acceleration-method.ipynb` |
 
 ### Cấu trúc repo hiện tại
 
-- `pipeline/` — toàn bộ logic Python thuần (không phụ thuộc Colab để import): `config.py` (tham số), `env.py` (máy/GPU/RAM), `data.py` (tải & liệt kê scene), `score.py` (công thức điểm chính thức), `trainer.py` (vòng train FastGS), `submission.py` (render test pose + đóng gói/kiểm tra zip), `report.py` (bảng/biểu đồ), `deliver.py` (đóng gói model + tải về), `run.py` (điều phối toàn bộ). Chi tiết: [pipeline-and-submission.md](pipeline-and-submission.md).
+- `pipeline/` — toàn bộ logic Python thuần (không phụ thuộc Colab để import): `config.py` (tham số), `env.py` (máy/GPU/RAM), `data.py` (tải & liệt kê scene), `score.py` (công thức điểm chính thức), `trainer.py` (vòng train fastgs-lite), `submission.py` (render test pose + đóng gói/kiểm tra zip), `report.py` (bảng/biểu đồ), `deliver.py` (đóng gói model + tải về), `run.py` (điều phối toàn bộ). Chi tiết: [pipeline-and-submission.md](pipeline-and-submission.md).
 - `fastgs-acceleration-method.ipynb` (gốc repo) — chỉ còn **glue code tiếng Anh**, 9 code cell (clone → GPU → config → data → smoke test → train → analytics → submission+download); mọi logic nằm trong `pipeline/*.py`; cần GPU.
-- `demos/fastgs_mechanisms.py` — các mô phỏng thu nhỏ bằng NumPy của cơ chế FastGS (không cần CUDA), tách ra khỏi notebook: `python demos/fastgs_mechanisms.py`.
+- `demos/fastgs_mechanisms.py` — các mô phỏng thu nhỏ bằng NumPy của cơ chế fastgs-lite (không cần CUDA), tách ra khỏi notebook: `python demos/fastgs_mechanisms.py`.
 
 ## Tham chiếu sâu — giải phẫu toàn bộ một phiên train
 
 Bộ ba tài liệu chi tiết nhất repo: mỗi file, mỗi hàm, mỗi hằng số, mỗi nhánh `if` mà một phiên
 train chạm tới, theo đúng thứ tự thực thi. Đánh số mục §1–§48 chạy liên tục qua cả ba tài liệu.
-Đã viết lại hoàn toàn theo mã nguồn FastGS hiện tại (bản cũ mô tả codebase DroneSplat với
+Đã viết lại hoàn toàn theo mã nguồn fastgs-lite hiện tại (bản cũ mô tả codebase DroneSplat với
 `--use_masks`, SAM2, DUSt3R, `pose_optimizer` — những thứ **không còn tồn tại**).
 
 | Tài liệu | Mục | Nội dung |

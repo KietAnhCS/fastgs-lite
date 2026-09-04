@@ -1,8 +1,8 @@
-# Huấn luyện FastGS trên Google Colab free (T4)
+# Huấn luyện fastgs-lite trên Google Colab free (T4)
 
 > Tài liệu đồng hành của notebook [`fastgs-acceleration-method.ipynb`](../fastgs-acceleration-method.ipynb) và gói [`pipeline/`](../pipeline).
 > Notebook chỉ gọi hàm trong `pipeline/`; toàn bộ code trong notebook và trong `pipeline/*.py` là **tiếng Anh** (tài liệu này viết bằng tiếng Việt).
-> Mô phỏng thu nhỏ các cơ chế FastGS (không cần CUDA): [`demos/fastgs_mechanisms.py`](../demos/fastgs_mechanisms.py) — xem [fastgs-acceleration-method.md](fastgs-acceleration-method.md).
+> Mô phỏng thu nhỏ các cơ chế fastgs-lite (không cần CUDA): [`demos/fastgs_mechanisms.py`](../demos/fastgs_mechanisms.py) — xem [fastgs-acceleration-method.md](fastgs-acceleration-method.md).
 > Nền tảng toán học 3DGS: [gaussian-splatting-math.md](gaussian-splatting-math.md).
 
 Mục tiêu: **chất lượng cao nhất trên mỗi phút GPU** với ràng buộc của Colab free, và train xong vẫn **lấy được mô hình về máy**.
@@ -18,7 +18,7 @@ Mục tiêu: **chất lượng cao nhất trên mỗi phút GPU** với ràng bu
 | Đĩa | ~78–110 GB | thường không phải nút thắt |
 | Phiên | có thể bị ngắt | giảm nhẹ bằng checkpoint định kỳ mỗi `Config.save_every` vòng (mặc định 2000) — xem mục 5 |
 
-So sánh: README gốc khuyến nghị **24 GB VRAM / RTX 4090** cho kết quả đúng như paper. T4 vẫn chạy được, nhưng phải chọn độ phân giải và ngân sách primitive cho phù hợp.
+README của repo upstream khuyến nghị **24 GB VRAM / RTX 4090**. T4 vẫn chạy được — [history-train.md](history-train.md) §1.6 đo được peak VRAM chỉ **0.68–1.16 GB** ở ngân sách 7000 vòng / `resolution=2`, tức 8% của T4. Nút thắt thực tế trên Colab free là **RAM hệ thống**, không phải VRAM.
 
 ---
 
@@ -36,7 +36,7 @@ Ba điều này quyết định mọi khuyến nghị bên dưới. Chúng **kh�
 | `15000 < iteration <= 20000` (dòng 233) | bước Adam **mỗi 32 vòng** |
 | `iteration > 20000` | bước Adam **mỗi 64 vòng** |
 
-Cộng thêm `densify_until_iter = 15000` và `position_lr_max_steps = 30000` (`arguments/__init__.py:79,90`), hệ quả:
+Cộng thêm `densify_until_iter = 15000` và `position_lr_max_steps = 30000` (`arguments/__init__.py:91,80`), hệ quả:
 
 - **Toàn bộ chi phí nằm ở 0–15k** (densify + Adam đầy đủ + số Gaussian đang tăng).
 - **15k–30k gần như miễn phí** nhưng vẫn chạy `final_prune_fastgs` (mỗi 3000 vòng, xem `pipeline/trainer.py:125-128`) → ít Gaussian hơn, LPIPS tốt hơn, file `.ply` nhỏ hơn.
@@ -45,7 +45,7 @@ Cộng thêm `densify_until_iter = 15000` và `position_lr_max_steps = 30000` (`
 
 ### 2.2 — `--antialiasing` là cờ chết trong fork này
 
-`arguments/__init__.py:70` có `self.antialiasing = False`, nhưng:
+`arguments/__init__.py:71` có `self.antialiasing = False`, nhưng:
 
 - `gaussian_renderer/__init__.py` dựng `GaussianRasterizationSettings(...)` **không có** trường `antialiasing`;
 - `submodules/diff-gaussian-rasterization_fastgs/` **không tham chiếu** chữ `antialiasing` ở bất kỳ đâu.
@@ -58,7 +58,7 @@ Truyền cờ này chỉ bị bỏ qua âm thầm — không lỗi, không tác 
 
 | `densification_interval` | Số lần gọi trong 0–15k |
 |---|---|
-| `100` (mặc định của `arguments/__init__.py:87`) | ~145 lần |
+| `100` (mặc định của `arguments/__init__.py:88`) | ~145 lần |
 | `500` (giá trị `pipeline/config.py` đặt sẵn trong `train_extra_args`, khớp `train_base.sh`) | ~29 lần |
 
 ⇒ Đây là lever thời gian lớn thứ hai sau độ phân giải, và nó là **setting chính chủ**, không phải thoả hiệp. `Config()` mặc định đã dùng `500`, không cần tự thêm.
@@ -190,7 +190,7 @@ Các ý tưởng dưới đây **không có trong mã nguồn hiện tại** (kh
 | **3DGS-MCMC đầy đủ** | thiếu mảnh di dời bảo toàn ảnh: $o_{\text{new}}=1-(1-o_{\text{old}})^{1/N}$ + hiệu chỉnh $\Sigma$ khớp mô-men bậc 2 | tuỳ — đường ngắn hơn là chuyển backend sang `gsplat` (có sẵn strategy MCMC + antialiasing) | 3 |
 | **Khởi tạo MASt3R/DUSt3R** | viết `sceneLoadTypeCallbacks["Dust3r"]` trả `BasicPointCloud` từ pointmap dày $X\in\mathbb{R}^{H\times W\times3}$ | không (Python + model có sẵn) | cao, nếu ảnh trên không / ít chồng lấp |
 
-> 3DGS và FastGS tối ưu cho **ảnh mới**, không cho **hình học**. Digital twin cần mesh thì nhánh đúng là 2DGS/GOF.
+> 3DGS và fastgs-lite tối ưu cho **ảnh mới**, không cho **hình học**. Digital twin cần mesh thì nhánh đúng là 2DGS/GOF.
 
 **Đã gỡ bỏ khỏi notebook:** bản trước đây có một ô chạy "ablation" so sánh 3 cấu hình (`presetA` / `coarse2fine` / `c2f_budget_mcmc`) xuất `ablation.csv` — ô này **không còn tồn tại**; các cờ `coarse2fine`, `gaussian_budget`, MCMC noise ở trên chưa được cài vào `pipeline/trainer.py`. Notebook hiện tại (9 ô, mục 8) không có công tắc `RUN_ABLATION`.
 
@@ -219,10 +219,16 @@ Quy ước code trong notebook: **toàn bộ code là tiếng Anh**; giải thí
 
 ---
 
-## 8. Điều chưa kiểm chứng
+## 8. Cái gì đã đo, cái gì mới là suy luận
 
-Tài liệu này được viết dựa trên việc đọc mã nguồn (`pipeline/*.py`, `train.py`, `render.py`, `metrics.py`, `scene/gaussian_model.py`, `scene/__init__.py`, `utils/camera_utils.py`, `utils/fast_utils.py`, `gaussian_renderer/__init__.py`), **chưa chạy thử toàn bộ notebook trên GPU thật**.
+**Đã đo.** Một phiên `Run all` đầy đủ trên Colab free T4 đã chạy (2026-09-04) và được ghi lại trong [history-train.md](history-train.md) §1, với artifact cam kết trong [`assets/leaderboard.csv`](assets/leaderboard.csv) và [`assets/history.csv`](assets/history.csv). Từ đó rút ra ba điều đi ngược lại phán đoán ban đầu của tài liệu này:
 
-Trước khi dựa vào số liệu: chạy ô 4 (Quick test) trước để chắc dữ liệu + CUDA + chấm điểm đều chạy được, rồi mới nâng `Config.iterations` lên 30000 và chạy ô 5 (Train) đầy đủ.
+| | Phán đoán từ đọc code | Số đo thật (7000 vòng, `resolution=2`) |
+|---|---|---|
+| Nút thắt tài nguyên | VRAM, nên phải hạ độ phân giải | **RAM hệ thống** (9.58/12.7 GB); VRAM chỉ 0.68–1.16 GB |
+| `resolution` | `2` cho trong nhà là bắt buộc | `resolution=1` thừa sức chạy, và bỏ được lệch train/eval |
+| Tốc độ | — | 67–95 s/cảnh, ~85 it/s, 4 cảnh trong 327.6 s |
 
-Các con số trong tài liệu này là **suy luận từ mã nguồn và tham số của `train_base.sh`**, không phải kết quả đo trên máy bạn. Bảng `leaderboard.csv`/`history.csv` của chính bạn (mục 7, ô 6) mới là bằng chứng.
+**Chưa đo.** Mọi khuyến nghị về ngân sách **30000 vòng** ở mục 2.1 và 4 vẫn là suy luận từ mã nguồn — phiên đã chạy dùng 7000 vòng, nên `final_prune_fastgs` chưa từng thực thi lần nào (xem [fastgs-acceleration-method.md](fastgs-acceleration-method.md) §3.3). Các giá trị `grad_abs_thresh` / `dense` theo cảnh cũng lấy từ `train_base.sh`, chưa có phép so sánh nào trong repo này.
+
+Quy trình đúng vẫn giữ nguyên: chạy ô 4 (Quick test) để chắc dữ liệu + CUDA + chấm điểm đều chạy được, rồi mới nâng `Config.iterations` và chạy ô 5 đầy đủ. Bảng `leaderboard.csv`/`history.csv` của chính bạn (ô 6) mới là bằng chứng cho máy bạn.
