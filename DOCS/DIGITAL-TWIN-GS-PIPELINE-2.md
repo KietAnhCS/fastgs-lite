@@ -44,32 +44,32 @@ Bảng đối chiếu từng bước trong một iteration (file:line là vị t
 | `l1_loss` + `fast_ssim` + loss tổng | `train.py:101-103` | `pipeline/trainer.py:108-110` |
 | `loss.backward()` | `train.py:104` | `pipeline/trainer.py:111` |
 | Cập nhật thanh tiến trình (EMA loss) | `train.py:110-114` (tqdm, mỗi 10 iter) | `pipeline/trainer.py:114`, `146-149` (tqdm + hậu tố Score/PSNR mỗi 10 iter) |
-| Lưu checkpoint theo lịch | `train.py:120-122` (`saving_iterations`, gọi `scene.save`) | `pipeline/trainer.py:158-160` (`cfg.save_every`, gọi `_save_checkpoint` — lưu `.ply` rồi xoá checkpoint cũ) |
+| Lưu checkpoint theo lịch | `train.py:120-122` (`saving_iterations`, gọi `scene.save`) | `pipeline/trainer.py:154-156` (`cfg.save_every`, gọi `_save_checkpoint` — lưu `.ply` rồi xoá checkpoint cũ) |
 | Densify: `max_radii2D` + `add_densification_stats` | `train.py:129-131` | `pipeline/trainer.py:118-120` |
 | `densify_and_prune_fastgs` mỗi `densification_interval` | `train.py:133-142` | `pipeline/trainer.py:121-128` |
 | `reset_opacity` mỗi `opacity_reset_interval` | `train.py:144-145` | `pipeline/trainer.py:129-130` |
 | Pruning đa góc nhìn 3 tầng (`final_prune_fastgs`, 15k–30k, mỗi 3000 iter) | `train.py:148-156` | `pipeline/trainer.py:132-135` |
-| `optimizer_step` / `sparse_adam.step` | `train.py:159-165` | `pipeline/trainer.py:137-141` |
+| `optimizer_step` | `train.py:159-160` | `pipeline/trainer.py:137-141` |
 | Đo thời gian bằng CUDA event | `train.py:53-54, 108, 165-169` | **không có** — dùng `time.time()` tổng thể (`pipeline/trainer.py:80, 165`) |
 
 Những gì **`train_scene` thêm** so với `train.py`:
-- Chấm điểm trực tuyến định kỳ mỗi `score_every` iteration qua `evaluate_cameras` (đọc PSNR/SSIM/LPIPS/Score chuẩn hoá trên tập `holdout`), có in delta so với lần chấm trước (`d_score`, `d_psnr`, …) — `pipeline/trainer.py:150-172`.
+- Chấm điểm trực tuyến định kỳ mỗi `score_every` iteration qua `evaluate_cameras` (đọc PSNR/SSIM/LPIPS/Score chuẩn hoá trên tập `holdout`), có in delta so với lần chấm trước (`d_score`, `d_psnr`, …) — `pipeline/trainer.py:146-168`.
 - Hậu tố tiến trình tqdm hiển thị % hoàn thành, số Gaussian, loss, Score, PSNR ngay trên thanh (`pipeline/trainer.py:146-149`).
 - Checkpoint định kỳ theo `cfg.save_every`, tự xoá checkpoint giữa chừng trước đó để tiết kiệm đĩa Colab (`_save_checkpoint`, `pipeline/trainer.py:41-47`).
-- Giới hạn RAM mềm: nếu `usage["ram_used_gb"] > cfg.ram_soft_limit_gb` thì gọi `gc.collect()` + `torch.cuda.empty_cache()` (`pipeline/trainer.py:173-175`).
-- Gọi `safe_state(True)` — tức luôn chạy silent/quiet (`pipeline/trainer.py:59`), khác `train.py` truyền `args.quiet` từ CLI (`train.py:271`).
-- Dọn bộ nhớ tường minh mỗi iteration (`del pkg, image, gt, viewspace, visibility, radii, loss, ll1, ssim_value` — `pipeline/trainer.py:176`) và dọn toàn bộ model sau khi train nếu `keep_model=False` (`pipeline/trainer.py:186-192`).
+- Giới hạn RAM mềm: nếu `usage["ram_used_gb"] > cfg.ram_soft_limit_gb` thì gọi `gc.collect()` + `torch.cuda.empty_cache()` (`pipeline/trainer.py:169-171`).
+- Gọi `safe_state(True)` — tức luôn chạy silent/quiet (`pipeline/trainer.py:59`), khác `train.py` truyền `args.quiet` từ CLI (`train.py:266`).
+- Dọn bộ nhớ tường minh mỗi iteration (`del pkg, image, gt, viewspace, visibility, radii, loss, ll1, ssim_value` — `pipeline/trainer.py:172`) và dọn toàn bộ model sau khi train nếu `keep_model=False` (`pipeline/trainer.py:182-188`).
 
 Những gì **`train_scene` bỏ** so với `train.py` (đã kiểm tra từng cái trong `train.py`):
 - Cầu nối viewer qua websocket: `train.py` import `network_gui_ws` và có khối `if websockets: ...` gửi ảnh render trực tiếp cho client xem trực tiếp (`train.py:16, 67-73, 261-263, 273`). `train_scene` không import `gaussian_renderer.network_gui_ws`, không có tham số nào tương đương — xác nhận đã bỏ.
 - Tensorboard: `train.py` có `TENSORBOARD_FOUND`, `SummaryWriter`, hàm `training_report()` ghi scalar/ảnh lên TB (`train.py:28-31, 200, 209-243`) — nhưng lưu ý dòng gọi thực tế `training_report(...)` trong vòng lặp chính đã bị **comment out** (`train.py:118`), nên ngay trong `train.py` nó cũng không chạy khi train thường. `train_scene` không có bất kỳ đoạn nào liên quan TensorBoard.
 - `--checkpoint_iterations` / `checkpoint` / `--start_checkpoint`: `train.py` nhận `checkpoint_iterations` và `checkpoint` làm tham số của `training()` nhưng bên trong hàm chỉ dùng `checkpoint` để `torch.load` model phục hồi (`train.py:36-39`) — **không có đoạn nào trong `training()` lưu theo `checkpoint_iterations`** (chỉ có `saving_iterations` được dùng để `scene.save`). `train_scene` không nhận và không dùng khái niệm `checkpoint_iterations`/`start_checkpoint` nào cả — nó tự quản lý qua `cfg.save_every`.
 - `--debug_from`: `train.py` bật `pipe.debug = True` khi `(iteration - 1) == debug_from` (`train.py:94-95`), dùng để dump snapshot lỗi CUDA. `train_scene` không nhận `debug_from`, `pipe.debug` giữ nguyên giá trị mặc định `False` suốt quá trình train qua notebook.
-- `torch.autograd.set_detect_anomaly(args.detect_anomaly)`: chỉ có ở khối `if __name__ == "__main__"` của `train.py:274`, không có trong `pipeline/trainer.py`.
+- `torch.autograd.set_detect_anomaly(args.detect_anomaly)`: chỉ có ở khối `if __name__ == "__main__"` của `train.py:269`, không có trong `pipeline/trainer.py`.
 
 ## 20. `update_learning_rate` và `oneupSHdegree`
 
-`GaussianModel.training_setup(training_args)` (`scene/gaussian_model.py:192-215`) tạo 5 param-group cho optimizer chính (`self.optimizer`), mỗi nhóm có `lr` riêng cố định trừ `xyz`:
+`GaussianModel.training_setup(training_args)` (`scene/gaussian_model.py:162-180`) tạo 5 param-group cho optimizer chính (`self.optimizer`), mỗi nhóm có `lr` riêng cố định trừ `xyz`:
 
 | Param group | `lr` khởi tạo | Có được `update_learning_rate` cập nhật mỗi iteration không |
 |---|---|---|
@@ -78,11 +78,11 @@ Những gì **`train_scene` bỏ** so với `train.py` (đã kiểm tra từng c
 | `opacity` | `opacity_lr` | Không |
 | `scaling` | `scaling_lr` | Không |
 | `rotation` | `rotation_lr` | Không |
-| `f_rest` (trong `shoptimizer` riêng nếu optimizer mặc định, hoặc gộp vào cùng optimizer nếu `sparse_adam`) | `highfeature_lr / 20.0` | Không |
+| `f_rest` (trong `shoptimizer` riêng) | `highfeature_lr / 20.0` | Không |
 
 `self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)` truyền `lr=0.0` làm giá trị mặc định của `Adam`, nhưng từng phần tử trong `l` đã tự mang khoá `'lr'` riêng nên override giá trị này — `lr=0.0` thực chất không bao giờ được dùng.
 
-`update_learning_rate(self, iteration)` (`scene/gaussian_model.py:217-223`):
+`update_learning_rate(self, iteration)` (`scene/gaussian_model.py:182-188`):
 ```python
 for param_group in self.optimizer.param_groups:
     if param_group["name"] == "xyz":
@@ -92,9 +92,9 @@ for param_group in self.optimizer.param_groups:
 ```
 Nó chỉ tìm đúng group tên `"xyz"`, gán `lr` mới rồi `return lr` ngay lập tức (bỏ qua các group còn lại trong vòng `for` — không cần `break` vì đã `return`). Giá trị trả về không được `train.py`/`train_scene` sử dụng (lời gọi `gaussians.update_learning_rate(iteration)` không gán biến nào) — hàm được gọi vì tác dụng phụ (side-effect) lên `param_group['lr']`.
 
-`xyz_scheduler_args` được tạo bởi `get_expon_lr_func(lr_init=position_lr_init*spatial_lr_scale, lr_final=position_lr_final*spatial_lr_scale, lr_delay_mult=position_lr_delay_mult, max_steps=position_lr_max_steps)` (`scene/gaussian_model.py:212-215`) — lịch suy giảm mũ (log-linear interpolation giữa `lr_init` và `lr_final` theo `iteration/max_steps`, có delay mult ở giai đoạn đầu).
+`xyz_scheduler_args` được tạo bởi `get_expon_lr_func(lr_init=position_lr_init*spatial_lr_scale, lr_final=position_lr_final*spatial_lr_scale, max_steps=position_lr_max_steps)` (`scene/gaussian_model.py:178-180`) — lịch suy giảm mũ (log-linear interpolation giữa `lr_init` và `lr_final` theo `iteration/max_steps`, có delay mult ở giai đoạn đầu).
 
-`oneupSHdegree()` (`scene/gaussian_model.py:163-165`):
+`oneupSHdegree()` (`scene/gaussian_model.py:133-135`):
 ```python
 def oneupSHdegree(self):
     if self.active_sh_degree < self.max_sh_degree:
@@ -159,7 +159,7 @@ screenspace_points = torch.zeros((pc.get_xyz.shape[0], 4), dtype=pc.get_xyz.dtyp
 | `get_flag` | tham số hàm (mặc định `None`) | cờ bật thu thập `metric_map` trong kernel CUDA |
 | `metric_map` | tính ở trên hoặc truyền vào | buffer đếm cho chấm điểm fastgs-lite |
 
-**Compact box — `mult`**: giá trị này đi thẳng vào `GaussianRasterizationSettings.mult` rồi xuống kernel CUDA `duplicateToTilesTouched` (`submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/auxiliary.h:318-358`). Kernel tính ngưỡng cắt hộp bao (bounding box) mỗi splat theo kiểu SNUGBOX: `t = 2*log(opacity*255)`, sau đó `t = mult * t` (dòng 337-338, biến `t` được chú thích là "beta in Compact Box"). `t` càng nhỏ (mult càng nhỏ) → hộp bao ellipse càng hẹp → splat chạm ít tile 16×16 hơn → ít công việc rasterize hơn (nhanh hơn) nhưng có nguy cơ cắt mất phần đuôi mờ của Gaussian nếu `mult` quá nhỏ. Giá trị mặc định `opt.mult = 0.5` (`arguments/__init__.py:101`), các preset lớn (`train_big.sh`, README) dùng `--mult 0.7` cho scene lớn/nhiều chi tiết. **`--mult` phải khớp giữa `train.py` và `render.py`** khi render lại sau train (ghi rõ trong `README.md:137`) vì nó ảnh hưởng trực tiếp đến hình dạng splat được rasterize.
+**Compact box — `mult`**: giá trị này đi thẳng vào `GaussianRasterizationSettings.mult` rồi xuống kernel CUDA `duplicateToTilesTouched` (`submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/auxiliary.h:318-358`). Kernel tính ngưỡng cắt hộp bao (bounding box) mỗi splat theo kiểu SNUGBOX: `t = 2*log(opacity*255)`, sau đó `t = mult * t` (dòng 337-338, biến `t` được chú thích là "beta in Compact Box"). `t` càng nhỏ (mult càng nhỏ) → hộp bao ellipse càng hẹp → splat chạm ít tile 16×16 hơn → ít công việc rasterize hơn (nhanh hơn) nhưng có nguy cơ cắt mất phần đuôi mờ của Gaussian nếu `mult` quá nhỏ. Giá trị mặc định `opt.mult = 0.5` (`arguments/__init__.py:96`), các preset lớn (`train_big.sh`, README) dùng `--mult 0.7` cho scene lớn/nhiều chi tiết. **`--mult` phải khớp giữa `train.py` và `render.py`** khi render lại sau train (ghi rõ trong `README.md:137`) vì nó ảnh hưởng trực tiếp đến hình dạng splat được rasterize.
 
 **`compute_cov3D_python` / `convert_SHs_python`** (dòng 70-88, cả hai mặc định `False` trong `PipelineParams`, `arguments/__init__.py:67-68`):
 - Nếu `pipe.compute_cov3D_python=True`: `cov3D_precomp = pc.get_covariance(scaling_modifier)` — hiệp phương sai 3D được tính sẵn ở phía Python (chậm hơn, dùng để debug/so sánh), rasterizer CUDA sẽ nhận `cov3D_precomp` thay vì tự tính từ `scales`/`rotations`.
@@ -225,7 +225,7 @@ loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
 ```
 tức `(1 - λ)·L1 + λ·(1 - SSIM)`, với `λ = opt.lambda_dssim`.
 
-Giá trị mặc định: `self.lambda_dssim = 0.2` (`arguments/__init__.py:86`, trong `OptimizationParams`). `README.md:173` xác nhận cùng giá trị mặc định `0.2`.
+Giá trị mặc định: `self.lambda_dssim = 0.2` (`arguments/__init__.py:82`, trong `OptimizationParams`). `README.md:173` xác nhận cùng giá trị mặc định `0.2`.
 
 Preset notebook ghi đè: `pipeline/config.py:44` truyền `"--lambda_dssim", "0.25"` vào `build_args` — tức đường train qua notebook luôn train với `λ = 0.25`, coi trọng SSIM (cấu trúc ảnh) hơn một chút so với mặc định CLI `0.2`. Đây là ví dụ minh hoạ số cụ thể của cấu hình mặc định notebook, không phải quy tắc cố định — người dùng CLI hoàn toàn có thể tự truyền `--lambda_dssim` khác.
 
@@ -248,10 +248,10 @@ Trong `render_fastgs` (`gaussian_renderer/__init__.py:60-102`) các input này �
 
 | Input rasterizer | Nguồn (`GaussianModel`) | Activation nằm giữa gradient và tham số thô |
 |---|---|---|
-| `means3D` | `pc.get_xyz` → `self._xyz` | không có activation, `get_xyz` trả thẳng `_xyz` (`scene/gaussian_model.py:139-141`) |
-| `opacities` | `pc.get_opacity` → `sigmoid(self._opacity)` | `torch.sigmoid` (`scene/gaussian_model.py:42, 157-158`) |
-| `scales` | `pc.get_scaling` → `exp(self._scaling)` | `torch.exp` (`scene/gaussian_model.py:38`) |
-| `rotations` | `pc.get_rotation` → `normalize(self._rotation)` | `torch.nn.functional.normalize` (`scene/gaussian_model.py:45, 135-137`) |
+| `means3D` | `pc.get_xyz` → `self._xyz` | không có activation, `get_xyz` trả thẳng `_xyz` (`scene/gaussian_model.py:109-111`) |
+| `opacities` | `pc.get_opacity` → `sigmoid(self._opacity)` | `torch.sigmoid` (`scene/gaussian_model.py:37, 157-158`) |
+| `scales` | `pc.get_scaling` → `exp(self._scaling)` | `torch.exp` (`scene/gaussian_model.py:33`) |
+| `rotations` | `pc.get_rotation` → `normalize(self._rotation)` | `torch.nn.functional.normalize` (`scene/gaussian_model.py:40, 135-137`) |
 | `dc`, `shs` | `pc.get_features_dc`, `pc.get_features_rest` | không có activation (chỉ transpose) |
 | `means2D` | `screenspace_points` (tensor phụ, xem bên dưới) | không có activation |
 
@@ -278,7 +278,7 @@ def add_densification_stats(self, viewspace_point_tensor, update_filter):
     self.xyz_gradient_accum_abs[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter, 2:], dim=-1, keepdim=True)
     self.denom[update_filter] += 1
 ```
-(`scene/gaussian_model.py:528-531`)
+(`scene/gaussian_model.py:493-496`)
 
 - `update_filter` chính là `visibility_filter` — trong cả hai vòng lặp nó được tính là `(radii > 0).nonzero()` (`gaussian_renderer/__init__.py:108`), tức **chỉ số** (không phải mask bool) của các Gaussian có bán kính màn hình > 0 ở lượt render đó. Do đó chỉ Gaussian *nhìn thấy được ở camera vừa render* mới được cộng dồn — Gaussian bị frustum-cull hoặc có `radii == 0` không được cập nhật ở bước này.
 - Cột `[:, :2]` của `viewspace_point_tensor.grad` là gradient 2D màn hình "ký hiệu" thông thường — norm Euclid của nó được cộng vào `xyz_gradient_accum`.
@@ -308,7 +308,7 @@ return camlist
 ```
 Luôn lấy **đúng 10 camera** (hằng số cứng `num_cams = 10`, không phải tham số cấu hình), lấy ngẫu nhiên đều và `pop` khỏi list nên không trùng lặp trong một lần gọi (`my_viewpoint_stack` là bản copy toàn bộ tập train camera, được tạo mới ở caller mỗi lần: `scene.getTrainCameras().copy()`, `train.py:134` / `pipeline/trainer.py:126,138`). Nếu tập train có ít hơn 10 camera, `randint(0, len-1)` vẫn hợp lệ nhưng vòng lặp sẽ pop tới khi rỗng rồi lỗi — đọc mã cho thấy hàm không tự giới hạn `num_cams` theo độ dài stack.
 
-**Bước 1 — với mỗi camera trong `camlist`, hai lượt render.** Trong `compute_gaussian_score_fastgs` (`utils/fast_utils.py:45-105`), vòng `for view in range(len(camlist))`:
+**Bước 1 — với mỗi camera trong `camlist`, hai lượt render.** Trong `compute_gaussian_score_fastgs` (`utils/fast_utils.py:33-93`), vòng `for view in range(len(camlist))`:
 
 1. *Lượt render thường* (dòng 75): `render_fastgs(cam, gaussians, pipe, bg, args.mult)["render"]` → `render_image`.
 2. *Loss ảnh chuẩn* (dòng 76): `compute_photometric_loss` — L1+SSIM giống loss huấn luyện chính, nhưng dùng trọng số cố định `0.2` (không phải `opt.lambda_dssim`):
@@ -322,9 +322,9 @@ Luôn lấy **đúng 10 camera** (hằng số cứng `num_cams = 10`, không ph�
    l1_loss_norm = (l1_loss - min(l1_loss)) / (max(l1_loss) - min(l1_loss))
    ```
    Đây là **min-max chuẩn hoá trên toàn ảnh** của riêng camera đó — không so sánh giữa các camera.
-4. *Mặt nạ nhị phân* (dòng 82): `metric_map = (l1_loss_norm > args.loss_thresh).int()`, với `args.loss_thresh = 0.1` mặc định (`arguments/__init__.py:95`).
+4. *Mặt nạ nhị phân* (dòng 82): `metric_map = (l1_loss_norm > args.loss_thresh).int()`, với `args.loss_thresh = 0.1` mặc định (`arguments/__init__.py:90`).
 
-   ⚠ **Không có bước flatten nào ở đây.** `l1_loss_norm` có shape `(H, W)` và `metric_map` giữ nguyên shape đó — `fast_utils.py:82` chỉ so ngưỡng rồi `.int()`. Chỗ duy nhất tạo tensor 1D là **nhánh mặc định** trong `render_fastgs` khi caller *không* truyền `metric_map`:
+   ⚠ **Không có bước flatten nào ở đây.** `l1_loss_norm` có shape `(H, W)` và `metric_map` giữ nguyên shape đó — `fast_utils.py:70` chỉ so ngưỡng rồi `.int()`. Chỗ duy nhất tạo tensor 1D là **nhánh mặc định** trong `render_fastgs` khi caller *không* truyền `metric_map`:
 
    ```python
    # gaussian_renderer/__init__.py:37-38
@@ -410,7 +410,7 @@ Chạy `python demos/fastgs_mechanisms.py` in ra ví dụ số cụ thể cho c�
 
 ## 29. `densify_and_prune_fastgs` — điều kiện kép
 
-Chữ ký: `densify_and_prune_fastgs(self, max_screen_size, min_opacity, extent, radii, args, importance_score=None, pruning_score=None)` (`scene/gaussian_model.py:468`).
+Chữ ký: `densify_and_prune_fastgs(self, max_screen_size, min_opacity, extent, radii, args, importance_score=None, pruning_score=None)` (`scene/gaussian_model.py:433`).
 
 **Bước A — điều kiện gradient** (dòng 477-487):
 ```python
@@ -465,7 +465,7 @@ if iteration < opt.densify_until_iter:              # 15_000
 
 | Đường chạy | `densification_interval` | Nguồn |
 |---|---|---|
-| `train.py` không truyền cờ | **100** | mặc định `arguments/__init__.py:88` |
+| `train.py` không truyền cờ | **100** | mặc định `arguments/__init__.py:83` |
 | `train_base.sh` / `train_big.sh` | **500** | truyền `--densification_interval 500` |
 | Notebook / `pipeline/` | **500** | `Config.train_extra_args`, `pipeline/config.py:43` |
 
@@ -475,11 +475,11 @@ Với cấu hình notebook mặc định `iterations = 7000` (`pipeline/config.p
 
 | Tầng | Khi nào chạy | Điều kiện xoá | Hằng số | File:line |
 |---|---|---|---|---|
-| 1. Prune trong mỗi lần densify | Mỗi 100 iter, từ iter 500 đến <15000 (`densify_and_prune_fastgs`, cuối hàm) | `opacity < min_opacity` HOẶC (nếu `max_screen_size` được truyền) `max_radii2D > max_screen_size` HOẶC `scale.max > 0.1*extent` | `min_opacity=0.005` (truyền cứng ở caller, không phải `opt`); `max_screen_size = 20` chỉ khi `iteration > opacity_reset_interval` (3000), ngược lại `None` (tắt 2 điều kiện screen/world-size); `0.1*extent` | `scene/gaussian_model.py:499-503`; gọi ở `train.py:133`/`pipeline/trainer.py:125` |
-| 2. Lấy mẫu ngân sách xoá (không phải một tầng độc lập, mà là cách *thực thi* tầng 1) | Cùng lúc với tầng 1, ngay sau khi tính `prune_mask` | Trong số các điểm đã bị `prune_mask` đánh dấu, chỉ xoá `remove_budget = floor(0.5 * số điểm bị đánh dấu)` điểm, lấy mẫu có trọng số `1/(pruning_score_inverse)` bằng `torch.multinomial` không hoàn lại | `remove_budget = int(0.5 * to_remove)`; trọng số = `1/(1e-6 + (1 - pruning_score))` | `scene/gaussian_model.py:505-518` |
-| 3. `final_prune_fastgs` (hậu kỳ) | Mỗi 3000 iter, chỉ khi `15_000 < iteration < 30_000` | `opacity < min_opacity` HOẶC `pruning_score > 0.9` | `min_opacity = 0.1` (khác hẳn 0.005 của tầng 1); ngưỡng `pruning_score` cố định `0.9` | `scene/gaussian_model.py:533-540`; gọi ở `train.py:153-158`/`pipeline/trainer.py:137-140` |
+| 1. Prune trong mỗi lần densify | Mỗi 100 iter, từ iter 500 đến <15000 (`densify_and_prune_fastgs`, cuối hàm) | `opacity < min_opacity` HOẶC (nếu `max_screen_size` được truyền) `max_radii2D > max_screen_size` HOẶC `scale.max > 0.1*extent` | `min_opacity=0.005` (truyền cứng ở caller, không phải `opt`); `max_screen_size = 20` chỉ khi `iteration > opacity_reset_interval` (3000), ngược lại `None` (tắt 2 điều kiện screen/world-size); `0.1*extent` | `scene/gaussian_model.py:464-468`; gọi ở `train.py:133`/`pipeline/trainer.py:125` |
+| 2. Lấy mẫu ngân sách xoá (không phải một tầng độc lập, mà là cách *thực thi* tầng 1) | Cùng lúc với tầng 1, ngay sau khi tính `prune_mask` | Trong số các điểm đã bị `prune_mask` đánh dấu, chỉ xoá `remove_budget = floor(0.5 * số điểm bị đánh dấu)` điểm, lấy mẫu có trọng số `1/(pruning_score_inverse)` bằng `torch.multinomial` không hoàn lại | `remove_budget = int(0.5 * to_remove)`; trọng số = `1/(1e-6 + (1 - pruning_score))` | `scene/gaussian_model.py:470-483` |
+| 3. `final_prune_fastgs` (hậu kỳ) | Mỗi 3000 iter, chỉ khi `15_000 < iteration < 30_000` | `opacity < min_opacity` HOẶC `pruning_score > 0.9` | `min_opacity = 0.1` (khác hẳn 0.005 của tầng 1); ngưỡng `pruning_score` cố định `0.9` | `scene/gaussian_model.py:498-505`; gọi ở `train.py:153-158`/`pipeline/trainer.py:137-140` |
 
-Ghi chú quan trọng: **tầng 2 không phải là một cơ chế "prune điểm-mờ theo mẫu" tách biệt** — comment trong code còn nói thẳng "The budget is not necessary for our method" (`scene/gaussian_model.py:509`), tức nhóm tác giả tự nhận đây là phần thừa kế từ code cũ (kiểu Taming-3DGS) mà không có tác dụng bắt buộc gì trong fastgs-lite. Nó vẫn **chạy thật** mỗi lần densify: giới hạn số điểm bị prune ở tầng 1 xuống còn phân nửa, ưu tiên xoá trước những điểm có `pruning_score` thấp (vì trọng số tỉ lệ nghịch với `pruning_score`, `scores = 1 - pruning_score`, nên điểm có `pruning_score` càng nhỏ, `scores` càng lớn, trọng số lấy mẫu `1/(1e-6+scores)` càng nhỏ — nghĩa là thực ra trọng số lấy mẫu tỉ lệ **nghịch** với `1 - pruning_score`, tức các điểm **pruning_score cao** (được multi-view đánh giá là tệ) mới có xác suất bị chọn xoá cao hơn — khớp với vai trò của `pruning_score` là "điểm càng cao càng nên xoá").
+Ghi chú quan trọng: **tầng 2 không phải là một cơ chế "prune điểm-mờ theo mẫu" tách biệt** — comment trong code còn nói thẳng "The budget is not necessary for our method" (`scene/gaussian_model.py:474`), tức nhóm tác giả tự nhận đây là phần thừa kế từ code cũ (kiểu Taming-3DGS) mà không có tác dụng bắt buộc gì trong fastgs-lite. Nó vẫn **chạy thật** mỗi lần densify: giới hạn số điểm bị prune ở tầng 1 xuống còn phân nửa, ưu tiên xoá trước những điểm có `pruning_score` thấp (vì trọng số tỉ lệ nghịch với `pruning_score`, `scores = 1 - pruning_score`, nên điểm có `pruning_score` càng nhỏ, `scores` càng lớn, trọng số lấy mẫu `1/(1e-6+scores)` càng nhỏ — nghĩa là thực ra trọng số lấy mẫu tỉ lệ **nghịch** với `1 - pruning_score`, tức các điểm **pruning_score cao** (được multi-view đánh giá là tệ) mới có xác suất bị chọn xoá cao hơn — khớp với vai trò của `pruning_score` là "điểm càng cao càng nên xoá").
 
 Đúng như phần task đề cập, cần xác minh xem có tầng "prune ngẫu nhiên theo opacity thấp" độc lập nào khác không — không có; toàn bộ logic pruning nằm trong hai hàm `densify_and_prune_fastgs` (đuôi hàm) và `final_prune_fastgs`, không có hàm riêng biệt nào khác gọi `prune_points` trong `train.py`/`pipeline/trainer.py`.
 
@@ -489,7 +489,7 @@ Ghi chú quan trọng: **tầng 2 không phải là một cơ chế "prune đi�
 
 Vì số Gaussian thay đổi theo từng lần densify/prune, không thể để nguyên các tensor tham số của Adam (`nn.Parameter` có kích thước cố định) — mọi thao tác thêm/bớt điểm đều phải đồng bộ ba thứ cùng lúc: tensor tham số, `optimizer.state[param]["exp_avg"]`, `optimizer.state[param]["exp_avg_sq"]`.
 
-**Xoá điểm — `_prune_optimizer(mask)`** (`scene/gaussian_model.py:342-362`), với `mask` ở đây là **valid mask** (`~mask` xoá, gọi từ `prune_points`, dòng 364-366):
+**Xoá điểm — `_prune_optimizer(mask)`** (`scene/gaussian_model.py:307-327`), với `mask` ở đây là **valid mask** (`~mask` xoá, gọi từ `prune_points`, dòng 364-366):
 ```python
 for opt in [self.optimizer, self.shoptimizer nếu có]:
     for group in opt.param_groups:
@@ -517,15 +517,12 @@ Cả điểm **clone** lẫn điểm **split** đều nhận `exp_avg`/`exp_avg_
 
 **Điều gì hỏng nếu làm sai:** nếu index-theo-mask không nhất quán giữa param và state (ví dụ prune tensor tham số nhưng quên prune state, hoặc dùng nhầm `mask` thay vì `~mask`), Adam sẽ áp `exp_avg` của điểm A lên điểm B → gradient/momentum bị gán nhầm chủ, mô hình phân kỳ hoặc render sai màu ở đúng những điểm vừa densify/prune. Việc `del` + gán lại key theo tensor mới (thay vì sửa item tại chỗ) là bắt buộc vì `torch.optim.Optimizer.state` là `defaultdict` khoá theo **object identity** (`id()`) của `nn.Parameter`, và `group["params"][0] = nn.Parameter(...)` tạo object mới mỗi lần.
 
-**Nhánh `optimizer_type`.** `GaussianModel` hỗ trợ hai loại (`training_setup`, dòng 207-211):
+**Hai optimizer, một đường.** `training_setup` (dòng 176-177) luôn dựng đúng hai `torch.optim.Adam`:
 ```python
-if optimizer_type == "default":
-    self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
-    self.shoptimizer = torch.optim.Adam(sh_l, lr=0.0, eps=1e-15)     # tối ưu riêng cho f_rest (SH bậc cao)
-elif optimizer_type == "sparse_adam":
-    self.optimizer = SparseGaussianAdam(l + sh_l, lr=0.0, eps=1e-15)  # gộp chung 1 optimizer, không có shoptimizer riêng
+self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+self.shoptimizer = torch.optim.Adam(sh_l, lr=0.0, eps=1e-15)     # tối ưu riêng cho f_rest (SH bậc cao)
 ```
-`SparseGaussianAdam` (`submodules/diff-gaussian-rasterization_fastgs/diff_gaussian_rasterization_fastgs/__init__.py:245-272`) override `step(visibility, N)` để chỉ cập nhật Adam cho các Gaussian *nhìn thấy ở iteration đó* (qua CUDA kernel `_C.adamUpdate`) — nhanh hơn khi số Gaussian lớn nhưng chỉ một phần nhỏ visible mỗi khung hình. Hai vòng lặp huấn luyện đều rẽ nhánh theo `opt.optimizer_type` tại bước optimizer step (§33), nhưng `_prune_optimizer`/`cat_tensors_to_optimizer` vẫn thao tác đồng nhất trên `[self.optimizer, self.shoptimizer nếu có]` — với `sparse_adam`, `self.shoptimizer` là `None` nên vòng lặp chỉ xử lý `self.optimizer` (đã gộp `l + sh_l` thành các param_group riêng biệt bên trong, logic per-group vẫn đúng).
+Fork từng có thêm nhánh `--optimizer_type sparse_adam` dựng một `SparseGaussianAdam` gộp `l + sh_l` (kernel `adam.cu`, chỉ cập nhật Gaussian visible mỗi iteration). Nhánh đó không bao giờ chạy được — `SparseGaussianAdam` được import từ gói vanilla `diff_gaussian_rasterization` trong `try/except: pass` — nên toàn bộ nhánh, cờ `--optimizer_type` và `adam.cu` đã bị **xóa**. `_prune_optimizer`/`cat_tensors_to_optimizer` vì thế luôn duyệt đúng `[self.optimizer, self.shoptimizer]`.
 
 ## 32. `reset_opacity`
 
@@ -535,7 +532,7 @@ def reset_opacity(self):
     optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
     self._opacity = optimizable_tensors["opacity"]
 ```
-(`scene/gaussian_model.py:279-282`) — với mỗi Gaussian, opacity sau activation bị **kẹp trần ở 0.01**: `opacity_new = min(opacity_hiện_tại, 0.01)`, sau đó chuyển ngược qua `inverse_sigmoid` để lưu vào `_opacity` thô. Nghĩa là Gaussian nào đang có opacity ≤ 0.01 giữ nguyên, còn Gaussian có opacity lớn hơn bị ép xuống 0.01 — không đặt cứng toàn bộ về một giá trị, chỉ *hạ trần*.
+(`scene/gaussian_model.py:244-247`) — với mỗi Gaussian, opacity sau activation bị **kẹp trần ở 0.01**: `opacity_new = min(opacity_hiện_tại, 0.01)`, sau đó chuyển ngược qua `inverse_sigmoid` để lưu vào `_opacity` thô. Nghĩa là Gaussian nào đang có opacity ≤ 0.01 giữ nguyên, còn Gaussian có opacity lớn hơn bị ép xuống 0.01 — không đặt cứng toàn bộ về một giá trị, chỉ *hạ trần*.
 
 `replace_tensor_to_optimizer` (dòng 327-340) thực hiện đúng kiểu phẫu thuật Adam như §31 nhưng cho trường hợp "thay tensor mà không đổi số lượng điểm": state Adam của riêng nhóm `"opacity"` bị **reset về 0** (`exp_avg = exp_avg_sq = zeros_like(tensor)`), các nhóm tham số khác (xyz, scaling, rotation, features) không bị đụng tới.
 
@@ -550,7 +547,7 @@ if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and 
 
 ## 33. `optimizer_step`, lịch learning rate và lưu `.ply`
 
-**`optimizer_step(iteration)`** (`scene/gaussian_model.py:225-244`) — chỉ dùng khi `opt.optimizer_type == "default"` (kiểm tra ở caller, `train.py:162-167`/`pipeline/trainer.py:143-147`; nhánh `sparse_adam` gọi thẳng `gaussians.optimizer.step(visible, radii.shape[0])` rồi `zero_grad`, không đi qua hàm này):
+**`optimizer_step(iteration)`** (`scene/gaussian_model.py:190-209`, gọi từ `train.py:162`/`pipeline/trainer.py:143`):
 ```python
 if iteration <= 15000:
     optimizer.step(); optimizer.zero_grad(set_to_none=True)
@@ -570,10 +567,9 @@ Khác với một `optimizer.step()` trơn: (1) `self.optimizer` (xyz, opacity, 
 self.xyz_scheduler_args = get_expon_lr_func(
     lr_init=training_args.position_lr_init * spatial_lr_scale,
     lr_final=training_args.position_lr_final * spatial_lr_scale,
-    lr_delay_mult=training_args.position_lr_delay_mult,
     max_steps=training_args.position_lr_max_steps)
 ```
-`position_lr_max_steps` mặc định **30 000** (`arguments/__init__.py:79`). Trường này không tự đọc `--iterations`; đường notebook bù lại bằng cách cho `build_args` truyền `--position_lr_max_steps` bằng đúng số vòng train, còn đường CLI thuần thì người dùng phải tự truyền. `update_learning_rate(iteration)` (dòng 217-223) chỉ chỉnh lr của nhóm `"xyz"` theo hàm suy giảm mũ có trễ này, tính theo `iteration` tuyệt đối truyền vào — **không** tính theo tỉ lệ % tiến trình so với tổng số iteration thực tế của lần train đó.
+`position_lr_max_steps` mặc định **30 000** (`arguments/__init__.py:78`). Trường này không tự đọc `--iterations`; đường notebook bù lại bằng cách cho `build_args` truyền `--position_lr_max_steps` bằng đúng số vòng train, còn đường CLI thuần thì người dùng phải tự truyền. `update_learning_rate(iteration)` (dòng 182-188) chỉ chỉnh lr của nhóm `"xyz"` theo hàm suy giảm mũ này, tính theo `iteration` tuyệt đối truyền vào — **không** tính theo tỉ lệ % tiến trình so với tổng số iteration thực tế của lần train đó.
 
 Hệ quả khi train ít hơn 30 000 iteration (ví dụ mặc định notebook `iterations=7000`, `pipeline/config.py:31`): lr của `xyz` mới suy giảm được một đoạn nhỏ đầu của lịch trình mũ 30k bước, dừng lại ở một giá trị còn khá cao so với `position_lr_final` — nó **không bao giờ đi hết lịch trình** để chạm tới `lr_final = 0.0000016`. Đường notebook đã đóng khoảng cách này: `pipeline/trainer.py::build_args` truyền `--position_lr_max_steps` bằng đúng số vòng train, nên lịch mũ co lại vừa khít và lr vẫn chạm `lr_final` khi train kết thúc. Đường CLI thuần (`train.py`, `train_base.sh`, `train_big.sh`) **không** làm việc đó — chạy ngắn hơn 30k mà không tự truyền cờ này thì vẫn kết thúc với lr `xyz` cao hơn thiết kế gốc.
 
@@ -581,4 +577,4 @@ Hệ quả khi train ít hơn 30 000 iteration (ví dụ mặc định notebook 
 - `train.py`: `--save_iterations` (mặc định `[30_000]`, dòng 255) cộng thêm `args.iterations` vào cuối danh sách (dòng 262: `args.save_iterations.append(args.iterations)`), rồi mỗi khi `iteration in saving_iterations` gọi `scene.save(iteration)` (dòng 120-122). Không có xoá checkpoint cũ — mỗi mốc lưu là một thư mục `point_cloud/iteration_<n>/` riêng, giữ lại toàn bộ.
 - `pipeline/trainer.py`: `_save_checkpoint(scene_obj, iteration, previous, drop_previous)` (dòng 39-47) gọi `scene_obj.save(iteration)` rồi, nếu `drop_previous=True` và có `previous`, xoá thư mục `point_cloud/iteration_<previous>/` bằng `shutil.rmtree`. Vòng lặp gọi hàm này mỗi `cfg.save_every` iteration (mặc định **2000**, `pipeline/config.py:34`) khi `iteration < iterations` (dòng 186-189), truyền `cfg.keep_last_checkpoint` (mặc định **True**, dòng 35) làm `drop_previous` — nghĩa là mặc định chỉ giữ **một** checkpoint trung gian tại một thời điểm (checkpoint mới ghi đè bằng cách xoá cái cũ ngay sau khi ghi cái mới), để tiết kiệm dung lượng đĩa Colab. Sau khi vòng lặp kết thúc, còn một lần lưu cuối cùng bắt buộc: `_save_checkpoint(scene_obj, iterations, saved_at, cfg.keep_last_checkpoint)` (dòng 194) — đảm bảo luôn có checkpoint tại đúng iteration cuối cùng dù `save_every` có chia hết cho `iterations` hay không.
 
-**`.ply` không phải checkpoint có thể resume.** `save_ply` (dòng 260-277) chỉ ghi `xyz, f_dc, f_rest, opacity, scale, rotation` dưới dạng thuộc tính PLY thuần — không có `optimizer.state_dict()`, không có `xyz_gradient_accum`/`xyz_gradient_accum_abs`/`denom`/`max_radii2D`, không có `active_sh_degree` hay `spatial_lr_scale` (những thứ mà `capture()`/`restore()` mới lưu đủ, dòng 73-131, dùng cho checkpoint `.pth`). `train.py` vẫn có **nửa** cơ chế này: nếu truyền `--start_checkpoint`, nó `torch.load(checkpoint)` rồi `gaussians.restore(model_params, opt)` (dòng 43-45) để khôi phục đầy đủ trạng thái Adam/densify từ một file `.pth`. Nhưng **nửa còn lại — ghi file đó — không tồn tại**: tham số `--checkpoint_iterations` được khai báo (`train.py:257`, mặc định `[30_000]`) và truyền vào `training(...)` nhưng không hề được dùng bên trong hàm để gọi `torch.save((gaussians.capture(...), iteration), ...)` ở bất kỳ đâu — đây là phần vestigial còn sót lại từ mã 3DGS gốc, không hoạt động trong repo hiện tại. `pipeline/trainer.py` không có cơ chế `--start_checkpoint`/`.pth` nào cả, chỉ dùng `.ply` qua `_save_checkpoint`. Kết luận chung: trong pipeline hiện tại (cả `train.py` chạy mặc định lẫn `pipeline/trainer.py`), việc dừng giữa chừng rồi "tiếp tục" chỉ có thể khôi phục lại đám mây điểm từ `.ply`, không khôi phục được trạng thái Adam hay các bộ đếm densify — train tiếp từ một `.ply` tương đương khởi động lại optimizer/densify từ đầu trên một point cloud đã qua huấn luyện, chứ không phải "tiếp tục đúng như đang dở".
+**`.ply` không phải checkpoint có thể resume.** `save_ply` (dòng 260-277) chỉ ghi `xyz, f_dc, f_rest, opacity, scale, rotation` dưới dạng thuộc tính PLY thuần — không có `optimizer.state_dict()`, không có `xyz_gradient_accum`/`xyz_gradient_accum_abs`/`denom`/`max_radii2D`, không có `active_sh_degree` hay `spatial_lr_scale` (những thứ mà `capture()`/`restore()` mới lưu đủ, dòng 73-131, dùng cho checkpoint `.pth`). `train.py` vẫn có **nửa** cơ chế này: nếu truyền `--start_checkpoint`, nó `torch.load(checkpoint)` rồi `gaussians.restore(model_params, opt)` (dòng 43-45) để khôi phục đầy đủ trạng thái Adam/densify từ một file `.pth`. Nhưng **nửa còn lại — ghi file đó — không tồn tại**: tham số `--checkpoint_iterations` được khai báo (`train.py:252`, mặc định `[30_000]`) và truyền vào `training(...)` nhưng không hề được dùng bên trong hàm để gọi `torch.save((gaussians.capture(...), iteration), ...)` ở bất kỳ đâu — đây là phần vestigial còn sót lại từ mã 3DGS gốc, không hoạt động trong repo hiện tại. `pipeline/trainer.py` không có cơ chế `--start_checkpoint`/`.pth` nào cả, chỉ dùng `.ply` qua `_save_checkpoint`. Kết luận chung: trong pipeline hiện tại (cả `train.py` chạy mặc định lẫn `pipeline/trainer.py`), việc dừng giữa chừng rồi "tiếp tục" chỉ có thể khôi phục lại đám mây điểm từ `.ply`, không khôi phục được trạng thái Adam hay các bộ đếm densify — train tiếp từ một `.ply` tương đương khởi động lại optimizer/densify từ đầu trên một point cloud đã qua huấn luyện, chứ không phải "tiếp tục đúng như đang dở".

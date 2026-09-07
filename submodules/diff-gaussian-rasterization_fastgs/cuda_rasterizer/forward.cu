@@ -118,8 +118,9 @@ __device__ float3 computeCov2D(const float3& mean, float focal_x, float focal_y,
 }
 
 // Forward method for converting scale and rotation properties of each
-// Gaussian to a 3D covariance matrix in world space. Also takes care
-// of quaternion normalization.
+// Gaussian to a 3D covariance matrix in world space. `rot` is expected to be
+// already unit-length: normalization happens on the Python side
+// (GaussianModel.rotation_activation = F.normalize), not here.
 __device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 rot, float* cov3D)
 {
 	// Create scaling matrix
@@ -128,8 +129,8 @@ __device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 r
 	S[1][1] = mod * scale.y;
 	S[2][2] = mod * scale.z;
 
-	// Normalize quaternion to get valid rotation
-	glm::vec4 q = rot;// / glm::length(rot);
+	// Already normalized by the caller (see note above).
+	glm::vec4 q = rot;
 	float r = q.x;
 	float x = q.y;
 	float y = q.z;
@@ -385,8 +386,10 @@ renderCUDA(
 			// and its exponential falloff from mean.
 			// Avoid numerical instabilities (see paper appendix). 
 			float alpha = min(0.99f, con_o.w * exp(power));
+			// 1/255 skips a single negligible splat; it is NOT the early-out.
 			if (alpha < 1.0f / 255.0f)
 				continue;
+			// Early-out for the whole pixel happens at T < 1e-4.
 			float test_T = T * (1 - alpha);
 			if (test_T < 0.0001f)
 			{

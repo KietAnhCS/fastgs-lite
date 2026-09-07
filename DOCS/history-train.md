@@ -104,7 +104,7 @@ Ba khác biệt tạo ra khoảng cách này, đều là chủ đích của thi�
 
 PSNR tại các mốc sụt rơi xuống 6.0–11.0 dB trên cả 4 cảnh cùng lúc — đồng loạt và có chu kỳ, nên không phải phân kỳ.
 
-**Nguyên nhân:** `opacity_reset_interval = 3000` (`arguments/__init__.py:89`). Trong `pipeline/trainer.py`,
+**Nguyên nhân:** `opacity_reset_interval = 3000` (`arguments/__init__.py:84`). Trong `pipeline/trainer.py`,
 `gaussians.reset_opacity()` chạy tại `iteration % opacity_reset_interval == 0`, tức đúng vòng 3000 và 6000 —
 mà `score_every=1000` lại chấm điểm **ngay trong cùng vòng đó**, khi toàn bộ Gaussian vừa bị đặt lại độ đục.
 Model hồi phục hoàn toàn trong ~1000 vòng kế tiếp (xem mốc 4000 và 7000).
@@ -138,7 +138,7 @@ Hai cảnh Deep Blending (trong nhà) đạt 0.80–0.82; hai cảnh Tanks&Templ
 > trên tập test chứ không chọn tay. Hình học và màu sắc bám sát; sai số còn lại nằm ở chi tiết tần số cao và
 > thành phần phụ thuộc góc nhìn: vây tản nhiệt, nan kính tủ sách, gáy sách nhoè, và **vệt sáng specular trên
 > mặt tủ gỗ (cột 3, rõ trong ground-truth) gần như biến mất** — đúng phần mà SH bậc cao mã hoá, trong khi
-> `highfeature_lr` bị chia 20 ở `scene/gaussian_model.py:205`.
+> `highfeature_lr` bị chia 20 ở `scene/gaussian_model.py:174`.
 
 ![train: ba view render ở hàng trên, ground-truth ở hàng dưới](assets/samples_train.png)
 

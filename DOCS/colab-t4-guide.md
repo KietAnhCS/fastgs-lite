@@ -28,7 +28,7 @@ Ba điều này quyết định mọi khuyến nghị bên dưới. Chúng **kh�
 
 ### 2.1 — Lịch optimizer bị đóng đinh theo ngân sách 30.000 vòng
 
-`scene/gaussian_model.py:225` — `optimizer_step(iteration)`:
+`scene/gaussian_model.py:190` — `optimizer_step(iteration)`:
 
 | Khoảng vòng lặp | Hành vi |
 |---|---|
@@ -36,29 +36,29 @@ Ba điều này quyết định mọi khuyến nghị bên dưới. Chúng **kh�
 | `15000 < iteration <= 20000` (dòng 233) | bước Adam **mỗi 32 vòng** |
 | `iteration > 20000` | bước Adam **mỗi 64 vòng** |
 
-Cộng thêm `densify_until_iter = 15000` và `position_lr_max_steps = 30000` (`arguments/__init__.py:91,80`), hệ quả:
+Cộng thêm `densify_until_iter = 15000` và `position_lr_max_steps = 30000` (`arguments/__init__.py:86,80`), hệ quả:
 
 - **Toàn bộ chi phí nằm ở 0–15k** (densify + Adam đầy đủ + số Gaussian đang tăng).
 - **15k–30k gần như miễn phí** nhưng vẫn chạy `final_prune_fastgs` (mỗi 3000 vòng, xem `pipeline/trainer.py:125-128`) → ít Gaussian hơn, LPIPS tốt hơn, file `.ply` nhỏ hơn.
 
 > **Kết luận: đừng hạ `Config.iterations` xuống 15k khi muốn kết quả đầy đủ.** Tiết kiệm rất ít thời gian mà mất luôn phần đánh bóng + tỉa gần-như-cho-không. `Config.iterations` mặc định là **7000** (đủ cho Run all nhanh, xem mục 8) — nâng lên **30000** để lấy đúng phần thưởng của lịch optimizer. Nếu rút ngắn, sàn hợp lý là **20000**; ngưỡng 15000/20000 trong `optimizer_step` là hằng số cứng trong mã nguồn (không phải tham số của `pipeline/`), muốn đồng bộ với một ngân sách khác thì phải sửa trực tiếp `scene/gaussian_model.py`.
 
-### 2.2 — `--antialiasing` là cờ chết trong fork này
+### 2.2 — Fork này không có chống răng cưa
 
-`arguments/__init__.py:71` có `self.antialiasing = False`, nhưng:
+`PipelineParams` từng mang `self.antialiasing = False` như di sản của code INRIA gốc, nhưng:
 
 - `gaussian_renderer/__init__.py` dựng `GaussianRasterizationSettings(...)` **không có** trường `antialiasing`;
 - `submodules/diff-gaussian-rasterization_fastgs/` **không tham chiếu** chữ `antialiasing` ở bất kỳ đâu.
 
-Truyền cờ này chỉ bị bỏ qua âm thầm — không lỗi, không tác dụng. Đây là di sản từ code INRIA gốc. `pipeline/trainer.py::build_args` không thêm cờ này. Muốn có chống răng cưa thật phải vá kernel CUDA (mục 7).
+Cờ chỉ bị bỏ qua âm thầm nên đã bị **xóa** khỏi `arguments/__init__.py`; `--antialiasing` giờ báo lỗi tham số không hợp lệ thay vì im lặng. Muốn có chống răng cưa thật phải vá kernel CUDA (mục 7).
 
 ### 2.3 — Bước chấm điểm đa góc nhìn đắt hơn vẻ ngoài
 
-`utils/fast_utils.py:45` `compute_gaussian_score_fastgs` lấy mẫu **10 camera** (`num_cams = 10`, dòng 13) và render **hai lượt** mỗi camera (một lượt thường, một lượt `get_flag=True` với `metric_map`). Nó chạy mỗi `densification_interval` vòng trong khoảng 500–15000 (gọi từ `pipeline/trainer.py:114-116`).
+`utils/fast_utils.py:33` `compute_gaussian_score_fastgs` lấy mẫu **10 camera** (`num_cams = 10`, dòng 13) và render **hai lượt** mỗi camera (một lượt thường, một lượt `get_flag=True` với `metric_map`). Nó chạy mỗi `densification_interval` vòng trong khoảng 500–15000 (gọi từ `pipeline/trainer.py:114-116`).
 
 | `densification_interval` | Số lần gọi trong 0–15k |
 |---|---|
-| `100` (mặc định của `arguments/__init__.py:88`) | **144** lần |
+| `100` (mặc định của `arguments/__init__.py:83`) | **144** lần |
 | `500` (giá trị `pipeline/config.py` đặt sẵn trong `train_extra_args`, khớp `train_base.sh`) | **28** lần |
 
 ⇒ Đây là lever thời gian lớn thứ hai sau độ phân giải, và nó là **setting chính chủ**, không phải thoả hiệp. `Config()` mặc định đã dùng `500`, không cần tự thêm.
@@ -107,7 +107,7 @@ Hai lần tính Score dùng **hai cấu hình LPIPS khác nhau**, đều nằm t
 | Trong lúc train, mỗi `Config.score_every` vòng (mặc định 1000) | `pipeline.score.evaluate_cameras` (gọi từ `pipeline/trainer.py:145`) | `Config.lpips_net_live = "alex"` | nhanh hơn ~3×, nạp ~30 MB thay vì ~500 MB — chỉ để xem xu hướng |
 | Lúc render submission | `pipeline.submission.render_scene` (`pipeline/submission.py:62`) | `Config.lpips_net_report = "vgg"` | số liệu chính thức, chậm hơn nhưng khớp cách ban tổ chức chấm |
 
-Thanh tiến trình (`tqdm`) hiện `loss`, số Gaussian và Score/PSNR mới nhất mỗi 10 vòng; mỗi mốc `score_every`, `train_scene` in một dòng đầy đủ gồm $\Delta$Score so với mốc trước (`pipeline/trainer.py:158-167`) và ghi vào `history` (đổ ra `history.csv` qua `pipeline.report.history_frame`). Chuỗi $\Delta$ dương và co dần về 0 = hội tụ lành mạnh; $\Delta$ âm kéo dài = overfit hoặc prune quá tay. Hai giá trị Score (live vs. report) lệch nhẹ là bình thường.
+Thanh tiến trình (`tqdm`) hiện `loss`, số Gaussian và Score/PSNR mới nhất mỗi 10 vòng; mỗi mốc `score_every`, `train_scene` in một dòng đầy đủ gồm $\Delta$Score so với mốc trước (`pipeline/trainer.py:154-163`) và ghi vào `history` (đổ ra `history.csv` qua `pipeline.report.history_frame`). Chuỗi $\Delta$ dương và co dần về 0 = hội tụ lành mạnh; $\Delta$ âm kéo dài = overfit hoặc prune quá tay. Hai giá trị Score (live vs. report) lệch nhẹ là bình thường.
 
 ---
 
@@ -133,11 +133,11 @@ Thanh tiến trình (`tqdm`) hiện `loss`, số Gaussian và Score/PSNR mới n
 | `--densification_interval` | `100` → **`500`** | mục 2.3; giá trị `train_base.sh` thật sự dùng |
 | `iterations` | — | giữ **`30000`** cho kết quả đầy đủ (mục 2.1); `Config` mặc định `7000` để Run-all nhanh (mục 8) |
 | `--lambda_dssim` | `0.2` → **`0.25`** | nâng trọng số $(1-\mathrm{SSIM})$ trong loss ⇒ SSIM và thường cả LPIPS |
-| `--highfeature_lr` | `0.005` → **`0.02`** | mọi cảnh indoor trong `train_base.sh` dùng 0.02; SH bậc cao hội tụ nhanh hơn. Lưu ý `gaussian_model.py:205` chia thêm cho 20 ⇒ lr hiệu dụng `0.02/20 = 0.001` |
+| `--highfeature_lr` | `0.005` → **`0.02`** | mọi cảnh indoor trong `train_base.sh` dùng 0.02; SH bậc cao hội tụ nhanh hơn. Lưu ý `gaussian_model.py:174` chia thêm cho 20 ⇒ lr hiệu dụng `0.02/20 = 0.001` |
 | `--loss_thresh` | `0.1` → **`0.07`** | đánh dấu nhiều pixel lỗi hơn ⇒ giữ chi tiết (cảnh `garden` dùng 0.06) |
 | `--grad_abs_thresh` | `0.0012` | núm chính theo cảnh: thấp hơn (0.0008–0.0010) ⇒ nét hơn nhưng nhiều Gaussian; cao hơn (0.0015–0.002) cho cảnh ngoài trời/thưa |
 | `--dense` | `0.001` (indoor) → **0.004–0.01** cho ngoài trời | tỉ lệ clone/split đúng loại cảnh — không có trong `train_extra_args` mặc định, tự thêm vào `Config.train_extra_args` nếu cần |
-| ~~`--antialiasing`~~ | **không dùng** | mục 2.2 |
+| ~~`--antialiasing`~~ | **đã xóa khỏi repo** | mục 2.2 |
 
 `Config.mult` giữ mặc định `0.5`; dùng `0.7` cho cảnh nền phức tạp (Tanks&Temples, Deep Blending). `build_args` dùng **cùng một `cfg.mult`** cho cả train (`pipeline/trainer.py:94`) và render submission (`pipeline/submission.py:52`), nên không có nguy cơ lệch giữa hai bước như khi gọi `train.py`/`render.py` tách rời bằng tay.
 
@@ -152,10 +152,10 @@ Bẫy kinh điển: train + render xong, kernel vẫn giữ tensor lớn, cache 
 | Khi nào | Việc làm | Ở đâu |
 |---|---|---|
 | Mỗi `Config.save_every` vòng (mặc định 2000, đặt `0` để tắt) | `_save_checkpoint` ghi `.ply` ra `point_cloud/iteration_<n>/` rồi **xoá checkpoint giữa chừng trước đó** nếu `Config.keep_last_checkpoint = True` — đĩa chỉ giữ một bản trung gian | `pipeline/trainer.py:39-47,186-189` |
-| Cuối vòng lặp train của một scene | `_save_checkpoint(scene_obj, iterations, ...)` ghi bản cuối và dọn nốt checkpoint trung gian | `pipeline/trainer.py:194` |
-| Mỗi vòng lặp | `del pkg, image, gt, viewspace, visibility, radii, loss, ll1, ssim_value` | `pipeline/trainer.py:191` |
-| Mỗi `Config.score_every` vòng | `torch.cuda.empty_cache()`; nếu RAM > `Config.ram_soft_limit_gb` (mặc định 10.5 GB) thì thêm `gc.collect()` | `pipeline/trainer.py:156,181-183` |
-| Ngay sau `train_scene` (mặc định `keep_model=False`) | `del gaussians, scene_obj; gc.collect(); torch.cuda.empty_cache(); torch.cuda.ipc_collect()` | `pipeline/trainer.py:207-212` |
+| Cuối vòng lặp train của một scene | `_save_checkpoint(scene_obj, iterations, ...)` ghi bản cuối và dọn nốt checkpoint trung gian | `pipeline/trainer.py:190` |
+| Mỗi vòng lặp | `del pkg, image, gt, viewspace, visibility, radii, loss, ll1, ssim_value` | `pipeline/trainer.py:187` |
+| Mỗi `Config.score_every` vòng | `torch.cuda.empty_cache()`; nếu RAM > `Config.ram_soft_limit_gb` (mặc định 10.5 GB) thì thêm `gc.collect()` | `pipeline/trainer.py:152,181-183` |
+| Ngay sau `train_scene` (mặc định `keep_model=False`) | `del gaussians, scene_obj; gc.collect(); torch.cuda.empty_cache(); torch.cuda.ipc_collect()` | `pipeline/trainer.py:203-208` |
 | Sau khi render xong mỗi scene, trước khi qua scene kế | `pipeline.env.free_memory()` — cùng bốn bước dọn dẹp trên | `pipeline/run.py:61` |
 | Render + chấm điểm submission | `pipeline.submission.render_scene` chạy **trong cùng tiến trình kernel** (không còn gọi `render.py`/`metrics.py` như tiến trình con); VGG-LPIPS (~500 MB) được nạp vào kernel lúc này | `pipeline/submission.py:21-89` |
 | Đóng gói | `zipfile.ZIP_STORED` ghi **thẳng ra đĩa**, không qua `BytesIO`/`shutil.make_archive` trong RAM | `pipeline/submission.py::build_zip`, `pipeline/deliver.py::pack_models` |

@@ -37,7 +37,7 @@ def render_scene(cfg, scene, iterations=None, score=True):
     _, dataset, opt, pipe = build_args(cfg, scene, iterations=iterations,
                                        resolution=cfg.submission_resolution, write_cfg=False)
 
-    gaussians = GaussianModel(dataset.sh_degree, optimizer_type="default")
+    gaussians = GaussianModel(dataset.sh_degree)
     scene_obj = Scene(dataset, gaussians, load_iteration=iterations, shuffle=False)
     background = torch.tensor([1, 1, 1] if dataset.white_background else [0, 0, 0],
                               dtype=torch.float32, device="cuda")

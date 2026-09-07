@@ -37,7 +37,7 @@ from utils.fast_utils import compute_gaussian_score_fastgs, sampling_cameras
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, websockets):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree, opt.optimizer_type)
+    gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
     if checkpoint:
@@ -159,12 +159,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
             # Optimization step
             if iteration < opt.iterations:
-                if opt.optimizer_type == "default":
-                    gaussians.optimizer_step(iteration)
-                elif opt.optimizer_type == "sparse_adam":
-                    visible = radii > 0
-                    gaussians.optimizer.step(visible, radii.shape[0])
-                    gaussians.optimizer.zero_grad(set_to_none = True)
+                gaussians.optimizer_step(iteration)
 
             # record time
             optim_end.record()

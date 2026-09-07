@@ -37,10 +37,10 @@ train chạm tới, theo đúng thứ tự thực thi. Đánh số mục §1–�
 |---|---|
 | Điểm số nhất quán đa góc nhìn | `utils/fast_utils.py` (`sampling_cameras:10`, `compute_gaussian_score_fastgs:45`) |
 | Densify điều kiện kép, ba tầng prune | `scene/gaussian_model.py` (`densify_and_prune_fastgs:468`, `metric_mask:494`, `final_prune_fastgs:533`) |
-| Lịch optimizer đóng đinh theo 30k vòng | `scene/gaussian_model.py:225–244` |
-| Tách lr SH bậc thấp/cao | `scene/gaussian_model.py:198–205` (lưu ý `highfeature_lr / 20.0`) |
+| Lịch optimizer đóng đinh theo 30k vòng | `scene/gaussian_model.py:190–209` |
+| Tách lr SH bậc thấp/cao | `scene/gaussian_model.py:167–174` (lưu ý `highfeature_lr / 20.0`) |
 | Compact box `--mult`, cấu hình rasterizer | `gaussian_renderer/__init__.py:18–58` |
 | Tham số CLI + mặc định | `arguments/__init__.py` |
-| Vòng train gốc | `train.py:37–177` |
+| Vòng train gốc | `train.py:37–172` |
 | Render + chấm điểm | `render.py`, `metrics.py` |
 | Nạp camera đa độ phân giải | `scene/__init__.py:25–83`, `utils/camera_utils.py:19–60` |

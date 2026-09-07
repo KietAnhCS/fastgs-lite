@@ -19,7 +19,7 @@
 | [VI](#phần-vi--phép-đo-fastgs-lite-vs-3dgs) | **Phép đo** fastgs-lite vs 3DGS: ba tỉ số, kết quả mô hình, giao thức A/B thật |
 | [VII](#phần-vii--ba-điều-mã-nguồn-nói-mà-readme-upstream-không-nói) | Ba điều mã nguồn nói mà README upstream không nói |
 | [VIII](#phần-viii--đối-chiếu-công-thức-3dgs--fastgs) | **Đối chiếu công thức 3DGS ↔ fastgs-lite**: cái gì giữ nguyên, cái gì bị thay, 5 sơ đồ |
-| [IX](#phần-ix--toán-học-đầy-đủ-của-bốn-số-hạng-chi-phí) | **Toán học đầy đủ** của $aN$, $bNK$, $cN$, $F$ — cả forward lẫn backward, đúng dạng kernel thực thi; kèm 9 chỗ mô tả phổ biến sai và danh sách code chết |
+| [IX](#phần-ix--toán-học-đầy-đủ-của-bốn-số-hạng-chi-phí) | **Toán học đầy đủ** của $aN$, $bNK$, $cN$, $F$ — cả forward lẫn backward, đúng dạng kernel thực thi |
 
 ---
 ---
@@ -102,7 +102,7 @@ Trong code, kernel không giữ $\Sigma'$ mà giữ **conic** — nghịch đả
 
 $$M=\Sigma'^{-1}=\begin{pmatrix}A&B\\B&C\end{pmatrix}$$
 
-`forward.cu:231` đóng gói `conic = {cov.z, -cov.y, cov.x} / det`, `forward.cu:243`, rồi nhét cùng opacity vào một `float4` tên `con_o` (`.x=A, .y=B, .z=C, .w=o`). Toàn bộ Phần IV làm việc trên $M$ và $o$ này.
+`forward.cu:232` đóng gói `conic = {cov.z, -cov.y, cov.x} / det`, `forward.cu:244`, rồi nhét cùng opacity vào một `float4` tên `con_o` (`.x=A, .y=B, .z=C, .w=o`). Toàn bộ Phần IV làm việc trên $M$ và $o$ này.
 
 ### Công thức (6) — Phân rã ma trận hiệp phương sai 3D
 
@@ -141,7 +141,7 @@ $$\mathcal{L}=(1-\lambda)\mathcal{L}_1+\lambda\,\mathcal{L}_{\text{D-SSIM}}$$
 |---|---|
 | $\mathcal{L}_1$ | Sai số tuyệt đối trung bình giữa ảnh render và ground-truth |
 | $\mathcal{L}_{\text{D-SSIM}}$ | Loss cấu trúc (Structural Dissimilarity) |
-| $\lambda$ | Trọng số cân bằng ($\approx 0.2$ trong paper gốc; repo này dùng `--lambda_dssim 0.25`) |
+| $\lambda$ | Trọng số cân bằng. Mặc định `arguments/__init__.py:82` là **0.2** và `train_base.sh`/`train_big.sh` không truyền cờ này; chỉ preset notebook `pipeline/config.py:44` đặt **0.25** — xem bảng đầy đủ ở §9.5 |
 
 Loss này lan truyền gradient ngược về mọi tham số của từng Gaussian qua chuỗi (5)→(4)→(3), đồng thời điều khiển **adaptive density control** (thêm/xoá/tách Gaussian).
 
@@ -184,7 +184,7 @@ Khoảng cách Mahalanobis $x^T\Sigma^{-1}x$ trong 3D đo độ gần/xa trong k
 | Bước | Kernel | Đơn vị chi phí |
 |---|---|---|
 | **(a) Preprocess** | `preprocessCUDA` (`forward.cu`) | mỗi **Gaussian**: chiếu $\Sigma\to\Sigma'$, nghịch đảo ra conic, đánh giá 48 hệ số SH ra màu RGB |
-| **(b) Duplicate** | `duplicateToTilesTouched` (`auxiliary.h:318`) | mỗi **cặp (tile, Gaussian)**: sinh một khoá 64-bit `(tile_id, depth)` |
+| **(b) Duplicate** | `duplicateToTilesTouched` (`auxiliary.h:294`) | mỗi **cặp (tile, Gaussian)**: sinh một khoá 64-bit `(tile_id, depth)` |
 | **(c) Sort** | radix sort trên toàn bộ khoá | mỗi **cặp**, $O(P)$ với radix sort |
 | **(d) Blend** | `renderCUDA` | mỗi **cặp**, nhân với số pixel trong tile mà splat còn đóng góp |
 
@@ -268,101 +268,481 @@ Cost model ở §6.5 dùng **cận trên $+2\%$** cho an toàn: thà trừ nhi�
 
 > Thay vì *"Gaussian này có gradient lớn không?"* → *"Nhiều camera có cùng đồng ý rằng chỗ này đang sai không?"*
 
-## 3.1 — Bản đồ lỗi nhị phân trên mỗi góc nhìn
+## 3.1 — Sáu công thức, một luồng dữ liệu
 
-> Mô phỏng: `normalize_minmax()`, `error_mask()`, `accum_metric_counts()` trong [`demos/fastgs_mechanisms.py`](../demos/fastgs_mechanisms.py) (mục "1.").
+> Mô phỏng: `normalize_minmax()`, `error_mask()`, `accum_metric_counts()`, `merge_views()` trong [`demos/fastgs_mechanisms.py`](../demos/fastgs_mechanisms.py) (mục "1." và "2.").
 
-Hàm `compute_gaussian_score_fastgs` (`utils/fast_utils.py:45`) chạy trước mỗi lần densify, lấy mẫu **10 camera ngẫu nhiên** (`sampling_cameras`, `fast_utils.py:10`), với từng camera làm 3 bước.
+Toàn bộ cơ chế nằm trong **một hàm duy nhất**: `compute_gaussian_score_fastgs` (`utils/fast_utils.py:33`), chạy trước mỗi lần densify. Nó lấy mẫu **10 camera ngẫu nhiên** (`sampling_cameras`, `fast_utils.py:10`) rồi chạy sáu phép biến đổi nối tiếp, đưa dữ liệu đi từ *ảnh* → *pixel* → *Gaussian*:
 
-**Bước 1 — chuẩn hoá bản đồ lỗi L1 về $[0,1]$:**
+```
+ ảnh render r, ground-truth g   (mỗi góc nhìn j trong K = 10 góc)
+            │
+            │  ①  trung bình L1 qua 3 kênh màu
+            ▼
+   e^j(u,v)            sai số THÔ tại từng pixel        [H×W, giá trị tuỳ cảnh]
+            │
+            │  ②  chuẩn hoá min–max toàn ảnh
+            ▼
+   M^j(u,v)            bản đồ lỗi CHUẨN HOÁ             [H×W, giá trị 0..1]
+            │
+            │  ③  so với ngưỡng tau_loss
+            ▼
+   M^j_mask(u,v)       mặt nạ NHỊ PHÂN                  [H×W, giá trị {0,1}]
+            │
+            │  ④  render lượt 2, atomicAdd trong kernel
+            ▼
+   counts^j_i          mỗi GAUSSIAN phủ bao nhiêu pixel lỗi   [P số nguyên]
+            │
+            ├──────────────────────────┐
+            │  ⑤ trung bình qua K view │  ⑥ loss toàn ảnh (mỗi view 1 số)
+            ▼                          ▼
+   Importance_i                 ⑦ tổng_j (counts × L_photo) rồi min–max
+   → điều khiển DENSIFY                ▼
+                                Pruning_i
+                                → điều khiển PRUNE
+```
 
-$$e(u,v)=\frac{1}{3}\sum_{k\in\{R,G,B\}}\bigl|\,I_{\text{render}}(u,v,k)-I_{\text{gt}}(u,v,k)\,\bigr|$$
+Nhánh trái và nhánh phải **dùng chung** `counts^j_i` — chỉ khác cách gộp qua các góc nhìn. Đó là lý do một lượt tính cho ra hai điểm số.
 
-$$\hat{e}(u,v)=\frac{e(u,v)-\min_{u,v} e}{\max_{u,v} e-\min_{u,v} e}$$
+> 📌 **Về cách đánh số.** Trong phần này, "công thức (6)–(11)" là số hiệu trong **bài báo FastGS** (arXiv 2511.04283). Đừng nhầm với "Công thức (3)–(7)" ở Phần I — đó là số hiệu của **bài báo 3DGS gốc**. Để tránh lẫn, mỗi bước ở đây còn có một nhãn riêng ① … ⑦ dùng xuyên suốt tài liệu.
 
-Chuẩn hoá min–max khiến ngưỡng ở bước sau **không phụ thuộc độ sáng tuyệt đối của cảnh** — cảnh tối và cảnh sáng dùng chung một `loss_thresh`.
+### Bảng đối chiếu: công thức trong bài báo ↔ dòng code
 
-**Bước 2 — nhị phân hoá:**
+| Bài báo | Tên trong tài liệu này | Vị trí trong code | Khác biệt cần biết |
+|---|---|---|---|
+| (6) $e^j_{u,v}$ | ① Sai số màu từng pixel | `utils/fast_utils.py:22` | — |
+| (7) $\mathcal{M}^j$ | ② Chuẩn hoá min–max | `utils/fast_utils.py:23` | — |
+| (8) $\mathcal{M}^j_{mask}$ | ③ Ngưỡng hoá nhị phân | `utils/fast_utils.py:70` | $\tau=0.1$, **không** phải 0.3 |
+| (9) $s^i_d$ | ④+⑤ Importance score | `forward.cu:404-410` + `fast_utils.py:76-80, 90` | $\Omega_i$ là footprint **hữu hình**, không phải ellipse đầy đủ; $\tfrac1K$ là **chia lấy nguyên** |
+| (10) $E^j_{photo}$ | ⑥ Photometric loss toàn ảnh | `utils/fast_utils.py:27-31` | $\lambda=0.2$ hardcode, không đọc `--lambda_dssim` |
+| (11) $s^i_p$ | ⑦ Pruning score | `utils/fast_utils.py:82-87` | Điểm **cao ⇒ bị XOÁ**, không phải "quan trọng nên giữ" |
 
-$$m(u,v)=\begin{cases}1 & \hat{e}(u,v) > \tau_{\text{loss}}\\[4pt] 0 & \text{ngược lại}\end{cases}
-\qquad \tau_{\text{loss}}=\texttt{loss\_thresh}\ (\text{mặc định }0.1)$$
+### Bài toán chạy xuyên suốt
 
-`m` là `metric_map` (`fast_utils.py:82`): mặt nạ đánh dấu **những pixel mà mô hình hiện tại đang tái tạo tệ nhất**. `loss_thresh` thấp → nhiều pixel bị đánh dấu → giữ lại / sinh thêm nhiều Gaussian hơn.
+Để mỗi công thức có một ví dụ **nối tiếp được** với công thức trước, cả §3.1 và §3.2 dùng chung một bài toán đồ chơi:
 
-**Bước 3 — đổ ngược mặt nạ pixel về từng Gaussian:** rasterizer được gọi lại với `get_flag=True` và `metric_map=m` (`fast_utils.py:84`). Mỗi Gaussian $i$ nhận về:
+- Ảnh $2\times2$ = 4 pixel, đặt tên $A,B,C,D$.
+- 3 Gaussian $G_1,G_2,G_3$ với vùng phủ 2D (footprint) ở góc nhìn $j=1$:
 
-$$\text{counts}^{(v)}_i=\#\bigl\{\text{pixel }(u,v)\ \text{mà Gaussian }i\ \text{đóng góp và}\ m(u,v)=1\bigr\}$$
+| Gaussian | $\Omega_i$ ở view 1 |
+|---|---|
+| $G_1$ | $\{A, D\}$ |
+| $G_2$ | $\{B, C\}$ |
+| $G_3$ | $\{A, B, C, D\}$ |
 
-trả về ở `render_pkg["accum_metric_counts"]`. Trực giác: **Gaussian $i$ "chịu trách nhiệm" cho bao nhiêu pixel lỗi** ở góc nhìn $v$.
+Ảnh thật dĩ nhiên là $\sim10^6$ pixel và $P\sim10^5$ Gaussian; sau mỗi công thức đồ chơi sẽ có thêm một ví dụ **ở quy mô thật** để thấy các ngưỡng trong code (`0.1`, `5`, `0.9`) thực sự rơi vào đâu.
 
-> **Vì sao lượt render thứ hai này rẻ?** ⚠️ **Không** có tái sử dụng gì cả — `fast_utils.py:84` gọi `render_fastgs` mới hoàn toàn, chạy lại preprocess + prefix-sum + radix sort + blend. Nó rẻ đơn giản vì **không có backward**: cùng $N$, cùng $K$, chỉ một lượt xuôi. Nên chi phí bằng ~1 forward, và tổng overhead là con số +2% ở §2.3.
+---
+
+### ① Sai số màu tại mỗi pixel — công thức (6)
+
+$$e^j_{u,v}=\frac{1}{C'}\sum_{c'=1}^{C'}\bigl|\,r^{\,j,c'}_{u,v}-g^{\,j,c'}_{u,v}\,\bigr|
+\qquad C'=3\ (\text{R},\text{G},\text{B})$$
+
+Đây là **sai số L1 trung bình qua kênh màu**, cho ra một bản đồ $H\times W$ **một kênh**. Trong code:
+
+```python
+# utils/fast_utils.py:21-25 — hàm get_loss
+def get_loss(reconstructed_image, original_image):
+    l1_loss = torch.mean(torch.abs(reconstructed_image - original_image), 0).detach()
+    ...
+```
+
+Ba chi tiết đọc được từ đúng dòng này:
+
+| Chi tiết code | Ý nghĩa |
+|---|---|
+| `dim=0` trong `torch.mean(..., 0)` | Tensor ảnh có layout `(C, H, W)`, nên **dim 0 chính là kênh màu** — đúng $\frac{1}{C'}\sum_{c'}$. Kết quả shape `(H, W)`. |
+| `.detach()` | Bản đồ lỗi **không tham gia autograd**. Đây là tín hiệu điều khiển cấu trúc, không phải loss để backward. |
+| Không có `**2` | L1 chứ không phải L2 — ít bị chi phối bởi vài pixel outlier cực đại hơn. |
+
+**Ví dụ đồ chơi.** Giá trị RGB thang $[0,1]$ ở góc nhìn $j=1$:
+
+| Pixel | render $r$ | ground-truth $g$ | $\lvert\Delta R\rvert,\lvert\Delta G\rvert,\lvert\Delta B\rvert$ | $e_{u,v}$ |
+|---|---|---|---|---|
+| $A$ | $(0.50,\,0.60,\,0.40)$ | $(0.80,\,0.65,\,0.35)$ | $0.30,\ 0.05,\ 0.05$ | $0.40/3=\mathbf{0.1333}$ |
+| $B$ | $(0.30,\,0.31,\,0.29)$ | $(0.32,\,0.29,\,0.31)$ | $0.02,\ 0.02,\ 0.02$ | $0.06/3=\mathbf{0.02}$ |
+| $C$ | $(0.20,\,0.25,\,0.20)$ | $(0.25,\,0.20,\,0.15)$ | $0.05,\ 0.05,\ 0.05$ | $0.15/3=\mathbf{0.05}$ |
+| $D$ | $(0.10,\,0.50,\,0.20)$ | $(0.40,\,0.30,\,0.60)$ | $0.30,\ 0.20,\ 0.40$ | $0.90/3=\mathbf{0.30}$ |
+
+Chi tiết cho pixel $A$, viết đầy đủ:
+
+$$e^1_{A}=\tfrac13\bigl(|0.50-0.80|+|0.60-0.65|+|0.40-0.35|\bigr)=\tfrac13(0.30+0.05+0.05)=\tfrac{0.40}{3}\approx0.1333$$
+
+Đọc kết quả: $D$ tệ nhất (sai $30\%$ trung bình), $B$ gần như đúng. Nhưng **chưa thể kết luận gì** — $0.1333$ là "cao" hay "thấp" còn tuỳ cảnh này sáng hay tối, đó chính là lý do phải có công thức ②.
+
+**Ví dụ quy mô thật.** Một cảnh Mip-NeRF360 ảnh $1237\times822$ ở vòng 3000: phần lớn pixel có $e\in[0.005,\,0.04]$ (nền, tường phẳng đã hội tụ), vùng biên lá cây / chữ nhỏ có $e\in[0.15,\,0.45]$. Tức phân bố **lệch mạnh về 0**, đuôi dài bên phải — hình dạng này quyết định hành vi của ② và ③.
+
+---
+
+### ② Chuẩn hoá thành bản đồ lỗi — công thức (7)
+
+$$\mathcal{M}^j=\mathcal{N}\Bigl(\bigl\{e^j_{u,v}\bigr\}_{u=0,v=0}^{W-1,H-1}\Bigr),
+\qquad
+\mathcal{N}(e_{u,v})=\frac{e_{u,v}-e_{\min}}{e_{\max}-e_{\min}}$$
+
+trong đó $e_{\min}=\min_{u,v}e^j_{u,v}$ và $e_{\max}=\max_{u,v}e^j_{u,v}$ lấy **trên toàn ảnh của riêng góc nhìn $j$** — mỗi view chuẩn hoá độc lập.
+
+```python
+# utils/fast_utils.py:23
+l1_loss_norm = (l1_loss - torch.min(l1_loss)) / (torch.max(l1_loss) - torch.min(l1_loss))
+```
+
+**Vì sao phải chuẩn hoá?** Nếu bỏ bước này, ngưỡng $\tau$ ở ③ sẽ là một **giá trị tuyệt đối**, và khi đó:
+
+| Tình huống | Không chuẩn hoá | Có chuẩn hoá |
+|---|---|---|
+| Cảnh tối (mọi $e<0.05$) | Gần như **không pixel nào** vượt ngưỡng → không Gaussian nào được densify → cảnh tối bị bỏ đói | Vẫn có $\sim$ vài % pixel tệ nhất được đánh dấu |
+| Cảnh sáng, tương phản cao | **Quá nhiều** pixel vượt ngưỡng → densify tràn lan, $N$ phình | Tỉ lệ pixel bị đánh dấu ổn định |
+| Vòng 500 (mọi thứ còn tệ) vs vòng 14000 (đã hội tụ) | Cuối train gần như không densify nữa | Luôn chọn ra "phần tệ nhất **so với chính nó**" |
+
+Nói gọn: min–max biến `loss_thresh` từ ngưỡng *tuyệt đối* thành ngưỡng *tương đối theo phân vị của chính ảnh đó*. Một `loss_thresh` duy nhất dùng được cho mọi cảnh, mọi giai đoạn train.
+
+**Ví dụ đồ chơi.** Từ bảng ①: $e_{\min}=0.02$ (pixel $B$), $e_{\max}=0.30$ (pixel $D$), mẫu số $e_{\max}-e_{\min}=0.28$.
+
+| Pixel | $e_{u,v}$ | $e_{u,v}-e_{\min}$ | $\mathcal{M}=\dfrac{\cdot}{0.28}$ |
+|---|---|---|---|
+| $A$ | $0.1333$ | $0.1133$ | $\mathbf{0.4048}$ |
+| $B$ | $0.02$ | $0$ | $\mathbf{0.0}$ ← luôn có đúng 1 pixel bằng 0 |
+| $C$ | $0.05$ | $0.03$ | $\mathbf{0.1071}$ |
+| $D$ | $0.30$ | $0.28$ | $\mathbf{1.0}$ ← luôn có đúng 1 pixel bằng 1 |
+
+Chi tiết cho $A$: $\mathcal{M}(A)=\dfrac{0.1333-0.02}{0.30-0.02}=\dfrac{0.1133}{0.28}\approx0.4048$.
+
+> ⚠️ **Hệ quả ít ai để ý:** min–max **ghim** giá trị lớn nhất về đúng $1.0$ và nhỏ nhất về đúng $0.0$, **bất kể ảnh tốt hay xấu**. Ở vòng 14000 khi ảnh đã gần hoàn hảo, pixel tệ nhất vẫn được gán $\mathcal{M}=1$. Cơ chế này **không bao giờ tự tắt** — nó luôn tìm ra "kẻ tệ nhất tương đối". Đó là tính năng (luôn có tín hiệu để tinh chỉnh) chứ không phải lỗi, nhưng nó giải thích vì sao densify phải bị chặn bằng `densify_until_iter = 15000` chứ không thể trông chờ nó tự dừng.
+>
+> Rủi ro kèm theo: nếu ảnh có **một** pixel outlier cực đại (specular highlight cháy sáng chẳng hạn), $e_{\max}$ bị kéo lên rất cao, mẫu số phình, và **mọi pixel còn lại bị nén xuống gần 0** → mặt nạ ở ③ gần như rỗng. Min–max nhạy với outlier hơn hẳn chuẩn hoá theo phân vị.
+
+**Ví dụ quy mô thật.** Với phân bố lệch đã mô tả ở ① ($e$ chủ yếu $<0.04$, $e_{\max}\approx0.45$): $e_{\min}\approx0$, mẫu số $\approx0.45$. Một pixel nền "bình thường" $e=0.02$ cho $\mathcal{M}\approx0.044$; pixel biên lá $e=0.15$ cho $\mathcal{M}\approx0.33$. Ghi nhớ hai con số này — chúng quyết định ③.
+
+---
+
+### ③ Ngưỡng hoá thành mặt nạ nhị phân — công thức (8)
+
+$$\mathcal{M}^j_{mask}=\mathbb{I}\bigl(\mathcal{M}^j>\tau\bigr)
+=\begin{cases}1 & \mathcal{M}^j(u,v)>\tau\\[2pt]0&\text{ngược lại}\end{cases}$$
+
+```python
+# utils/fast_utils.py:70
+metric_map = (l1_loss_norm > args.loss_thresh).int()
+```
+
+$\mathbb{I}(\cdot)$ là hàm chỉ báo. `.int()` là bắt buộc vì kernel CUDA nhận `const int*` (`forward.cu:292`), không nhận bool.
+
+> ⚠️ **Giá trị $\tau$ trong code là `0.1`, không phải `0.3`.** Định nghĩa ở `arguments/__init__.py:90` (`self.loss_thresh = 0.1`), chỉnh qua `--loss_thresh`. Nhiều bản diễn giải công thức (8) lấy ví dụ $\tau=0.3$; con số đó **không** phải mặc định của repo này và cho ra mặt nạ nhỏ hơn nhiều.
+
+**Ví dụ đồ chơi — so sánh trực tiếp hai ngưỡng:**
+
+| Pixel | $\mathcal{M}$ | $>\tau=0.1$ (code) | $>\tau=0.3$ (giả định) |
+|---|---|---|---|
+| $A$ | $0.4048$ | ✅ **1** | ✅ **1** |
+| $B$ | $0.0$ | ❌ 0 | ❌ 0 |
+| $C$ | $0.1071$ | ✅ **1** | ❌ 0 |
+| $D$ | $1.0$ | ✅ **1** | ✅ **1** |
+| | | **3/4 pixel** bị đánh dấu | **2/4 pixel** bị đánh dấu |
+
+Pixel $C$ là ranh giới: $\mathcal{M}=0.1071$ chỉ hơn $0.1$ một chút. Với $\tau=0.1$ nó **được tính là lỗi**, với $\tau=0.3$ thì không. Ở quy mô thật, chênh lệch nhỏ ở $\tau$ này dịch chuyển hàng trăm nghìn pixel.
+
+**Ví dụ quy mô thật.** Lấy hai con số từ ②:
+
+- Pixel nền $\mathcal{M}\approx0.044 < 0.1$ → **0**, không bị đánh dấu ✓ (đúng ý đồ: vùng đã hội tụ bị bỏ qua).
+- Pixel biên lá $\mathcal{M}\approx0.33 > 0.1$ → **1** ✓.
+
+Với phân bố lệch điển hình, $\tau=0.1$ đánh dấu khoảng **5–15% số pixel**. Đây là "ngân sách chú ý" của cả cơ chế.
+
+**Điều chỉnh $\tau$ ảnh hưởng thế nào:**
+
+| `--loss_thresh` | Số pixel bị đánh dấu | Hệ quả lên $N$ | Hệ quả lên tốc độ |
+|---|---|---|---|
+| $\downarrow$ 0.05 | nhiều hơn | `counts` tăng → nhiều Gaussian vượt ngưỡng 5 → **$N$ phình** | chậm hơn, chất lượng có thể nhỉnh hơn |
+| **0.1** (mặc định) | ~5–15% | cân bằng | — |
+| $\uparrow$ 0.2 | ít hơn | `counts` giảm → gần như không Gaussian nào vượt 5 → **densify gần như tắt** | nhanh, nhưng thiếu chi tiết |
+
+Lưu ý bất đối xứng: `loss_thresh` xuất hiện ở **cả hai** nhánh (Importance lẫn Pruning đều xây trên `counts`), nên tăng nó vừa giảm sinh thêm vừa giảm điểm prune — hai tác động ngược chiều nhau về mặt $N$.
+
+---
+
+### ④ Đổ mặt nạ pixel ngược về từng Gaussian — phần trong của công thức (9)
+
+$$\text{counts}^{\,j}_i=\sum_{p\in\Omega_i}\mathbb{I}\bigl(\mathcal{M}^j_{mask}(p)=1\bigr)$$
+
+Đây **không** được tính bằng Python. Rasterizer được gọi **lượt thứ hai** với cờ bật và mặt nạ truyền vào:
+
+```python
+# utils/fast_utils.py:72-74
+render_pkg = render_fastgs(my_viewpoint_cam, gaussians, pipe, bg, args.mult,
+                           get_flag = get_flag, metric_map = metric_map)
+accum_loss_counts = render_pkg["accum_metric_counts"]
+```
+
+và việc đếm nằm **bên trong vòng alpha-blend của kernel**, `cuda_rasterizer/forward.cu:404-410`:
+
+```c
+// ... phía trên đã có:
+//   if (alpha < 1.0f / 255.0f) continue;               // <- (I)  bỏ qua đóng góp quá mờ
+//   float test_T = T * (1 - alpha);
+//   if (test_T < 0.0001f) { done = true; continue; }   // <- (II) pixel đã đục hoàn toàn
+//   for (ch...) C[ch] += features[...] * alpha * T;    // blend màu
+
+if (get_flag)
+{
+    if (metric_map[pix_id] == 1)
+    {
+        atomicAdd(&(metricCount[collected_id[j]]), 1);
+    }
+}
+```
+
+Đọc đúng đoạn này cho ra **định nghĩa thật của $\Omega_i$**, và nó chặt hơn cách viết trên giấy:
+
+| Cách hiểu | $\Omega_i$ là gì |
+|---|---|
+| Trên giấy | Toàn bộ ellipse / bounding box 2D mà Gaussian $i$ phủ |
+| **Trong code** | Tập pixel mà Gaussian $i$ **thực sự được blend vào**: đã qua cull tile, có $\alpha\ge1/255$ (chốt I), và pixel đó **chưa bão hoà** $T\ge10^{-4}$ (chốt II) |
+
+Hai chốt này khiến $\Omega_i$ trở thành **footprint hữu hình**, không phải footprint hình học:
+
+- Gaussian **quá mờ** ($\alpha<1/255$) tại một pixel không bị tính lỗi ở pixel đó — hợp lý, nó gần như không đóng góp màu.
+- Gaussian **bị che khuất** (nằm sau vật cản đã làm $T$ tụt xuống $<10^{-4}$) **không bị tính điểm lỗi**. Đây là điều mà công thức trên giấy không nói: nó ngăn việc quy trách nhiệm sai màu cho một Gaussian ở phía sau bức tường.
+
+`collected_id[j]` là chỉ số Gaussian đang blend, `pix_id` là pixel phẳng hoá. `atomicAdd` cần thiết vì nhiều thread (nhiều pixel) cùng cộng vào một Gaussian.
+
+**Ví dụ đồ chơi.** Mặt nạ view 1 với $\tau=0.1$: $A=1,\ B=0,\ C=1,\ D=1$.
+
+| Gaussian | $\Omega_i$ | Pixel có mask=1 | $\text{counts}^{1}_i$ |
+|---|---|---|---|
+| $G_1$ | $\{A,D\}$ | $A$, $D$ | $\mathbf{2}$ |
+| $G_2$ | $\{B,C\}$ | $C$ | $\mathbf{1}$ |
+| $G_3$ | $\{A,B,C,D\}$ | $A$, $C$, $D$ | $\mathbf{3}$ |
+
+Kiểm tra chéo: tổng $\text{counts}$ qua các Gaussian $=2+1+3=6$, trong khi chỉ có 3 pixel lỗi. **Không mâu thuẫn** — một pixel được **nhiều** Gaussian chồng lên nên bị đếm nhiều lần. Đây là tính chất cố ý: pixel lỗi mà có 10 Gaussian chồng lên sẽ "tố cáo" cả 10.
+
+**Ví dụ quy mô thật.** Một Gaussian cỡ trung ở độ phân giải $1237\times822$ phủ khoảng $100$–$300$ pixel hữu hình. Nếu nó nằm trọn trong vùng biên lá cây đang tái tạo tệ, $\text{counts}^j_i$ có thể lên $80$–$150$; nếu nằm giữa mảng tường phẳng đã hội tụ thì $0$–$3$.
+
+> **Vì sao lượt render thứ hai này rẻ?** ⚠️ **Không** có tái sử dụng gì cả — `fast_utils.py:72` gọi `render_fastgs` mới hoàn toàn, chạy lại preprocess + prefix-sum + radix sort + blend. Nó rẻ đơn giản vì **không có backward**: cùng $N$, cùng $K$, chỉ một lượt xuôi. Chi phí $\approx$ 1 forward, và **mỗi view tốn 2 lượt render** (lượt 1 ở `fast_utils.py:63` để lấy ảnh tính error map, lượt 2 ở `:72` để đếm). Tổng overhead là con số $+2\%$ ở §2.3.
+
+---
 
 ## 3.2 — Gộp nhiều góc nhìn thành hai điểm số
 
-> Mô phỏng: `merge_views()` (mục "2.").
+Sau ④ ta có ma trận `counts` kích thước $P\times K$ (mỗi Gaussian, mỗi góc nhìn một số nguyên). Ba công thức còn lại chỉ khác nhau ở **cách bóp ma trận đó xuống một vector $P$ chiều**.
 
-### Công thức (1) — Importance score (điều khiển việc *sinh thêm*)
+### ⑤ Importance score — công thức (9), phần ngoài
 
-$$\text{Importance}_i=\left\lfloor \frac{1}{V}\sum_{v=1}^{V}\text{counts}^{(v)}_i \right\rfloor
-\qquad V=10$$
+$$s^i_d=\Bigl\lfloor\ \frac{1}{K}\sum_{j=1}^{K}\text{counts}^{\,j}_i\ \Bigr\rfloor,
+\qquad K=10$$
 
-| Ký hiệu | Ý nghĩa |
-|---|---|
-| $V$ | Số camera lấy mẫu (`num_cams = 10`) |
-| $\text{counts}^{(v)}_i$ | Số pixel lỗi mà Gaussian $i$ phủ ở góc nhìn $v$ |
-| $\lfloor\cdot\rfloor$ | Làm tròn xuống (`rounding_mode='floor'`, `fast_utils.py:102`) |
+```python
+# utils/fast_utils.py:76-80 — tích luỹ qua các view
+if DENSIFY:
+    if full_metric_counts is None:
+        full_metric_counts = accum_loss_counts.clone()
+    else:
+        full_metric_counts += accum_loss_counts
 
-Đây là **số pixel-lỗi trung bình mỗi góc nhìn**. Vì lấy trung bình rồi floor, một Gaussian chỉ bị "một camera duy nhất" tố sai sẽ có điểm gần 0 — **phải sai một cách nhất quán trên nhiều góc nhìn** mới được điểm cao. Đó là ý nghĩa của "multi-view consistent".
+# utils/fast_utils.py:90 — gộp
+importance_score = torch.div(full_metric_counts, len(camlist), rounding_mode='floor')
+```
 
-**Phép floor không vô hại.** Với $V=10$, mọi Gaussian có tổng counts $< 10$ đều nhận điểm $0$. Nó là một bộ lọc nhiễu miễn phí: những đóng góp lẻ tẻ một-hai pixel bị triệt sạch trước khi so với ngưỡng.
+| Ký hiệu | Ý nghĩa | Giá trị trong code |
+|---|---|---|
+| $K$ | Số camera lấy mẫu | `num_cams = 10` (`fast_utils.py:13`) |
+| $\text{counts}^j_i$ | Số pixel lỗi Gaussian $i$ phủ ở view $j$ | từ ④ |
+| $\lfloor\cdot\rfloor$ | **Chia lấy nguyên**, không phải trung bình thực | `rounding_mode='floor'` |
+| $\tau_d$ | Ngưỡng densify | **`5`, viết cứng** ở `gaussian_model.py:459` |
 
-### Công thức (2) — Pruning score (điều khiển việc *cắt bỏ*)
+> ⚠️ **`floor` không vô hại, và nó khác "trung bình" trong bài báo.** `full_metric_counts` là tensor **int**, chia floor cho 10 nên:
+>
+> - Mọi Gaussian có **tổng** counts $<10$ đều nhận điểm $\mathbf{0}$ — kể cả khi cả 9 view đều tố nó 1 pixel.
+> - Điểm $s_d$ chỉ nhận các giá trị nguyên $0,1,2,\dots$ Ngưỡng `> 5` do đó tương đương **tổng counts qua 10 view $\ge 60$**.
+>
+> Nó hoạt động như một bộ lọc nhiễu miễn phí: những đóng góp lẻ tẻ một-hai pixel bị triệt sạch trước khi so ngưỡng.
 
-$$s_i=\sum_{v=1}^{V}\mathcal{L}^{(v)}_{\text{photo}}\cdot\text{counts}^{(v)}_i$$
+**Vì sao lấy trung bình qua nhiều view mới là điểm mấu chốt.** Một Gaussian chỉ bị **một** camera tố sai (do occlusion, do specular, do nhiễu) sẽ bị chia 10 và rơi xuống gần 0. Muốn điểm cao thì phải sai **một cách nhất quán trên nhiều góc nhìn** — đó chính là nghĩa của "multi-view consistency" trong tên phương pháp, và là lý do nó đáng tin hơn quyết định densify dựa trên một view.
 
-$$\text{Pruning}_i=\frac{s_i-\min_j s_j}{\max_j s_j-\min_j s_j}\in[0,1]$$
+**Ví dụ đồ chơi** (giữ $K=3$ cho tính tay được; mặt nạ view 2 và 3 tự giả định):
 
-| Ký hiệu | Ý nghĩa |
-|---|---|
-| $\mathcal{L}^{(v)}_{\text{photo}}$ | Loss ảnh của cả khung hình $v$: $(1-\lambda)\mathcal{L}_1+\lambda(1-\text{SSIM})$ với $\lambda=0.2$ **cứng trong code** (`compute_photometric_loss`, `fast_utils.py:30`) |
-| $s_i$ | Điểm thô: số pixel-lỗi của Gaussian $i$, **nhân trọng số** bằng độ tệ toàn cục của góc nhìn đó |
-| $\text{Pruning}_i$ | Điểm chuẩn hoá $[0,1]$; càng gần 1 = càng "vô dụng / gây hại" |
+| | view 1 | view 2 | view 3 | $\sum_j$ | $\lfloor\sum/3\rfloor$ |
+|---|---|---|---|---|---|
+| $G_1$ | 2 | 1 | 2 | 5 | $\lfloor1.67\rfloor=\mathbf{1}$ |
+| $G_2$ | 1 | 0 | 1 | 2 | $\lfloor0.67\rfloor=\mathbf{0}$ |
+| $G_3$ | 3 | 1 | 3 | 7 | $\lfloor2.33\rfloor=\mathbf{2}$ |
 
-Khác biệt then chốt so với Importance: pruning score **nhân thêm $\mathcal{L}^{(v)}_{\text{photo}}$**. Một Gaussian phủ nhiều pixel lỗi trong một khung hình vốn đã render rất tệ sẽ bị phạt nặng hơn.
+Chú ý $G_1$: trung bình thực là $1.67$ nhưng code trả về $1$. Với ảnh 4 pixel thì **không Gaussian nào** vượt $\tau_d=5$ — đúng như kỳ vọng, ngưỡng `5` được đặt cho quy mô thật.
 
-> **Bẫy:** $\lambda=0.2$ ở đây là hằng số viết thẳng trong `fast_utils.py:30`, **không** đọc `--lambda_dssim`. Preset của repo dùng `--lambda_dssim 0.25` cho loss train, nên loss dùng để *tối ưu* và loss dùng để *chấm điểm pruning* đang lệch nhau. Đổi `--lambda_dssim` không kéo theo chỗ này.
+**Ví dụ quy mô thật** ($K=10$ như trong code):
 
-### Ví dụ số
+| | counts qua 10 view | $\sum_j$ | $s_d=\lfloor\sum/10\rfloor$ | $>5$? |
+|---|---|---|---|---|
+| $G_A$ | 8, 6, 7, 9, 5, 7, 6, 8, 7, 7 | 70 | $\mathbf{7}$ | ✅ **ứng viên densify** |
+| $G_B$ | 48, 0, 0, 0, 0, 0, 0, 0, 0, 0 | 48 | $\mathbf{4}$ | ❌ |
+| $G_C$ | 1, 0, 1, 0, 0, 0, 1, 0, 0, 0 | 3 | $\mathbf{0}$ | ❌ |
 
-3 Gaussian, $V=3$ camera:
+Ba trường hợp này chính là ba hành vi mà cơ chế được thiết kế để phân biệt:
 
-| | cam 1 ($\mathcal{L}_{\text{photo}}=0.20$) | cam 2 ($0.05$) | cam 3 ($0.10$) |
+- $G_A$ — **sai đều đặn ở mọi góc nhìn**. Đây là thiếu chi tiết hình học thật → đáng thêm Gaussian.
+- $G_B$ — **sai rất nặng nhưng chỉ ở một góc nhìn** (riêng view 1 đã 48 pixel, còn lớn hơn bất kỳ view nào của $G_A$!). Đây là dấu hiệu của artefact cục bộ: floater phản chiếu, vùng bị che, lỗi phơi sáng của một ảnh. Nhồi Gaussian vào đây chỉ làm cảnh nát thêm → bị chặn. **Đây là giá trị cốt lõi của phép trung bình.**
+- $G_C$ — nhiễu lác đác → 0.
+
+---
+
+### ⑥ Photometric loss cho toàn ảnh — công thức (10)
+
+$$E^j_{photo}=(1-\lambda)\,\mathcal{L}^j_1+\lambda\bigl(1-\mathcal{L}^j_{SSIM}\bigr),\qquad \lambda=0.2$$
+
+```python
+# utils/fast_utils.py:27-31
+def compute_photometric_loss(viewpoint_cam, image):
+    gt_image = viewpoint_cam.original_image.cuda()
+    Ll1 = l1_loss(image, gt_image)
+    loss = (1.0 - 0.2) * Ll1 + 0.2 * (1.0 - fast_ssim(image.unsqueeze(0), gt_image.unsqueeze(0)))
+    return loss
+```
+
+**Khác ① ở đâu?** Đây là điểm dễ lẫn nhất giữa hai công thức:
+
+| | ① $e^j_{u,v}$ (công thức 6) | ⑥ $E^j_{photo}$ (công thức 10) |
+|---|---|---|
+| Kích thước kết quả | bản đồ $H\times W$ | **một số vô hướng duy nhất** cho cả ảnh |
+| Thành phần | chỉ L1 | L1 **+** SSIM |
+| Dùng để | tìm *pixel nào* sai | đánh giá *cả khung hình này tệ đến đâu* |
+| Đi vào công thức | (7) → (8) → (9) và (11) | chỉ (11) |
+
+**Vì sao phải trộn hai loại loss:**
+
+| | Nhạy với | Mù với |
+|---|---|---|
+| $\mathcal{L}_1$ | sai lệch màu từng điểm | ảnh mờ nhoè nhưng đúng màu trung bình |
+| $1-\mathcal{L}_{SSIM}$ | mất cấu trúc / kết cấu / độ tương phản cục bộ | lệch màu đồng đều toàn ảnh |
+
+Trộn lại cho một thước đo "độ trung thực tái tạo" toàn diện hơn — đây đúng là loss chuẩn dùng để **huấn luyện** 3DGS, giờ được tái sử dụng làm **trọng số chấm điểm pruning**.
+
+**Ví dụ đồ chơi 1** — hai loss đồng thuận:
+
+$$\mathcal{L}^1_1=0.08,\quad \mathcal{L}^1_{SSIM}=0.92,\quad\lambda=0.2$$
+
+$$E^1_{photo}=(1-0.2)\times0.08+0.2\times(1-0.92)=0.064+0.016=\mathbf{0.08}$$
+
+**Ví dụ đồ chơi 2** — hai loss bất đồng, để thấy SSIM thực sự đóng góp gì:
+
+| View | $\mathcal{L}_1$ | $\mathcal{L}_{SSIM}$ | $0.8\,\mathcal{L}_1$ | $0.2(1-\mathcal{L}_{SSIM})$ | $E_{photo}$ | Diễn giải |
+|---|---|---|---|---|---|---|
+| $j=2$ | $0.04$ | $0.98$ | $0.032$ | $0.004$ | $\mathbf{0.036}$ | màu đúng, cấu trúc đúng → ảnh tốt |
+| $j=3$ | $0.04$ | $0.80$ | $0.032$ | $0.040$ | $\mathbf{0.072}$ | **cùng L1** nhưng ảnh mờ/mất kết cấu → phạt gấp đôi |
+
+View 3 có sai màu trung bình y hệt view 2, nhưng $E_{photo}$ gấp đôi. Nếu chỉ dùng L1, hai view này sẽ được coi như nhau — SSIM là thứ tách chúng ra.
+
+> ⚠️ **Bẫy $\lambda$ hardcode.** Số `0.2` viết thẳng trong `fast_utils.py:30`, **không** đọc `--lambda_dssim`. Hệ quả tuỳ đường train bạn dùng:
+>
+> | Đường train | $\lambda$ của loss tối ưu | Lệch với $\lambda=0.2$ của điểm pruning |
+> |---|---|---|
+> | `train.py` qua `train_base.sh` / `train_big.sh` | **0.2** (mặc định `arguments/__init__.py:82`; hai script **không** truyền cờ) | không lệch |
+> | `pipeline/trainer.py` (notebook Colab) | **0.25** (`pipeline/config.py:44` truyền cứng) | lệch $0.05$ |
+>
+> Điểm bất biến ở cả hai đường: **đổi `--lambda_dssim` không bao giờ kéo theo tiêu chí pruning**, vì `fast_utils.py:30` không đọc cờ đó. Xem bảng đầy đủ ở §9.5.
+
+---
+
+### ⑦ Pruning score — công thức (11)
+
+$$s^i_p=\mathcal{N}\left(\ \sum_{j=1}^{K}\left(\sum_{p\in\Omega_i}\mathbb{I}\bigl(\mathcal{M}^j_{mask}(p)=1\bigr)\right)\cdot E^j_{photo}\ \right)
+=\mathcal{N}\left(\sum_{j=1}^{K}\text{counts}^{\,j}_i\cdot E^j_{photo}\right)$$
+
+```python
+# utils/fast_utils.py:82-87
+if full_metric_score is None:
+    full_metric_score = photometric_loss * accum_loss_counts.clone()
+else:
+    full_metric_score += photometric_loss * accum_loss_counts
+
+pruning_score = (full_metric_score - torch.min(full_metric_score)) / \
+                (torch.max(full_metric_score) - torch.min(full_metric_score))
+```
+
+Đọc công thức từ trong ra ngoài:
+
+| Lớp | Phép tính | Khác gì với ⑤ |
+|---|---|---|
+| Trong cùng | $\sum_{p\in\Omega_i}\mathbb{I}(\dots)=\text{counts}^j_i$ | **giống hệt** ⑤ — dùng chung kết quả của ④ |
+| Giữa | nhân $E^j_{photo}$ | **mới** — trọng số hoá theo độ tệ toàn cục của view đó |
+| Ngoài | $\sum_j$, **không chia $K$** | ⑤ có $\frac1K$ và floor; ⑦ cộng thẳng |
+| Ngoài cùng | $\mathcal{N}(\cdot)$ min–max **qua các Gaussian** | ⑤ không chuẩn hoá; ⑦ chuẩn hoá để ngưỡng `0.9` dùng được nhất quán |
+
+Lưu ý phạm vi của $\mathcal{N}$: ở công thức (7) min–max chạy **qua các pixel trong một ảnh**; ở đây nó chạy **qua toàn bộ $P$ Gaussian**. Cùng ký hiệu, khác trục hoàn toàn.
+
+**Ý nghĩa của việc nhân $E^j_{photo}$:** nếu Gaussian nằm trong vùng lỗi cao nhưng khung hình đó tổng thể vẫn khá tốt ($E_{photo}$ nhỏ) → đóng góp bị **giảm nhẹ**; nếu cả khung hình đó rất tệ → đóng góp bị **khuếch đại**. Nó phân biệt "sai cục bộ trong một ảnh nhìn chung ổn" (có thể chỉ là chi tiết nhỏ chưa hội tụ) với "sai trong một ảnh hỏng toàn diện" (nhiều khả năng Gaussian này là một phần của mớ hỗn độn).
+
+**Ví dụ đồ chơi** ($K=3$; dùng lại `counts` quy mô thật và thêm $E_{photo}$ cho mỗi view):
+
+| | view 1 ($E_{photo}=0.20$) | view 2 ($0.05$) | view 3 ($0.10$) | $s_i$ thô |
+|---|---|---|---|---|
+| $G_A$ | $8\times0.20=1.60$ | $6\times0.05=0.30$ | $7\times0.10=0.70$ | $\mathbf{2.60}$ |
+| $G_B$ | $12\times0.20=2.40$ | $0$ | $0$ | $\mathbf{2.40}$ |
+| $G_C$ | $1\times0.20=0.20$ | $0$ | $1\times0.10=0.10$ | $\mathbf{0.30}$ |
+
+Chuẩn hoá min–max qua 3 Gaussian: $s_{\min}=0.30$, $s_{\max}=2.60$, mẫu số $=2.30$.
+
+$$s^A_p=\frac{2.60-0.30}{2.30}=\mathbf{1.000},\qquad
+s^B_p=\frac{2.40-0.30}{2.30}=\mathbf{0.913},\qquad
+s^C_p=\frac{0.30-0.30}{2.30}=\mathbf{0.000}$$
+
+Ở lần `final_prune_fastgs` (ngưỡng $0.9$, §3.4): $G_A$ và $G_B$ **đều bị xoá**, $G_C$ giữ lại.
+
+Nhận xét đáng chú ý: $G_B$ chỉ sai ở **một** view, nên ở ⑤ nó bị phép floor loại khỏi densify — nhưng ở ⑦ nó vẫn đạt $0.913$ và **bị xoá**. Đúng ý đồ: một Gaussian gây artefact ở một góc nhìn thì không đáng nhân bản, nhưng rất đáng cắt bỏ.
+
+**Ví dụ quy mô thật.** Với $P\sim2\times10^5$ Gaussian, phân bố $s_p$ cũng lệch mạnh về 0 (đa số Gaussian nằm ở vùng đã hội tụ, counts $\approx0$). Ngưỡng $s_p>0.9$ do đó chỉ chạm vào **phần đuôi rất mỏng** — thường dưới $1\%$ số Gaussian mỗi lần gọi. Nhưng `final_prune_fastgs` chạy **4 lần** — ở các vòng 18k, 21k, 24k, 27k; đúng vòng 30k thì **không**, vì điều kiện là `iteration < 30_000` (§3.4) — nên hiệu ứng tích luỹ.
+
+> ⚠️ **Hướng dấu — chỗ dễ hiểu ngược nhất trong cả cơ chế.**
+>
+> Trực giác tự nhiên là: "Gaussian phủ nhiều pixel lỗi ⇒ nó quan trọng, xoá đi thì càng tệ ⇒ **giữ lại**". Code làm **ngược lại**: điểm $s_p$ **cao ⇒ XOÁ**.
+>
+> ```python
+> # scene/gaussian_model.py:503 — final_prune_fastgs
+> scores_mask = pruning_score > 0.9
+> final_prune = torch.logical_or(prune_mask, scores_mask)   # s_p cao → nằm trong tập XOÁ
+> ```
+>
+> ```python
+> # scene/gaussian_model.py:470 va :478 — densify_and_prune_fastgs
+> scores = 1 - pruning_score
+> padded_importance[:scores.shape[0]] = 1 / (1e-6 + scores.squeeze())
+> #   s_p → 1  thì  scores → 0  thì  trọng số → 10^6  → gần như chắc chắn bị chọn xoá
+> ```
+>
+> Logic đúng của code: $s_p$ cao ⟺ Gaussian này **liên tục nằm dưới các pixel sai màu, qua nhiều góc nhìn, ở những khung hình vốn đã tệ** ⟹ nó **đang là thủ phạm gây lỗi**, không phải nạn nhân ⟹ xoá đi để nhường chỗ. Ngược lại $s_p\approx0$ nghĩa là Gaussian nằm trong vùng đã tái tạo đúng — **đó mới là cái được giữ**.
+
+### Nghịch lý biểu kiến: cùng một Gaussian vừa được densify vừa bị prune
+
+Trong ví dụ quy mô thật, $G_A$ có $s_d=7>5$ (**ứng viên densify**) và $s^A_p=1.0>0.9$ (**ứng viên prune**). Không mâu thuẫn, vì hai điểm số được dùng ở **hai giai đoạn tách rời**:
+
+| | Điểm dùng | Khoảng vòng lặp | Mục đích |
 |---|---|---|---|
-| $G_A$ | 8 | 6 | 7 |
-| $G_B$ | 12 | 0 | 0 |
-| $G_C$ | 1 | 0 | 1 |
+| `densify_and_prune_fastgs` | $s_d$ cho nhánh sinh thêm, $s_p$ cho nhánh xoá có trần | $500<i<15000$, mỗi 100 vòng | *thử thêm chi tiết* ở nơi sai nhất quán |
+| `final_prune_fastgs` | chỉ $s_p$ | $15000<i<30000$, mỗi 3000 vòng | *dọn những gì đã thử mà không giúp được* |
 
-**Importance** (trung bình rồi floor):
-- $G_A=\lfloor(8+6+7)/3\rfloor=\lfloor7.0\rfloor=7$ → **vượt ngưỡng 5** → ứng viên densify.
-- $G_B=\lfloor12/3\rfloor=4$ → dưới ngưỡng: sai nhiều nhưng **chỉ ở 1 góc nhìn** → không densify (tránh nhồi Gaussian cho artefact cục bộ).
-- $G_C=\lfloor2/3\rfloor=0$.
+Nói cách khác: giai đoạn đầu **đặt cược** vào các vùng sai nhất quán; giai đoạn sau **thu hồi** những khoản cược thất bại. Một Gaussian điểm cao ở cả hai chỉ đơn giản là "vùng khó" — được đầu tư trước, bị thanh lý sau nếu vẫn không cứu được.
 
-**Pruning** (điểm thô $s_i$):
-- $s_A=0.20\cdot8+0.05\cdot6+0.10\cdot7=2.60$
-- $s_B=0.20\cdot12=2.40$
-- $s_C=0.20\cdot1+0.10\cdot1=0.30$
+### Tổng kết §3.1–§3.2 bằng một bảng
 
-Chuẩn hoá: $\text{Pruning}_A=1.0$, $\text{Pruning}_B=\dfrac{2.40-0.30}{2.60-0.30}=0.913$, $\text{Pruning}_C=0.0$.
+| # | Công thức | Vào | Ra | Trục gộp |
+|---|---|---|---|---|
+| ① | $e=\frac13\sum_{RGB}\lvert r-g\rvert$ | 2 ảnh $3\times H\times W$ | bản đồ $H\times W$ | kênh màu |
+| ② | $\mathcal{M}=\frac{e-e_{\min}}{e_{\max}-e_{\min}}$ | bản đồ $H\times W$ | bản đồ $H\times W\in[0,1]$ | — (chuẩn hoá theo ảnh) |
+| ③ | $\mathcal{M}_{mask}=\mathbb{I}(\mathcal{M}>0.1)$ | bản đồ $[0,1]$ | mặt nạ $\{0,1\}$ | — |
+| ④ | $\text{counts}^j_i=\sum_{p\in\Omega_i}\mathcal{M}_{mask}(p)$ | mặt nạ + hình học | vector $P$ số nguyên | **pixel → Gaussian** |
+| ⑤ | $s_d=\lfloor\frac1K\sum_j\text{counts}\rfloor$ | ma trận $P\times K$ | vector $P$ | góc nhìn (trung bình) |
+| ⑥ | $E_{photo}=0.8\mathcal{L}_1+0.2(1-\text{SSIM})$ | 2 ảnh | **1 số** | toàn ảnh |
+| ⑦ | $s_p=\mathcal{N}(\sum_j\text{counts}\cdot E_{photo})$ | ma trận $P\times K$ + $K$ số | vector $P\in[0,1]$ | góc nhìn (tổng có trọng số) |
 
-Ở lần "final prune" ($\tau=0.9$, §3.4), **cả $G_A$ và $G_B$ đều bị xoá** — chúng liên tục nằm dưới các pixel sai. $G_C$ giữ lại.
+Hai ngưỡng cuối cùng biến hai vector này thành quyết định: $s_d>5$ (§3.3) và $s_p>0.9$ (§3.4).
 
-> **Nghịch lý biểu kiến:** $G_A$ vừa là ứng viên **densify** (Importance = 7) vừa là ứng viên **prune** (Pruning ≈ 1). Không mâu thuẫn: hai điểm số dùng ở **hai giai đoạn khác nhau** — densify chạy ở vòng < 15k để *thử thêm chi tiết*, final-prune chạy ở vòng > 15k để *dọn những gì không giúp được*.
+---
 
 ## 3.3 — Densification có điều kiện kép
 
 > Mô phỏng: `densify_masks()` và `final_prune_fastgs()` (mục "3.").
 
-Hàm `densify_and_prune_fastgs` (`scene/gaussian_model.py:468`). Một Gaussian chỉ được nhân bản khi **thoả đồng thời hai điều kiện độc lập**.
+Hàm `densify_and_prune_fastgs` (`scene/gaussian_model.py:433`). Một Gaussian chỉ được nhân bản khi **thoả đồng thời hai điều kiện độc lập**.
 
 ### Điều kiện gradient — chọn *ở đâu* cần thêm chi tiết
 
@@ -376,7 +756,7 @@ $$\text{split}_i:\ \lVert \bar{g}^{\text{abs}}_i\rVert \ge \tau_{\text{grad}}^{\
 | $\bar{g}^{\text{abs}}_i$ | Gradient **trị tuyệt đối** tích luỹ (kiểu Abs-GS) | `--grad_abs_thresh` (0.0012) |
 | $\delta\cdot\text{extent}$ | Ngưỡng kích thước: nhỏ thì **clone** (thiếu mật độ), to thì **split** (thiếu độ mịn) | `--dense` (0.001) |
 
-**Clone và split làm gì cụ thể** (`gaussian_model.py:431-466`):
+**Clone và split làm gì cụ thể** (`gaussian_model.py:396-431`):
 
 $$\text{clone:}\quad \text{sao chép nguyên }(\mu,q,s,\alpha,\{k_{lm}\})\ \Rightarrow\ 1\to2\ \text{Gaussian}$$
 
@@ -387,11 +767,11 @@ $$\text{split:}\quad
 
 $$\tilde s_{\text{new}}=\log\frac{s_i}{0.8\,N}=\log\frac{s_i}{1.6}\quad(N=2)$$
 
-Ba chi tiết dễ sai: độ lệch chuẩn lấy mẫu là **chính scale**, không phải $3\sigma$; hệ số chia là $0.8N=1.6$, không phải $2$; và **bản gốc bị xoá ngay sau đó** (`:452-453`), nên split đổi $1\to2$ chứ không phải $1\to3$.
+Ba chi tiết dễ sai: độ lệch chuẩn lấy mẫu là **chính scale**, không phải $3\sigma$; hệ số chia là $0.8N=1.6$, không phải $2$; và **bản gốc bị xoá ngay sau đó** (`:417-418`), nên split đổi $1\to2$ chứ không phải $1\to3$.
 
 **Vì sao cần gradient trị tuyệt đối?** Đây là chỗ rất dễ giải thích sai, nên phải bám sát code ở **hai tầng**.
 
-**Tầng Python** (`gaussian_model.py:529-530`) — cả hai dòng đều lấy `norm` rồi cộng, **không** có dòng nào "cộng có dấu":
+**Tầng Python** (`gaussian_model.py:494-495`) — cả hai dòng đều lấy `norm` rồi cộng, **không** có dòng nào "cộng có dấu":
 
 ```python
 self.xyz_gradient_accum[f]     += torch.norm(viewspace_point_tensor.grad[f, :2], dim=-1, keepdim=True)
@@ -400,7 +780,7 @@ self.xyz_gradient_accum_abs[f] += torch.norm(viewspace_point_tensor.grad[f, 2:],
 
 Khác biệt duy nhất ở tầng này là **lát cắt cột**: `[:, :2]` so với `[:, 2:]`. Đó là lý do `screenspace_points` trong `gaussian_renderer/__init__.py:27` có **4 cột** chứ không phải 3 như 3DGS gốc.
 
-**Tầng CUDA** (`backward.cu:588-596`) — đây mới là nơi sinh ra khác biệt:
+**Tầng CUDA** (`backward.cu:589-597`) — đây mới là nơi sinh ra khác biệt:
 
 ```c
 Register_dL_dmean2D_x += tmp_x;            // cot 0: cong CO DAU
@@ -409,7 +789,7 @@ Register_dL_dmean2D_z += fabs(tmp_x);      // cot 2: cong TRI TUYET DOI
 Register_dL_dmean2D_w += fabs(tmp_y);      // cot 3: cong TRI TUYET DOI
 ```
 
-Vòng cộng dồn này chạy **trên các pixel bên trong một lượt render duy nhất**, rồi `atomicAdd` ra bộ nhớ toàn cục (`backward.cu:607-610`).
+Vòng cộng dồn này chạy **trên các pixel bên trong một lượt render duy nhất**, rồi `atomicAdd` ra bộ nhớ toàn cục (`backward.cu:608-611`).
 
 > **Chỗ triệt tiêu nằm ở đâu — nói cho chính xác:** triệt tiêu xảy ra **giữa các pixel trong cùng một khung hình**, *không* phải giữa các khung hình. Một Gaussian phủ lên biên vật thể nhận gradient đẩy sang trái ở nửa trái footprint và sang phải ở nửa phải — **trong cùng một ảnh**. Tổng có dấu (cột 0-1) triệt tiêu về ~0, nên 3DGS gốc **không thấy** nó cần split, dù đó chính là chỗ cần thêm chi tiết nhất.
 >
@@ -426,7 +806,7 @@ Dấu bằng chỉ xảy ra khi mọi $g_q$ cùng hướng.
 $$\text{metric\_mask}_i = \bigl[\ \text{Importance}_i > 5\ \bigr]$$
 
 ```python
-# scene/gaussian_model.py:494
+# scene/gaussian_model.py:459
 metric_mask = importance_score > 5
 self.densify_and_clone_fastgs(metric_mask, all_clones)   # AND theo từng phần tử
 self.densify_and_split_fastgs(metric_mask, all_splits)
@@ -447,10 +827,10 @@ Một khác biệt nhỏ ở $r_{\text{spawn}}$ (ví dụ 0.10 → 0.06) khuếc
 
 `densify_and_prune_fastgs` có một khối lọc trông như hai tầng, nhưng trong **khối prune** chỉ có **một** lệnh xoá:
 
-> ⚠️ Nói cho chính xác: trong cả hàm có **hai** lời gọi `prune_points` — một ở `densify_and_split_fastgs` (`:453`) để xoá Gaussian cha vừa bị tách, và một ở `:518` dưới đây. Câu "một lệnh xoá duy nhất" chỉ đúng trong phạm vi khối prune.
+> ⚠️ Nói cho chính xác: trong cả hàm có **hai** lời gọi `prune_points` — một ở `densify_and_split_fastgs` (`:418`) để xoá Gaussian cha vừa bị tách, và một ở `:483` dưới đây. Câu "một lệnh xoá duy nhất" chỉ đúng trong phạm vi khối prune.
 
 ```python
-# scene/gaussian_model.py:499-518 (rút gọn)
+# scene/gaussian_model.py:464-483 (rút gọn)
 prune_mask = (self.get_opacity < min_opacity).squeeze()          # tập ỨNG VIÊN
 if max_screen_size:
     prune_mask |= (self.max_radii2D > max_screen_size)
@@ -469,15 +849,15 @@ if remove_budget:
 |---|---|---|
 | `prune_mask` | **Không xoá gì cả** — chỉ là tập ứng viên | `opacity < 0.005`; cộng thêm `max_radii2D > 20 px` và `scale > 0.1·extent` **chỉ khi** `max_screen_size` khác `None`, tức chỉ từ vòng > `opacity_reset_interval` (3000) trở đi — `train.py:133`, `pipeline/trainer.py:127` |
 | Lấy mẫu multinomial | Quyết định **ai** trong tập ứng viên thật sự bị xoá | Trần cứng bằng một nửa số ứng viên; trọng số $1/(10^{-6}+1-\text{Pruning}_i)$ nên Gaussian có `pruning_score` gần 1 gần như chắc chắn bị chọn. Gaussian vừa sinh ở lần densify này có trọng số 0 (nằm ngoài `scores.shape[0]`) nên miễn nhiễm |
-| **`final_prune_fastgs`** | Đường xoá thứ hai, tách rời hẳn | `opacity < 0.1` **hoặc** `Pruning_i > 0.9`, xoá thẳng không lấy mẫu — `gaussian_model.py:533` |
+| **`final_prune_fastgs`** | Đường xoá thứ hai, tách rời hẳn | `opacity < 0.1` **hoặc** `Pruning_i > 0.9`, xoá thẳng không lấy mẫu — `gaussian_model.py:498` |
 
 Chú ý trọng số lấy mẫu $w_i=1/(10^{-6}+1-\text{Pruning}_i)$. Nó **phân kỳ** khi $\text{Pruning}_i\to 1$: Gaussian tệ nhất có $w=10^{6}$, trong khi Gaussian $\text{Pruning}=0.5$ chỉ có $w=2$. Multinomial không replacement với chênh lệch trọng số cỡ $10^6$ về thực chất là **sắp xếp giảm dần theo pruning score rồi lấy phần đầu** — ngẫu nhiên chỉ còn tác dụng ở phần đuôi.
 
-> ⚠️ **Nhưng nó lấy mẫu trên TOÀN quần thể, không phải trên tập ứng viên.** `torch.multinomial(padded_importance, remove_budget)` chạy trên cả $N$ Gaussian (mọi phần tử trong `scores.shape[0]` đều có trọng số $>0$), rồi mới `logical_and` với `prune_mask` (`:515-518`). Vì thế **số Gaussian thực sự bị xoá thấp hơn nhiều `remove_budget`** — nó là giao của hai tập, không phải "nửa số ứng viên". Công thức ở §8.3⑥ viết đúng dạng $\cap$ này.
+> ⚠️ **Nhưng nó lấy mẫu trên TOÀN quần thể, không phải trên tập ứng viên.** `torch.multinomial(padded_importance, remove_budget)` chạy trên cả $N$ Gaussian (mọi phần tử trong `scores.shape[0]` đều có trọng số $>0$), rồi mới `logical_and` với `prune_mask` (`:478-483`). Vì thế **số Gaussian thực sự bị xoá thấp hơn nhiều `remove_budget`** — nó là giao của hai tập, không phải "nửa số ứng viên". Công thức ở §8.3⑥ viết đúng dạng $\cap$ này.
 
 Hai điều dễ hiểu sai:
 
-- **Mỗi lần densify, tối đa một nửa số Gaussian "đáng xoá" bị xoá.** Nếu `remove_budget == 0` (dưới 2 ứng viên) thì không xoá gì. `if remove_budget:` là chốt chặn chia-0, **không** phải công tắc bật/tắt — comment trong code (`"The budget is not necessary for our method"`, dòng 509) cho thấy nhóm tác giả coi cơ chế trần này là phần thừa kế, nhưng nó **vẫn chạy thật** mỗi lần densify.
+- **Mỗi lần densify, tối đa một nửa số Gaussian "đáng xoá" bị xoá.** Nếu `remove_budget == 0` (dưới 2 ứng viên) thì không xoá gì. `if remove_budget:` là chốt chặn chia-0, **không** phải công tắc bật/tắt — comment trong code (`"The budget is not necessary for our method"`, dòng 474) cho thấy nhóm tác giả coi cơ chế trần này là phần thừa kế, nhưng nó **vẫn chạy thật** mỗi lần densify.
 - **`final_prune_fastgs` chỉ chạy trong khoảng `15_000 < iteration < 30_000`, mỗi 3000 vòng** (`train.py:153`, `pipeline/trainer.py:139`). Ở đúng vòng 30000 nó **không** chạy. Ngân sách dưới 15k — kể cả mặc định `7000` của `pipeline/config.py` — **không bao giờ chạm tới đường xoá này**, nên model giao ra là model chưa tỉa cuối.
 
 ---
@@ -493,15 +873,15 @@ Hai điều dễ hiểu sai:
 Điều này hay bị nói sai. 3DGS gốc **không** dùng hình chữ nhật $3\sigma$ theo từng trục. Nó dùng một hộp **vuông**, cạnh quyết định bởi trục **dài nhất**:
 
 ```c
-// forward.cu:238-240 — vẫn còn nguyên trong fork này (chỉ dùng cho radii[])
+// forward.cu:239-241 — vẫn còn nguyên trong fork này (chỉ dùng cho radii[])
 float lambda1 = mid + sqrt(max(0.1f, mid * mid - det));
 float lambda2 = mid - sqrt(max(0.1f, mid * mid - det));
 float my_radius = ceil(3.f * sqrt(max(lambda1, lambda2)));    // <- max, không phải per-axis
 ```
 
-rồi `getRect(p, my_radius, ...)` (`auxiliary.h:50`) dùng **cùng một `max_radius`** cho cả hai chiều. Nên:
+rồi 3DGS gốc đưa `my_radius` vào `getRect(p, my_radius, ...)`, dùng **cùng một `max_radius`** cho cả hai chiều. Nên:
 
-> ⚠️ **Trong fork này `getRect` là dead code** — không nơi nào gọi. `my_radius` chỉ còn được ghi vào `radii[]` (`forward.cu:262`) để `max_radii2D` dùng cho ngưỡng prune $20$px. Công thức dưới đây là của **3DGS gốc**, dựng lại để làm đường so sánh, không phải đường thực thi của repo này. Công thức rời rạc thật của `getRect` có `ceil` và clamp biên: $\text{rect}_{\min}=\text{clamp}\bigl(\lfloor\frac{p-r}{16}\rfloor,0,G\bigr)$, $\text{rect}_{\max}=\text{clamp}\bigl(\lfloor\frac{p+r+15}{16}\rfloor,0,G\bigr)$ — nên $K$ thật lệch khỏi $(2r/16+1)^2$ ở splat nhỏ và ở rìa ảnh.
+> ⚠️ **Fork này không có `getRect`** — hàm đã bị xóa khỏi `auxiliary.h` vì không nơi nào gọi. `my_radius` chỉ còn được ghi vào `radii[]` (`forward.cu:263`) để `max_radii2D` dùng cho ngưỡng prune $20$px. Công thức dưới đây là của **3DGS gốc**, dựng lại để làm đường so sánh, không phải đường thực thi của repo này. Công thức rời rạc của `getRect` bên 3DGS gốc có `ceil` và clamp biên: $\text{rect}_{\min}=\text{clamp}\bigl(\lfloor\frac{p-r}{16}\rfloor,0,G\bigr)$, $\text{rect}_{\max}=\text{clamp}\bigl(\lfloor\frac{p+r+15}{16}\rfloor,0,G\bigr)$ — nên $K$ thật lệch khỏi $(2r/16+1)^2$ ở splat nhỏ và ở rìa ảnh.
 
 $$K_{\text{3dgs}}=\left(\frac{2\cdot 3\sqrt{\lambda_{\max}}}{16}+1\right)^{\!2}$$
 
@@ -542,7 +922,7 @@ $$o\cdot\exp\!\Big(-\tfrac12\Delta^\top M\,\Delta\Big)\ \ge\ \frac{1}{255}
 \Delta^\top M\,\Delta\ \le\ t,\quad t=2\ln(255\,o)$$
 
 ```c
-// auxiliary.h:336-338
+// auxiliary.h:312-314
 float t = 2.0f * log(con_o.w * 255.0f);   // level-set o·G = 1/255
 t = mult * t;                             // beta trong Compact Box
 ```
@@ -551,9 +931,9 @@ t = mult * t;                             // beta trong Compact Box
 |---|---|---|
 | $M=\Sigma'^{-1}$ | conic 2D — nghịch đảo covariance đã chiếu (công thức (5), §1.2) | `con_o.x/.y/.z` |
 | $o$ | opacity của Gaussian, sau sigmoid | `con_o.w` |
-| $t$ | **ngưỡng bình phương khoảng cách Mahalanobis** của ellipse cần bao | `auxiliary.h:337` |
-| `mult` | hệ số nhân vào $t$ — đây là toàn bộ tác dụng của `--mult` | `auxiliary.h:338` |
-| $\text{disc}=B^2-AC$ | phải $<0$; điều kiện suy biến **đầy đủ** là $A\le0\ \vee\ C\le0\ \vee\ \text{disc}\ge0$ → hàm trả 0 tile | `auxiliary.h:329`, `:332-334` |
+| $t$ | **ngưỡng bình phương khoảng cách Mahalanobis** của ellipse cần bao | `auxiliary.h:313` |
+| `mult` | hệ số nhân vào $t$ — đây là toàn bộ tác dụng của `--mult` | `auxiliary.h:314` |
+| $\text{disc}=B^2-AC$ | phải $<0$; điều kiện suy biến **đầy đủ** là $A\le0\ \vee\ C\le0\ \vee\ \text{disc}\ge0$ → hàm trả 0 tile | `auxiliary.h:305`, `:332-334` |
 
 Hộp bao trục-song-song của ellipse $\Delta^\top M\Delta\le t$ có nửa cạnh **theo từng trục**:
 
@@ -566,7 +946,7 @@ So sánh trực tiếp với §4.1: hộp này **tôn trọng dị hướng** ($
 > **Chi tiết đọc code dễ nhầm:** `x_term`/`y_term` ở dòng 340-343 **không phải** nửa cạnh của hộp. Chúng là toạ độ điểm tiếp tuyến, và **mẫu số của hai dòng khác nhau** — đọc lướt rất dễ chép nhầm thành một:
 >
 > ```c
-> // auxiliary.h:340-343
+> // auxiliary.h:316-319
 > float x_term = sqrt(-(con_o.y * con_o.y * t) / (disc * con_o.x));   // mau so dung A = con_o.x
 > float y_term = sqrt(-(con_o.y * con_o.y * t) / (disc * con_o.z));   // mau so dung C = con_o.z
 > ```
@@ -579,7 +959,7 @@ So sánh trực tiếp với §4.1: hộp này **tôn trọng dị hướng** ($
 $$\boxed{\ v_{\pm}(u)=\frac{-B\,h\ \pm\ \sqrt{\underbrace{(B^2-AC)}_{\text{disc}\,<\,0}\,h^2+t\,k}}{k}+p_v\ }$$
 
 ```c
-// auxiliary.h:183-198 — computeEllipseIntersection
+// auxiliary.h:159-174 — computeEllipseIntersection
 float h = coord - (isY ? p.y : p.x);
 float sqrt_term = sqrt(disc * h * h + t * (isY ? con_o.x : con_o.z));
 // tra ve (v_minus, v_plus)
@@ -610,7 +990,7 @@ $$\text{bbox}_{\min}=\Bigl(v_-\bigl(p_y-y_{\text{term}}\bigr)\Big|_{isY},\ \ v_-
 |---|---|---|---|
 | `1.0` | $2\ln 255=11.08$ | $3.33\,\sigma'$ | 100% |
 | `0.7` (Tanks&Temples, Deep Blending trong cả `train_base.sh` lẫn `train_big.sh`) | 7.76 | $2.79\,\sigma'$ | 70% |
-| `0.5` (mặc định, `arguments/__init__.py:101`) | 5.54 | $2.35\,\sigma'$ | 50% |
+| `0.5` (mặc định, `arguments/__init__.py:96`) | 5.54 | $2.35\,\sigma'$ | 50% |
 | `0.3` | 3.32 | $1.82\,\sigma'$ | 30% |
 
 Nên `mult=0.5` **giảm nửa** diện tích hộp, không phải giảm ba phần tư như cách hiểu "nhân thẳng vào cạnh".
@@ -630,13 +1010,13 @@ Nên `mult=0.5` **giảm nửa** diện tích hộp, không phải giảm ba ph�
 
 Ý nghĩa: những Gaussian mờ — chính là loại đông đảo nhất trong giai đoạn giữa huấn luyện, ngay trước khi bị prune — gần như **miễn phí** về mặt rasterization. 3DGS trả giá đầy đủ cho chúng.
 
-> Suy ra từ công thức, chưa đo: khi $o<1/255$ thì $t<0$ và các `sqrt` ở dòng 340-343 nhận đối số âm. Ngưỡng prune `min_opacity = 0.005` (`train.py:140`) nằm ngay trên $1/255=0.0039$, nên vùng này gần như không chạm tới trong thực tế — nhưng nó không được chặn tường minh bởi kiểm tra ellipse suy biến ở `auxiliary.h:332-334`.
+> Suy ra từ công thức, chưa đo: khi $o<1/255$ thì $t<0$ và các `sqrt` ở dòng 340-343 nhận đối số âm. Ngưỡng prune `min_opacity = 0.005` (`train.py:140`) nằm ngay trên $1/255=0.0039$, nên vùng này gần như không chạm tới trong thực tế — nhưng nó không được chặn tường minh bởi kiểm tra ellipse suy biến ở `auxiliary.h:308-310`.
 
 **(c) `mult = 1.0` KHÔNG quay về hành vi 3DGS gốc.** Nó quay về SnugBox nguyên bản của Speedy-Splat. Xét **riêng bán kính**, ở `mult=1`, $o=1$ SnugBox cho $3.33\sigma'$ — **rộng hơn** $3\sigma$: nó bao đúng tới mức 1/255 chứ không cắt ở $3\sigma$. Cái làm nên tiết kiệm không phải bán kính mà là **(b)** cộng với **hộp theo từng trục** (§4.2) và **§4.4**. Trong codebase này **không có** đường quay lại cách dựng hộp của 3DGS.
 
 ## 4.4 — Tập tile chạm không phải hình chữ nhật
 
-Sau khi có hộp, `processTiles` (`auxiliary.h:199-315`, phần *AccuTile* của Speedy-Splat) duyệt từng **lát tile** theo trục ngắn hơn (`isY = y_span < x_span`) và với mỗi lát gọi `computeEllipseIntersection` để lấy **giao chính xác của ellipse với lát đó**. Tile nào nằm trong hộp nhưng ngoài ellipse thì bị loại luôn, không vào danh sách sort.
+Sau khi có hộp, `processTiles` (`auxiliary.h:175-291`, phần *AccuTile* của Speedy-Splat) duyệt từng **lát tile** theo trục ngắn hơn (`isY = y_span < x_span`) và với mỗi lát gọi `computeEllipseIntersection` để lấy **giao chính xác của ellipse với lát đó**. Tile nào nằm trong hộp nhưng ngoài ellipse thì bị loại luôn, không vào danh sách sort.
 
 Về mặt toán, đây là bài toán: đếm số tile $T$ sao cho
 
@@ -657,7 +1037,7 @@ $$e_{\min}=\begin{cases}
 \min\bigl(v_-(uB_U),\ v_-((u{+}1)B_U)\bigr) & \text{ngược lại}
 \end{cases}$$
 
-(tương tự $e_{\max}$ với $\max$ và $v_+$ — `auxiliary.h:254-291`), rồi quy ra số tile:
+(tương tự $e_{\max}$ với $\max$ và $v_+$ — `auxiliary.h:230-267`), rồi quy ra số tile:
 
 $$K\ \mathrel{+}=\ \min\Bigl(r^{\max}_v,\ \max\bigl(r^{\min}_v,\bigl\lfloor\tfrac{e_{\max}}{B_V}\bigr\rfloor+1\bigr)\Bigr)
 \;-\;\max\Bigl(r^{\min}_v,\ \min\bigl(r^{\max}_v,\bigl\lfloor\tfrac{e_{\min}}{B_V}\bigr\rfloor\bigr)\Bigr)$$
@@ -713,13 +1093,13 @@ Ba biến điều khiển hiện rõ:
 
 ## 5.1 — Lịch optimizer thưa dần
 
-`scene/gaussian_model.py:225` — `optimizer_step(iteration)` **không** bước Adam mỗi vòng:
+`scene/gaussian_model.py:190` — `optimizer_step(iteration)` **không** bước Adam mỗi vòng:
 
 | Khoảng vòng lặp | `self.optimizer` (xyz, f_dc, opacity, scaling, rotation) | `self.shoptimizer` (`f_rest`) |
 |---|---|---|
-| `iteration <= 15000` (dòng 227) | mỗi vòng | **mỗi 16 vòng** |
-| `15000 < iteration <= 20000` (dòng 233) | mỗi 32 vòng | mỗi 32 vòng |
-| `iteration > 20000` (dòng 239) | mỗi 64 vòng | mỗi 64 vòng |
+| `iteration <= 15000` (dòng 192) | mỗi vòng | **mỗi 16 vòng** |
+| `15000 < iteration <= 20000` (dòng 198) | mỗi 32 vòng | mỗi 32 vòng |
+| `iteration > 20000` (dòng 204) | mỗi 64 vòng | mỗi 64 vòng |
 
 Đếm chính xác trên 30.000 vòng (`adam_steps()` trong cost model):
 
@@ -741,9 +1121,9 @@ Ba biến điều khiển hiện rõ:
 >
 > | Khoảng | Nhánh code | `optimizer` | `shoptimizer` |
 > |---|---|---|---|
-> | $1\dots15000$ | dòng 227 | 15.000 (mỗi vòng) | 937 $\;=\lfloor 15000/16\rfloor$ |
-> | $15001\dots20000$ | dòng 233 | 157 (bội của 32) | 157 |
-> | $20001\dots29999$ | dòng 239 | 156 (bội của 64) | 156 |
+> | $1\dots15000$ | dòng 192 | 15.000 (mỗi vòng) | 937 $\;=\lfloor 15000/16\rfloor$ |
+> | $15001\dots20000$ | dòng 198 | 157 (bội của 32) | 157 |
+> | $20001\dots29999$ | dòng 204 | 156 (bội của 64) | 156 |
 > | **Tổng** | | **15.313** | **1.250** |
 >
 > Bài học chung: với ba nhánh `if` lồng ngưỡng như thế này, **đừng đếm nhẩm** — viết vòng `for` mà đếm. `demos/fastgs_cost_model.py::adam_steps()` làm đúng việc đó.
@@ -752,7 +1132,7 @@ Gradient vẫn cộng dồn bình thường mỗi vòng (vì `zero_grad` chỉ g
 
 Cùng với `densify_until_iter = 15000` và `position_lr_max_steps = 30000`: **toàn bộ chi phí nằm ở 0–15k**, còn **15k–30k gần như miễn phí** nhưng vẫn chạy `final_prune_fastgs` (§3.4).
 
-⇒ Hạ `--iterations` xuống 15k là lỗ: tiết kiệm rất ít thời gian mà mất phần tỉa cuối. Sàn hợp lý là **20000**, và khi rút ngắn phải đồng bộ `--position_lr_max_steps`, `--densify_until_iter`, cùng hai ngưỡng cứng ở dòng 227/233.
+⇒ Hạ `--iterations` xuống 15k là lỗ: tiết kiệm rất ít thời gian mà mất phần tỉa cuối. Sàn hợp lý là **20000**, và khi rút ngắn phải đồng bộ `--position_lr_max_steps`, `--densify_until_iter`, cùng hai ngưỡng cứng ở dòng 192/198.
 
 ## 5.2 — Tách learning rate cho Spherical Harmonics
 
@@ -761,14 +1141,14 @@ Cùng với `densify_until_iter = 15000` và `position_lr_max_steps = 30000`: **
 3DGS gốc cũng đã tách SH bậc thấp / bậc cao, nhưng bằng **một** tham số: `feature_lr` cho `features_dc` và `feature_lr / 20` cho `features_rest`. fastgs-lite giữ nguyên phép chia 20 đó và thêm **hai flag độc lập**.
 
 ```python
-# scene/gaussian_model.py:198-205
+# scene/gaussian_model.py:167-174
 l = [ ...
       {'params': [self._features_dc], 'lr': training_args.lowfeature_lr, "name": "f_dc"},
       ... ]
 sh_l = [{'params': [self._features_rest], 'lr': training_args.highfeature_lr / 20.0, "name": "f_rest"}]
 ```
 
-| Tham số | Điều khiển | Mặc định (`arguments/__init__.py:97-98`) | **LR thực sự nạp vào Adam** |
+| Tham số | Điều khiển | Mặc định (`arguments/__init__.py:92-93`) | **LR thực sự nạp vào Adam** |
 |---|---|---|---|
 | `--lowfeature_lr` | `features_dc` — SH bậc 0, màu cơ bản không phụ thuộc góc nhìn | `0.0025` | `0.0025` |
 | `--highfeature_lr` | `features_rest` — SH bậc 1–3, phần màu đổi theo góc nhìn | `0.005` | **`0.005 / 20 = 0.00025`** |
@@ -892,10 +1272,10 @@ Bảng dưới chỉ liệt kê khác biệt **đọc được trực tiếp t�
 
 | | 3DGS gốc | fastgs-lite |
 |---|---|---|
-| Tiêu chí densify | Chỉ gradient vị trí | Gradient **AND** `importance_score > 5` (`gaussian_model.py:494`) |
-| Tín hiệu split | `densify_grad_threshold` | `grad_abs_thresh` trên gradient trị tuyệt đối, kiểu Abs-GS (`:529-530`) |
+| Tiêu chí densify | Chỉ gradient vị trí | Gradient **AND** `importance_score > 5` (`gaussian_model.py:459`) |
+| Tín hiệu split | `densify_grad_threshold` | `grad_abs_thresh` trên gradient trị tuyệt đối, kiểu Abs-GS (`:450`) |
 | Xoá Gaussian | Prune theo opacity/kích thước | Thêm lấy mẫu theo `pruning_score`, cộng `final_prune_fastgs` sau vòng 15k |
-| Hộp bao khi rasterize | Hộp **vuông** cạnh $3\sqrt{\lambda_{\max}}$ (`forward.cu:240` + `getRect`) | Compact box theo từng trục: $t=\texttt{mult}\cdot 2\ln(255\,o)$ + giao ellipse–tile chính xác (Phần IV) |
+| Hộp bao khi rasterize | Hộp **vuông** cạnh $3\sqrt{\lambda_{\max}}$ (`forward.cu:241` + `getRect`) | Compact box theo từng trục: $t=\texttt{mult}\cdot 2\ln(255\,o)$ + giao ellipse–tile chính xác (Phần IV) |
 | LR cho SH | Một `feature_lr` (và `/20` cho bậc cao) | Hai flag `lowfeature_lr` / `highfeature_lr` (vẫn `/20`), optimizer riêng |
 | Nhịp Adam | Mỗi vòng, suốt 30k | Mỗi vòng tới 15k, rồi 1/32, rồi 1/64 (`optimizer_step`) |
 | Chi phí phụ | — | 20 render phụ mỗi lần densify (`compute_gaussian_score_fastgs`) |
@@ -935,11 +1315,11 @@ Sáu phần trên mô tả **thiết kế**. Ba mục dưới đây là kết qu
 
 ## 7.1 — Lịch optimizer bị đóng đinh theo ngân sách 30.000 vòng
 
-Xem §5.1. Tóm tắt hệ quả: hạ `--iterations` xuống 15k là lỗ — tiết kiệm rất ít thời gian mà mất phần tỉa cuối. Sàn hợp lý là **20000**, và khi rút ngắn phải đồng bộ `--position_lr_max_steps`, `--densify_until_iter`, cùng hai ngưỡng cứng ở `gaussian_model.py:227` và `:233`.
+Xem §5.1. Tóm tắt hệ quả: hạ `--iterations` xuống 15k là lỗ — tiết kiệm rất ít thời gian mà mất phần tỉa cuối. Sàn hợp lý là **20000**, và khi rút ngắn phải đồng bộ `--position_lr_max_steps`, `--densify_until_iter`, cùng hai ngưỡng cứng ở `gaussian_model.py:192` và `:198`.
 
-## 7.2 — `--antialiasing` là cờ chết trong fork này
+## 7.2 — Fork này không có chống răng cưa
 
-`arguments/__init__.py:71` khai báo `self.antialiasing = False`, nhưng `gaussian_renderer/__init__.py` dựng `GaussianRasterizationSettings(...)` **không có** trường đó, và `submodules/diff-gaussian-rasterization_fastgs/` không tham chiếu chữ `antialiasing` ở đâu. Truyền cờ chỉ bị bỏ qua âm thầm. Muốn chống răng cưa thật phải vá công thức Mip-Splatting vào kernel CUDA.
+`PipelineParams` từng mang `self.antialiasing = False` như di sản của code INRIA gốc, nhưng `gaussian_renderer/__init__.py` dựng `GaussianRasterizationSettings(...)` **không có** trường đó, và `submodules/diff-gaussian-rasterization_fastgs/` không tham chiếu chữ `antialiasing` ở đâu — nên cờ đã bị **xóa** khỏi `arguments/__init__.py`. Muốn chống răng cưa thật phải vá công thức Mip-Splatting vào kernel CUDA.
 
 ## 7.3 — `densification_interval` là lever thời gian bị bỏ quên
 
@@ -993,19 +1373,19 @@ len([i for i in range(1, U) if i > F and i % I == 0])   # -> 144
 | $G(x)=e^{-\frac12x^T\Sigma^{-1}x}$ | **giữ nguyên** | `forward.cu` |
 | $\Sigma=RSS^TR^T$ (59 tham số) | **giữ nguyên** | `computeCov3D` |
 | $\Sigma'=JW\Sigma W^TJ^T$ + low-pass $0.3$ | **giữ nguyên** | `computeCov2D` (`forward.cu:79-118`), low-pass `:115-116` |
-| $M=\Sigma'^{-1}$ (conic), $\det=AC-B^2$ | **giữ nguyên** | `forward.cu:227-231` |
+| $M=\Sigma'^{-1}$ (conic), $\det=AC-B^2$ | **giữ nguyên** | `forward.cu:228-232` |
 | SH degree 3, $c(\vec d)=\sum k_{lm}Y_{lm}(\vec d)$ | **giữ nguyên** | `computeColorFromSH` |
 | $C=\sum c_i\alpha'_iT_i$, $T_i=\prod(1-\alpha'_j)$ | **giữ nguyên** | `renderCUDA` |
 | Khoá 64-bit `(tile_id << 32)` OR `depth`, radix sort | **giữ nguyên** | `duplicateToTilesTouched` |
 | Adam $\theta\leftarrow\theta-\eta\hat m/(\sqrt{\hat v}+\epsilon)$ | **giữ nguyên** (chỉ đổi *nhịp gọi*) | `optimizer_step` |
-| $\mathcal{L}=(1-\lambda)\mathcal{L}_1+\lambda\mathcal{L}_{\text{D-SSIM}}$ | **giữ nguyên** ($\lambda=0.25$ thay vì $0.2$) | `train.py` |
-| **① Bounding box $r=3\sqrt{\lambda_{\max}}$, hình vuông** | ⚠️ **THAY** → compact box theo từng trục, $t=\texttt{mult}\cdot2\ln(255o)$ | `auxiliary.h:336-345` |
-| **② Tập tile = hình chữ nhật `getRect`** | ⚠️ **THAY** → giao ellipse–tile chính xác (AccuTile) | `auxiliary.h:199-315` |
-| **③ Densify: $\lVert\bar g_i\rVert\ge\tau_{\text{grad}}$** | ⚠️ **THAY** → gradient **AND** $\text{Importance}_i>5$ | `gaussian_model.py:494` |
-| **④ Split dùng gradient có dấu** | ⚠️ **THAY** → gradient trị tuyệt đối (cột 2-3 của tensor 4 cột) | `backward.cu:588-596` |
-| **⑤ Prune: $\alpha<0.005$ xoá thẳng** | ⚠️ **THAY** → multinomial theo `pruning_score`, trần ½; + `final_prune_fastgs` | `gaussian_model.py:499-518, 533` |
-| **⑥ Adam mỗi vòng** | ⚠️ **THAY** → lịch thưa 1 → 1/32 → 1/64, SH riêng 1/16 | `gaussian_model.py:225-244` |
-| — | ➕ **THÊM MỚI**: $\text{Importance}_i$, $\text{Pruning}_i$ (3DGS không có khái niệm này) | `fast_utils.py:45` |
+| $\mathcal{L}=(1-\lambda)\mathcal{L}_1+\lambda\mathcal{L}_{\text{D-SSIM}}$ | **giữ nguyên** ($\lambda=0.2$ mặc định; $0.25$ chỉ ở preset notebook) | `train.py` |
+| **① Bounding box $r=3\sqrt{\lambda_{\max}}$, hình vuông** | ⚠️ **THAY** → compact box theo từng trục, $t=\texttt{mult}\cdot2\ln(255o)$ | `auxiliary.h:312-321` |
+| **② Tập tile = hình chữ nhật `getRect`** | ⚠️ **THAY** → giao ellipse–tile chính xác (AccuTile) | `auxiliary.h:175-291` |
+| **③ Densify: $\lVert\bar g_i\rVert\ge\tau_{\text{grad}}$** | ⚠️ **THAY** → gradient **AND** $\text{Importance}_i>5$ | `gaussian_model.py:459` |
+| **④ Split dùng gradient có dấu** | ⚠️ **THAY** → gradient trị tuyệt đối (cột 2-3 của tensor 4 cột) | `backward.cu:589-597` |
+| **⑤ Prune: $\alpha<0.005$ xoá thẳng** | ⚠️ **THAY** → multinomial theo `pruning_score`, trần ½; + `final_prune_fastgs` | `gaussian_model.py:464-483`, `:498-504` |
+| **⑥ Adam mỗi vòng** | ⚠️ **THAY** → lịch thưa 1 → 1/32 → 1/64, SH riêng 1/16 | `gaussian_model.py:190-209` |
+| — | ➕ **THÊM MỚI**: $\text{Importance}_i$, $\text{Pruning}_i$ (3DGS không có khái niệm này) | `fast_utils.py:33` |
 
 Sáu dòng ⚠️ và một dòng ➕ là toàn bộ khác biệt thuật toán. **Không dòng nào nằm trong chuỗi render.**
 
@@ -1045,7 +1425,7 @@ Sơ đồ bốn bước ở §1.5 thiếu một mắt xích: để biết mỗi 
 
 $$\text{offset}_i=\sum_{j<i}K_j,\qquad M=\text{offset}_N$$
 
-Quan trọng với fastgs-lite vì `duplicateToTilesTouched` được gọi **hai lần**: lần đầu truyền `nullptr` chỉ để **đếm** $K_i$ (`forward.cu:246`), lần sau mới **ghi** khoá. Nên compact box cắt cả **bộ nhớ cấp phát**, không chỉ thời gian sort — một lợi ích không xuất hiện trong mô hình chi phí ở Phần II vì mô hình đó chỉ đếm thời gian.
+Quan trọng với fastgs-lite vì `duplicateToTilesTouched` được gọi **hai lần**: lần đầu truyền `nullptr` chỉ để **đếm** $K_i$ (`forward.cu:247`), lần sau mới **ghi** khoá. Nên compact box cắt cả **bộ nhớ cấp phát**, không chỉ thời gian sort — một lợi ích không xuất hiện trong mô hình chi phí ở Phần II vì mô hình đó chỉ đếm thời gian.
 
 ### (d) Learning rate của `xyz` có exponential decay
 
@@ -1062,14 +1442,14 @@ Ngoài `opacity_reset_interval = 3000`, fastgs-lite còn ép opacity xuống **s
 $$\alpha_i\leftarrow\sigma^{-1}\bigl(\min(\alpha_i,\,0.8)\bigr)$$
 
 ```python
-# gaussian_model.py:520-521 — chạy MỖI lần densify_and_prune_fastgs
+# gaussian_model.py:485-486 — chạy MỖI lần densify_and_prune_fastgs
 opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.8))
 ```
 
 Nó hạ opacity để floater tự chết ở lần prune sau. Về mặt tối ưu đây là **can thiệp ngoài gradient**, và trạng thái Adam **bị xoá sạch** cùng lúc — `replace_tensor_to_optimizer` zero cả hai moment của nhóm `opacity`:
 
 ```python
-# gaussian_model.py:332-333
+# gaussian_model.py:297-298
 stored_state["exp_avg"]    = torch.zeros_like(tensor)
 stored_state["exp_avg_sq"] = torch.zeros_like(tensor)
 ```
@@ -1079,10 +1459,10 @@ Nên $(m,v)\leftarrow(0,0)$ **nhưng bộ đếm `step` thì không** — bias c
 **Có hai đường ép opacity, không phải một:**
 
 $$\text{(1) mỗi lần densify:}\qquad \tilde\alpha\leftarrow\sigma^{-1}\bigl(\min(\alpha,\,0.8)\bigr)
-\qquad\texttt{gaussian\_model.py:520}$$
+\qquad\texttt{gaussian\_model.py:485}$$
 
 $$\text{(2) opacity reset cổ điển:}\qquad \tilde\alpha\leftarrow\sigma^{-1}\bigl(\min(\alpha,\,\mathbf{0.01})\bigr)
-\qquad\texttt{gaussian\_model.py:280}$$
+\qquad\texttt{gaussian\_model.py:244-245}$$
 
 Đường (2) chạy khi `iteration % opacity_reset_interval == 0` (3000), hoặc khi nền trắng tại đúng `densify_from_iter` (`train.py:147-148`). Ngưỡng $0.01$ vẫn **trên** ngưỡng prune $0.005$, nên Gaussian sống sót một nhịp và phải tự học lại opacity từ gần như bằng 0.
 
@@ -1131,7 +1511,9 @@ $$\boxed{\ \text{Importance}_i=\Bigl\lfloor\tfrac1V\sum_{v}\text{counts}^{(v)}_i
 \qquad
 \boxed{\ \text{Pruning}_i=\text{minmax-norm}\Bigl(\sum_v\mathcal{L}^{(v)}_{\text{photo}}\cdot\text{counts}^{(v)}_i\Bigr)\ }$$
 
-Chi tiết đầy đủ ở §3.1–§3.2, kể cả bẫy $\lambda=0.2$ hardcode trong `compute_photometric_loss`.
+với $E^{(v)}_{\text{photo}}=(1-\lambda)\mathcal{L}_1+\lambda(1-\text{SSIM})$, $\lambda=0.2$.
+
+Tương ứng công thức (6)–(11) của bài báo FastGS. Chi tiết đầy đủ — bảy bước ①…⑦, mỗi bước một ví dụ số đồ chơi và một ví dụ quy mô thật — ở **§3.1–§3.2**, kể cả ba chỗ code lệch với cách viết trên giấy: $\tau=0.1$ (không phải 0.3), $\lfloor\cdot\rfloor$ là chia lấy nguyên, và **$\text{Pruning}_i$ cao nghĩa là XOÁ** chứ không phải giữ.
 
 ### ⑤ Tiêu chí densify — phép AND
 
@@ -1344,7 +1726,7 @@ Bốn số hạng chi phí đều giả định sẵn một số đại lượng
 
 ### Hàm kích hoạt — tham số sống ở không gian nào
 
-Model **không** lưu $s,\alpha,q$ trực tiếp; nó lưu phiên bản không ràng buộc và đưa qua activation (`gaussian_model.py:38-45`):
+Model **không** lưu $s,\alpha,q$ trực tiếp; nó lưu phiên bản không ràng buộc và đưa qua activation (`gaussian_model.py:33-40`):
 
 $$s=\exp(\tilde s),\qquad
 \alpha=\sigma(\tilde\alpha)=\frac{1}{1+e^{-\tilde\alpha}},\qquad
@@ -1355,7 +1737,7 @@ q=\frac{\tilde q}{\lVert\tilde q\rVert_2},\qquad
 
 ### Khởi tạo từ point cloud SfM
 
-`gaussian_model.py:167-190`, với $d^2_{\text{knn3}}$ là khoảng cách bình phương trung bình tới 3 điểm gần nhất:
+`gaussian_model.py:137-160`, với $d^2_{\text{knn3}}$ là khoảng cách bình phương trung bình tới 3 điểm gần nhất:
 
 $$\tilde s_0=\log\sqrt{\max\bigl(d^2_{\text{knn3}},\,10^{-7}\bigr)}\cdot\mathbf 1_3,
 \qquad
@@ -1382,7 +1764,7 @@ Nó là **bán kính cảnh** ước lượng từ phân bố camera, và đư�
 
 $$f_x=\frac{W}{2\tan(\text{fov}_x/2)},\qquad f_y=\frac{H}{2\tan(\text{fov}_y/2)}$$
 
-(`rasterizer_impl.cu:322-323`, `gaussian_renderer/__init__.py:34-35`). Đây là chỗ `--resolution` thực sự tác động vào $\Sigma'$: đổi $W,H$ đổi $f_x,f_y$ đổi $J$ đổi $K$.
+(`rasterizer_impl.cu:272-273`, `gaussian_renderer/__init__.py:34-35`). Đây là chỗ `--resolution` thực sự tác động vào $\Sigma'$: đổi $W,H$ đổi $f_x,f_y$ đổi $J$ đổi $K$.
 
 $$P=\begin{pmatrix}
 \frac{1}{\tan\frac{\text{fov}_x}{2}}&0&0&0\\
@@ -1399,7 +1781,7 @@ $$P_{\text{full}}=W2V\cdot P,\qquad \text{campos}=\bigl(W2V\bigr)^{-1}[3,{:}3]$$
 
 $$D(t)=\min\bigl(3,\ \lfloor t/1000\rfloor\bigr)$$
 
-`oneupSHdegree` (`gaussian_model.py:163-165`) gọi mỗi 1000 vòng (`train.py:81-82`). Số hệ số SH được đánh giá là $(D+1)^2$, tức **1 → 4 → 9 → 16** theo vòng lặp. Ở vòng $<1000$ chỉ có 1 hệ số/kênh, không phải 16.
+`oneupSHdegree` (`gaussian_model.py:133-135`) gọi mỗi 1000 vòng (`train.py:81-82`). Số hệ số SH được đánh giá là $(D+1)^2$, tức **1 → 4 → 9 → 16** theo vòng lặp. Ở vòng $<1000$ chỉ có 1 hệ số/kênh, không phải 16.
 
 Hệ quả cho Phần II: hệ số $a$ trong $a\cdot N$ **tăng theo thời gian** trong 3000 vòng đầu, rồi mới ổn định. Mô hình chi phí coi $a$ là hằng số — một xấp xỉ, không phải sự thật.
 
@@ -1412,7 +1794,7 @@ Kernel `preprocessCUDA` chạy **một thread cho một Gaussian**, làm sáu vi
 $$p^{\text{view}}=W\cdot\mu,\qquad \text{loại nếu } p^{\text{view}}_z\le 0.2$$
 
 ```c
-// auxiliary.h:170 — in_frustum()
+// auxiliary.h:146 — in_frustum()
 if (p_view.z <= 0.2f) return false;
 ```
 
@@ -1430,16 +1812,21 @@ với $\text{ndc2pix}(v,S)=\bigl((v+1)S-1\bigr)/2$. Hằng $10^{-7}$ chống chi
 
 $$R=R(q/\lVert q\rVert),\qquad S=\text{diag}(s_x,s_y,s_z),\qquad \Sigma=RSS^TR^T=(RS)(RS)^T$$
 
-⚠️ **Chuẩn hoá quaternion nằm ở tầng Python, KHÔNG ở kernel.** Dòng normalize trong `computeCov3D` đã bị comment:
+⚠️ **Chuẩn hoá quaternion nằm ở tầng Python, KHÔNG ở kernel.** Cả hai bản `computeCov3D` đều nhận `rot` và dùng thẳng, không chia cho `glm::length(rot)`:
 
 ```c
-// forward.cu:132 va backward.cu:283 — ca hai deu bi comment out
-glm::vec4 q = rot;// / glm::length(rot);
+// forward.cu:132-133
+// Already normalized by the caller (see note above).
+glm::vec4 q = rot;
+
+// backward.cu:283-284
+// Already unit-length: normalized on the Python side, not here.
+glm::vec4 q = rot;
 ```
 
-Kernel dùng thẳng giá trị nhận được. Phép chuẩn hoá thật là `rotation_activation = torch.nn.functional.normalize` (`gaussian_model.py:45`), gọi qua `get_rotation` (`:135-136`) rồi mới truyền vào rasterizer (`gaussian_renderer/__init__.py:74`). Hệ quả: gradient của phép chuẩn hoá do **autograd của PyTorch** lo, không phải kernel — `backward.cu:342` trả thẳng $\partial L/\partial q$, lời gọi `dnormvdv` ở đó cũng bị comment. Gọi kernel với quaternion chưa chuẩn hoá thì $R$ **không** trực giao.
+Kernel dùng thẳng giá trị nhận được. Phép chuẩn hoá thật là `rotation_activation = torch.nn.functional.normalize` (`gaussian_model.py:40`), gọi qua `get_rotation` (`:104-106`) rồi mới truyền vào rasterizer (`gaussian_renderer/__init__.py:74`). Hệ quả: gradient của phép chuẩn hoá do **autograd của PyTorch** lo, không phải kernel — `backward.cu:343` trả thẳng $\partial L/\partial q$, lời gọi `dnormvdv` ở đó cũng bị comment. Gọi kernel với quaternion chưa chuẩn hoá thì $R$ **không** trực giao.
 
-Kết luận PSD vẫn đúng, nhưng vì lý do khác: kernel dựng $M=SR$ rồi $\Sigma=M^TM$ (`forward.cu:145-148`), nên $\Sigma$ là PSD **theo cấu trúc** bất kể $q$ có đơn vị hay không. Hằng `scaling_modifier` nhân vào $S$ tại `forward.cu:127-129`.
+Kết luận PSD vẫn đúng, nhưng vì lý do khác: kernel dựng $M=SR$ rồi $\Sigma=M^TM$ (`forward.cu:146-149`), nên $\Sigma$ là PSD **theo cấu trúc** bất kể $q$ có đơn vị hay không. Hằng `scaling_modifier` nhân vào $S$ tại `forward.cu:128-130`.
 
 ### (3) Chiếu covariance 3D → 2D (EWA)
 
@@ -1521,7 +1908,7 @@ $$\text{offset}_i=\sum_{j<i}K_j,\qquad M=\sum_{i=1}^{N}K_i\approx N\cdot K$$
 $$\text{key}_{i,t}=\bigl(\text{tile\_id}_t\ll32\bigr)\ \big|\ \text{bit\_cast}_{\text{u32}}\bigl(\text{depth}_i\bigr)$$
 
 ```c
-// auxiliary.h:302-304
+// auxiliary.h:278-280
 uint64_t key = isY ? (u * grid.x + v) : (v * grid.x + u);
 key <<= 32;
 key |= *((uint32_t*)&depth);
@@ -1538,7 +1925,7 @@ $$T_{\text{sort}}=O\Bigl(\frac{n_{\text{bit}}}{b}\cdot M\Bigr)=O(M)=O(N\cdot K)$
 ⚠️ **Không sort đủ 64 bit.** Code chỉ sort $32+\lceil\log_2(\text{số tile})\rceil$ bit:
 
 ```c
-// rasterizer_impl.cu:404-412
+// rasterizer_impl.cu:354-362
 int bit = getHigherMsb(tile_grid.x * tile_grid.y);
 cub::DeviceRadixSort::SortPairs(..., num_rendered, 0, 32 + bit);
 ```
@@ -1594,13 +1981,13 @@ $$\#\text{bucket}_t=\Bigl\lceil\frac{|R_t|}{32}\Bigr\rceil,
 \qquad
 B=\sum_t \#\text{bucket}_t$$
 
-(`rasterizer_impl.cu:183-192`.) Backward khởi chạy đúng $B$ warp. Cộng thêm `max_contrib` mỗi tile — block-reduce ở cuối forward (`forward.cu:432-437`) — cho hai bất đẳng thức cắt việc:
+(`rasterizer_impl.cu:133-142`.) Backward khởi chạy đúng $B$ warp. Cộng thêm `max_contrib` mỗi tile — block-reduce ở cuối forward (`forward.cu:435-440`) — cho hai bất đẳng thức cắt việc:
 
 $$\text{bỏ cả warp nếu}\quad 32\cdot b_{\text{in-tile}}\ \ge\ \max_{p\in t} n_{\text{contrib}}(p)
-\qquad\texttt{backward.cu:450}$$
+\qquad\texttt{backward.cu:451}$$
 
 $$\text{bỏ splat cho pixel } p \text{ nếu}\quad \text{idx}_{\text{in-tile}}\ \ge\ n_{\text{contrib}}(p)
-\qquad\texttt{backward.cu:551}$$
+\qquad\texttt{backward.cu:552}$$
 
 ⚠️ Nghĩa là backward **không** duyệt đủ $N\cdot K$ cặp. Nó duyệt $\sum_t 32\lceil\max\text{-contrib}_t/32\rceil$ — nhỏ hơn đáng kể khi early-termination hoạt động mạnh (cảnh nhiều lớp che nhau). **Số hạng $b\,NK$ ở Phần II vì thế là cận trên cho backward**, không phải giá trị chặt.
 
@@ -1624,7 +2011,7 @@ $$\boxed{\ \frac{\partial C_{ch}}{\partial\alpha_i}
 \;-\;\frac{T_{\text{final}}\cdot \text{bg}_{ch}}{1-\alpha_i}\ }$$
 
 ```c
-// backward.cu:566,569,575 — ar[ch] = C^{<=i} - C^tot (dau da doi)
+// backward.cu:567,569,575 — ar[ch] = C^{<=i} - C^tot (dau da doi)
 ar[ch] += dchannel_dcolor * c[ch];
 dL_dalpha += (c[ch] * T + one_minus_alpha_reci * ar[ch]) * dL_dchannel;
 ...
@@ -1660,14 +2047,14 @@ $$\frac{\partial L}{\partial A}=-\tfrac12 G\,\Delta_x^2\frac{\partial L}{\partia
 ### Bốn cột của `dL_dmean2D` — nguồn của gradient trị tuyệt đối
 
 ```c
-// backward.cu:588-596
+// backward.cu:589-597
 Register_dL_dmean2D_x += tmp_x;        // cot 0 — CO DAU
 Register_dL_dmean2D_y += tmp_y;        // cot 1 — CO DAU
 Register_dL_dmean2D_z += fabs(tmp_x);  // cot 2 — TRI TUYET DOI
 Register_dL_dmean2D_w += fabs(tmp_y);  // cot 3 — TRI TUYET DOI
 ```
 
-Bốn giá trị này cộng dồn **trong register** qua toàn bộ pixel của tile, rồi `atomicAdd` ra global **một lần** (`backward.cu:607-610`) — không phải atomicAdd mỗi pixel. Cột 0-1 nuôi `xyz_gradient_accum` (điều khiển **clone**), cột 2-3 nuôi `xyz_gradient_accum_abs` (điều khiển **split**) — §3.3.
+Bốn giá trị này cộng dồn **trong register** qua toàn bộ pixel của tile, rồi `atomicAdd` ra global **một lần** (`backward.cu:608-611`) — không phải atomicAdd mỗi pixel. Cột 0-1 nuôi `xyz_gradient_accum` (điều khiển **clone**), cột 2-3 nuôi `xyz_gradient_accum_abs` (điều khiển **split**) — §3.3.
 
 ### Sơ đồ luồng backward
 
@@ -1744,7 +2131,7 @@ Gaussian nằm ngoài giới hạn $1.3\tan$ **không nhận gradient vị trí 
 
 ### (d) Về scale và quaternion
 
-Với $M=SR$ (thứ tự này là của kernel, `forward.cu:145`), và $\partial L/\partial\Sigma$ dựng thành ma trận đối xứng với off-diagonal nhân $\tfrac12$:
+Với $M=SR$ (thứ tự này là của kernel, `forward.cu:146`), và $\partial L/\partial\Sigma$ dựng thành ma trận đối xứng với off-diagonal nhân $\tfrac12$:
 
 $$\frac{\partial L}{\partial\Sigma}=\begin{pmatrix}g_0&\tfrac{g_1}2&\tfrac{g_2}2\\ \tfrac{g_1}2&g_3&\tfrac{g_4}2\\ \tfrac{g_2}2&\tfrac{g_4}2&g_5\end{pmatrix},
 \qquad
@@ -1757,9 +2144,9 @@ $$\frac{\partial L}{\partial q_r}=2z(\tilde M_{01}-\tilde M_{10})+2y(\tilde M_{2
 
 $$\frac{\partial L}{\partial q_x}=2y(\tilde M_{10}+\tilde M_{01})+2z(\tilde M_{20}+\tilde M_{02})+2r(\tilde M_{12}-\tilde M_{21})-4x(\tilde M_{22}+\tilde M_{11})$$
 
-($q_y,q_z$ đối xứng — `backward.cu:325-338`.)
+($q_y,q_z$ đối xứng — `backward.cu:326-339`.)
 
-⚠️ Kernel trả thẳng $\partial L/\partial q$ **không qua đạo hàm chuẩn hoá** — lời gọi `dnormvdv` ở `backward.cu:342` bị comment. Phép chuẩn hoá và gradient của nó nằm ở autograd PyTorch (§9.1(2)).
+⚠️ Kernel trả thẳng $\partial L/\partial q$ **không qua đạo hàm chuẩn hoá** — lời gọi `dnormvdv` ở `backward.cu:343` bị comment. Phép chuẩn hoá và gradient của nó nằm ở autograd PyTorch (§9.1(2)).
 
 ### (e) SH về hướng nhìn, rồi về vị trí — nguồn gradient thứ ba của $\mu$
 
@@ -1767,7 +2154,7 @@ Ngoài $\partial L/\partial k_{lm}$ (bị chặn khi `clamped[]`), gradient còn
 
 $$\frac{\partial L}{\partial\vec d}=\Bigl(\Bigl\langle\tfrac{\partial c}{\partial x},\tfrac{\partial L}{\partial c}\Bigr\rangle,\ \Bigl\langle\tfrac{\partial c}{\partial y},\cdot\Bigr\rangle,\ \Bigl\langle\tfrac{\partial c}{\partial z},\cdot\Bigr\rangle\Bigr)$$
 
-rồi qua đạo hàm của phép chuẩn hoá vector (`dnormvdv`, `auxiliary.h:123-148`), với $v=\mu-\text{campos}$:
+rồi qua đạo hàm của phép chuẩn hoá vector (`dnormvdv`, `auxiliary.h:99-124`), với $v=\mu-\text{campos}$:
 
 $$\frac{\partial L}{\partial\mu}\mathrel{+}=\frac{\lVert v\rVert^2\dfrac{\partial L}{\partial\vec d}-v\Bigl(v^\top\dfrac{\partial L}{\partial\vec d}\Bigr)}{\lVert v\rVert^{3}}$$
 
@@ -1779,7 +2166,7 @@ $$w=\frac{1}{(P_{\text{full}}\mu)_w+10^{-7}},\qquad
 
 $$\frac{\partial L}{\partial\mu_k}\mathrel{+}=\bigl(P_{k0}w-P_{k3}\,\text{mul}_1\bigr)\frac{\partial L}{\partial\mu'_x}+\bigl(P_{k1}w-P_{k3}\,\text{mul}_2\bigr)\frac{\partial L}{\partial\mu'_y}$$
 
-(`backward.cu:377-387`.)
+(`backward.cu:378-388`.)
 
 ### Tổng kết: $\mu$ nhận gradient từ **ba** nguồn
 
@@ -1805,7 +2192,7 @@ $$\hat m_t=\frac{m_t}{1-\beta_1^t},\qquad \hat v_t=\frac{v_t}{1-\beta_2^t},
 \qquad
 \boxed{\ \theta_t=\theta_{t-1}-\eta\cdot\frac{\hat m_t}{\sqrt{\hat v_t}+\epsilon}\ },\quad\epsilon=10^{-15}$$
 
-⚠️ `eps=1e-15` (`gaussian_model.py:208-209`), **không phải** $10^{-8}$ mặc định của PyTorch. Ba mảng cùng shape $59N$ ⇒ bộ nhớ trạng thái $3\times59N$ float $\approx 708$ byte mỗi Gaussian.
+⚠️ `eps=1e-15` (`gaussian_model.py:177-178`), **không phải** $10^{-8}$ mặc định của PyTorch. Ba mảng cùng shape $59N$ ⇒ bộ nhớ trạng thái $3\times59N$ float $\approx 708$ byte mỗi Gaussian.
 
 ### Sáu nhóm learning rate
 
@@ -1835,31 +2222,18 @@ $$\eta_{xyz}(t)=\underbrace{\Bigl[m_d+(1-m_d)\sin\Bigl(\tfrac\pi2\,\mathrm{clip}
 
 $$\bar t=\mathrm{clip}\bigl(t/T,\,0,\,1\bigr),\qquad T=\texttt{position\_lr\_max\_steps}$$
 
-(`utils/general_utils.py:32-65`.) Hai điều bản trước bỏ sót:
+(`utils/general_utils.py:29-50`.) Hai điều bản trước bỏ sót:
 
 1. **Có `clip`** — chạy quá $T$ thì lr **đứng yên** ở $\eta_T$, không tiếp tục giảm.
-2. **`update_learning_rate` chỉ duyệt `self.optimizer`** (`gaussian_model.py:217-223`), mà `f_rest` nằm ở `shoptimizer` — nên **SH bậc cao không có scheduler nào**, lr cố định suốt 30k vòng.
+2. **`update_learning_rate` chỉ duyệt `self.optimizer`** (`gaussian_model.py:182-188`), mà `f_rest` nằm ở `shoptimizer` — nên **SH bậc cao không có scheduler nào**, lr cố định suốt 30k vòng.
 
-Nhánh delay (`position_lr_delay_mult = 0.01`, `arguments/__init__.py:79`) là code chết vì `lr_delay_steps` mặc định $0$.
+`get_expon_lr_func` từng mang một nhánh delay (`lr_delay_steps` / `lr_delay_mult`, cùng cờ `--position_lr_delay_mult`) chép từ Plenoxels. Nhánh đó là code chết vì `lr_delay_steps` luôn mặc định $0$, nên đã được **xóa**; hàm hiện chỉ còn phần nội suy log-tuyến tính ở trên.
 
-### Hai đường optimizer — và vì sao chỉ một đường chạy được
+### Một đường optimizer duy nhất
 
-`gaussian_model.py:207-211` rẽ nhánh theo `--optimizer_type`:
+`training_setup` (`gaussian_model.py:176-177`) dựng **hai `torch.optim.Adam` riêng** với $\epsilon=10^{-15}$ — `self.optimizer` cho `xyz/f_dc/opacity/scaling/rotation`, `self.shoptimizer` cho `f_rest` — rồi cả hai chạy theo lịch thưa của §5.1. Adam của PyTorch **có** bias correction.
 
-| Nhánh | Cơ chế | Bias correction | Lịch thưa §5.1 |
-|---|---|---|---|
-| `default` (mặc định) | hai `torch.optim.Adam` riêng, $\epsilon=10^{-15}$ | **có** | **có** |
-| `sparse_adam` | `SparseGaussianAdam` → kernel `adam.cu` | **không** | **không** (step mỗi vòng) |
-
-Kernel thưa (`cuda_rasterizer/adam.cu:26-37`) chỉ cập nhật Gaussian có `radii>0`, và bỏ hẳn bias correction:
-
-$$m\leftarrow\beta_1m+(1-\beta_1)g,\quad
-v\leftarrow\beta_2v+(1-\beta_2)g^2,\quad
-\theta\leftarrow\theta-\frac{\eta\,m}{\sqrt v+\epsilon}$$
-
-với $\beta_1=0.9,\beta_2=0.999$ hardcode trong wrapper.
-
-⚠️ **Nhánh này không dùng được trong repo hiện tại.** `SparseGaussianAdam` được import từ gói `diff_gaussian_rasterization` (upstream vanilla), không phải `diff_gaussian_rasterization_fastgs` (`gaussian_model.py:25`), và lời import nằm trong `try/except: pass`. Không cài thêm gói vanilla thì `--optimizer_type sparse_adam` sẽ `NameError`. Vậy `adam.cu` là **dead code**, và $R_{\text{adam}}=0.276$ ở §6.3 luôn đúng.
+Fork từng mang thêm nhánh `--optimizer_type sparse_adam` (`SparseGaussianAdam` → kernel `adam.cu`: chỉ cập nhật Gaussian có `radii>0`, bỏ hẳn bias correction, step mỗi vòng). Nhánh đó không bao giờ chạy được: `SparseGaussianAdam` được import từ gói `diff_gaussian_rasterization` (upstream vanilla) chứ không phải `diff_gaussian_rasterization_fastgs`, và lời import nằm trong `try/except: pass` — không cài gói vanilla thì cờ chỉ cho `NameError`. Toàn bộ nhánh, `adam.cu` và cờ `--optimizer_type` đã được **xóa** khỏi repo; $R_{\text{adam}}=0.276$ ở §6.3 vì thế luôn đúng.
 
 ## 9.5 — Số hạng $F$: Loss
 
@@ -1910,7 +2284,7 @@ $$\mathcal{L}=(1-\lambda)\,\mathcal{L}_1+\lambda\bigl(1-\text{fused\_ssim}(I,I_{
 
 | Nơi dùng | $\lambda$ | Nguồn |
 |---|---|---|
-| Loss **tối ưu** — mặc định | **0.2** | `arguments/__init__.py:87`; `train_base.sh` không truyền cờ |
+| Loss **tối ưu** — mặc định | **0.2** | `arguments/__init__.py:82`; `train_base.sh` không truyền cờ |
 | Loss **tối ưu** — preset notebook | **0.25** | `pipeline/config.py:44` |
 | Loss **chấm điểm pruning** (`fast_utils.py:30`) | **0.2** | hằng số cứng, không đọc CLI |
 | Paper 3DGS gốc | 0.2 | |
@@ -1950,42 +2324,10 @@ LPIPS ở đây là VGG full-res. Con số $0.7643$ ở §6.8 là giá trị c�
 | $bNK$ (b) | $\text{key}=(\text{tile}\ll32)\ \text{OR}\ \text{depth}$ | `duplicateToTilesTouched` | $NK$ | ✅ compact box |
 | $bNK$ (c) | radix sort $32+\lceil\log_2 T\rceil$ bit | `cub::DeviceRadixSort` | $NK$ | ✅ ít entry hơn |
 | $bNK$ (d) | $C=\sum c_i\alpha_iT_i+T_{\text{final}}\text{bg}$ | `renderCUDA` | $NK$ | ✅ |
-| $bNK$ (e) | $\partial C/\partial\alpha_i$ dạng hiệu tiền tố | `renderCUDA` (backward) | $NK$ | ✅ + 2 cột `fabs` |
+| $bNK$ (e) | $\partial C/\partial\alpha_i$ dạng hiệu tiền tố | `PerGaussianRenderCUDA` | $NK$ | ✅ + 2 cột `fabs` |
 | $aN$ (bwd) | conic$\to\Sigma'\to\Sigma\to(q,s)$; SH$\to\vec d\to\mu$ | `preprocessCUDA` (backward) | $N$ | chỉ gián tiếp |
 | $cN$ | $\theta\leftarrow\theta-\eta\hat m/(\sqrt{\hat v}+10^{-15})$ | PyTorch Adam | $N$ | ✅ nhịp thưa |
 | $F$ | $(1-\lambda)\mathcal{L}_1+\lambda(1-\overline{\text{SSIM}})$ | conv2d | $HW$ | ❌ **không thể** |
-
-## 9.7 — Chín chỗ mô tả phổ biến sai so với code này
-
-| Mô tả hay gặp | Thực tế trong repo | Vị trí |
-|---|---|---|
-| "Dừng sớm khi $T<1/255$" | $T<10^{-4}$; $1/255$ là ngưỡng **bỏ qua splat**, chỗ khác | `forward.cu:388,391` |
-| "Radix sort 64 bit, 8 pass" | Sort $32+\lceil\log_2(\text{số tile})\rceil$ bit — thường 45 bit | `rasterizer_impl.cu:404-412` |
-| "Backward duyệt ngược xa → gần" | Duyệt **xuôi**, checkpoint mỗi 32 splat + `warp.shfl_up` | `backward.cu:499-545` |
-| "`float_to_ordered_uint(depth)`" | `bit_cast` thẳng; đúng thứ tự **chỉ vì** đã cull $z>0.2$ | `auxiliary.h:304`, `auxiliary.h:170` |
-| "Kernel chuẩn hoá quaternion" | Dòng normalize **bị comment**; chuẩn hoá ở Python `F.normalize` | `forward.cu:132`, `gaussian_model.py:45` |
-| "Train dùng SSIM của `loss_utils.py`" | Train dùng `fused_ssim` (gói ngoài); `loss_utils` chỉ ở eval | `train.py:18,102`; `metrics.py:17` |
-| "Ép opacity không đụng state Adam" | `replace_tensor_to_optimizer` **zero cả `exp_avg` và `exp_avg_sq`** | `gaussian_model.py:332-333` |
-| "Backward tốn $\Theta(NK)$" | Chỉ $\sum_t 32\lceil\max\text{-contrib}_t/32\rceil$ — $bNK$ là **cận trên** | `backward.cu:450,551` |
-| "`getRect` dựng hộp tile" | Trong fork này `getRect` **không được gọi**; hộp do compact box dựng | `auxiliary.h:50` (dead), `:318-387` |
-
-## 9.8 — Code chết: đừng đọc nhầm thành cơ chế đang chạy
-
-Repo giữ khá nhiều tàn dư của 3DGS/Speedy-Splat upstream. Chín chỗ dưới đây **không nằm trên đường thực thi** — đã grep xác nhận:
-
-| Đối tượng | Vị trí | Thay bằng gì |
-|---|---|---|
-| `renderCUDA` backward cổ điển (duyệt ngược, `accum_rec`) | `backward.cu:622-784` | `PerGaussianRenderCUDA` — `BACKWARD::render` chỉ gọi hàm này (`:878`) |
-| `getRect` | `auxiliary.h:50-72` | `duplicateToTilesTouched` (compact box) |
-| `evaluate_opacity_factor`, `max_contrib_power_rect_gaussian_float` | `rasterizer_impl.cu:52-100` | — |
-| `adam.cu` + `SparseGaussianAdam` | `cuda_rasterizer/adam.cu` | import từ gói vanilla, nằm trong `try/except` → `NameError` nếu bật |
-| `normalize()` chuẩn hoá theo median | `utils/fast_utils.py:33-43` | không nơi nào gọi |
-| `modify_functions` / `identity_gate` | `gaussian_model.py:47-51`, `general_utils.py:18` | không nơi nào gọi |
-| `feature_lr`, `shfeature_lr` | `arguments/__init__.py:81-82` | `lowfeature_lr` / `highfeature_lr` |
-| `percent_dense` | `arguments/__init__.py:86`, `gaussian_model.py:193` | `args.dense` |
-| `antialiasing` | `arguments/__init__.py:71` | không có (§7.2) |
-| Nhánh delay của `get_expon_lr_func` | `general_utils.py:56-62` | chết vì `lr_delay_steps = 0` |
-
 
 ---
 
@@ -2000,4 +2342,4 @@ Repo giữ khá nhiều tàn dư của 3DGS/Speedy-Splat upstream. Chín chỗ d
 | [history-train.md](history-train.md) | Số đo thật của các phiên train đã chạy — nguồn của §6.8 |
 | [README.md](README.md) | Tổng quan repo và cách bắt đầu |
 
-Mã nguồn tương ứng: `utils/fast_utils.py`, `scene/gaussian_model.py:198–244` và `:468–540`, `train.py:126–158`, `gaussian_renderer/__init__.py`, `submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/auxiliary.h:175–345` và `forward.cu:228–270`.
+Mã nguồn tương ứng: `utils/fast_utils.py`, `scene/gaussian_model.py:167–209` và `:468–540`, `train.py:126–158`, `gaussian_renderer/__init__.py`, `submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/auxiliary.h:175–345` và `forward.cu:229–271`.

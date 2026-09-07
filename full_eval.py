@@ -57,7 +57,6 @@ parser.add_argument("--skip_rendering", action="store_true")
 parser.add_argument("--skip_metrics", action="store_true")
 parser.add_argument("--output_path", default="./eval")
 parser.add_argument("--mode", type=str, default="big", choices=["budget", "big"])
-parser.add_argument("--optimizer_type", type=str, default="default")
 parser.add_argument("--sh_lower", action="store_true")
 parser.add_argument("--dry_run", action="store_true")
 args, _ = parser.parse_known_args()
@@ -81,7 +80,6 @@ def run_cmd(CMD, args):
 
 if not args.skip_training:
     common_args = " --quiet --eval --test_iterations -1 "
-    common_args += " --optimizer_type {}".format(args.optimizer_type)
     
     if args.sh_lower:
         common_args += " --sh_lower"

@@ -20,7 +20,6 @@
 #include <memory>
 #include "cuda_rasterizer/config.h"
 #include "cuda_rasterizer/rasterizer.h"
-#include "cuda_rasterizer/adam.h"
 #include <fstream>
 #include <string>
 #include <functional>
@@ -266,29 +265,3 @@ torch::Tensor markVisible(
   return present;
 }
 
-void adamUpdate(
-	torch::Tensor &param,
-	torch::Tensor &param_grad,
-	torch::Tensor &exp_avg,
-	torch::Tensor &exp_avg_sq,
-	torch::Tensor &visible,
-	const float lr,
-	const float b1,
-	const float b2,
-	const float eps,
-	const uint32_t N,
-	const uint32_t M
-){
-	ADAM::adamUpdate(
-		param.contiguous().data<float>(),
-		param_grad.contiguous().data<float>(),
-		exp_avg.contiguous().data<float>(),
-		exp_avg_sq.contiguous().data<float>(),
-		visible.contiguous().data<bool>(),
-		lr,
-		b1,
-		b2,
-		eps,
-		N,
-		M);
-}

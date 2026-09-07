@@ -117,7 +117,7 @@ resolution=2               submission_resolution=1       lambda_dssim=0.25
 densification_interval=500 densify_from_iter=500         densify_until_iter=15000
 opacity_reset_interval=3000 grad_abs_thresh=0.0012       grad_thresh=0.0002
 dense=0.001                highfeature_lr=0.02           lowfeature_lr=0.0025
-mult=0.5                   optimizer_type='default'      separate_sh=True
+mult=0.5                   separate_sh=True
 ```
 
 Note the **training/evaluation resolution mismatch**: models were fit at `resolution=2` but scored on renders at
@@ -328,17 +328,20 @@ Deep dives live in [`DOCS/`](DOCS/README.md). **They are written in Vietnamese**
 | [DOCS/colab-t4-guide.md](DOCS/colab-t4-guide.md) | Colab T4 playbook: tuned preset with per-parameter reasoning, the progress score and where its marginal value lies, the anti-OOM rules, three upgrades, CUDA roadmap | 7–9 |
 | [DOCS/DIGITAL-TWIN-GS-PIPELINE-{1,2,3}.md](DOCS/README.md) | Archived line-by-line anatomy of an older DroneSplat-era `train.py`. The general 3DGS walkthrough still holds, but **every flag name must be re-checked against the code** | — |
 
-## Reading the code: five flags that do nothing
+## Reading the code: flags that were removed
 
-These are declared in `arguments/__init__.py` but never read anywhere in this codebase. Passing them is silently ignored — no error, no effect.
+Upstream 3DGS left several flags in `arguments/__init__.py` that this fork never read. They have been deleted, so passing them now fails with an argparse error instead of being silently ignored.
 
-| Flag | Superseded by | Evidence |
+| Removed flag | Superseded by | Why it was dead |
 |---|---|---|
 | `--antialiasing` | *(nothing — feature absent)* | `gaussian_renderer/__init__.py` builds `GaussianRasterizationSettings` without the field, and the vendored rasterizer never references it |
-| `--feature_lr` | `--lowfeature_lr` | `scene/gaussian_model.py:200` reads `lowfeature_lr` for `f_dc` |
-| `--shfeature_lr` | `--highfeature_lr` | `scene/gaussian_model.py:205` reads `highfeature_lr` for `f_rest` |
-| `--percent_dense` | `--dense` | assigned at `gaussian_model.py:193`, never read again; densification uses `args.dense` |
-| `--densify_grad_threshold` | `--grad_thresh` | no reference outside `arguments/__init__.py` |
+| `--feature_lr` | `--lowfeature_lr` | `scene/gaussian_model.py:169` reads `lowfeature_lr` for `f_dc` |
+| `--shfeature_lr` | `--highfeature_lr` | `scene/gaussian_model.py:174` reads `highfeature_lr` for `f_rest` |
+| `--percent_dense` | `--dense` | assigned in `training_setup`, never read again; densification uses `args.dense` |
+| `--optimizer_type` | *(none — only one path)* | `sparse_adam` imported `SparseGaussianAdam` from the vanilla package inside `try/except: pass`, so the branch raised `NameError` |
+| `--position_lr_delay_mult` | *(none)* | `get_expon_lr_func` was always called with `lr_delay_steps = 0` |
+
+`--densify_grad_threshold` is still declared but never read outside `arguments/__init__.py`; `--grad_thresh` is the flag densification actually uses.
 
 Two more things the upstream README does not mention:
 
@@ -386,7 +389,6 @@ python metrics.py -m output/counter
 | `--highfeature_lr` | `0.005` | LR for high-order SH (`features_rest`). `gaussian_model.py:205` divides it by 20, so `0.02` means an effective `0.001` — still below `--lowfeature_lr`. Its optimizer also steps only every 16th iteration up to 15k |
 | `--lowfeature_lr` | `0.0025` | LR for low-order SH (`features_dc`) |
 | `--mult` | `0.5` | Compact-box multiplier controlling how many tiles each splat touches. `0.7` for large or cluttered scenes |
-| `--optimizer_type` | `default` | `default` uses the staged Adam cadence; `sparse_adam` steps only visible Gaussians every iteration |
 
 #### Data and model
 
@@ -412,7 +414,6 @@ python metrics.py -m output/counter
 | `--rotation_lr` | `0.001` | Rotation learning rate |
 | `--position_lr_init` | `0.00016` | Initial position learning rate |
 | `--position_lr_final` | `0.0000016` | Final position learning rate |
-| `--position_lr_delay_mult` | `0.01` | Position LR delay multiplier |
 | `--position_lr_max_steps` | `30000` | Steps over which the position LR anneals. Keep equal to `--iterations` |
 | `--densify_from_iter` | `500` | Densification starts here |
 | `--densify_until_iter` | `15000` | Densification stops here |

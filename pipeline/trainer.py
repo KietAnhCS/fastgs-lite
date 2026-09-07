@@ -70,7 +70,7 @@ def train_scene(cfg, scene, iterations=None, tag=None, keep_model=False, quiet_e
     safe_state(True)
 
     args, dataset, opt, pipe = build_args(cfg, scene, iterations=iterations)
-    gaussians = GaussianModel(dataset.sh_degree, opt.optimizer_type)
+    gaussians = GaussianModel(dataset.sh_degree)
     scene_obj = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
 
@@ -142,11 +142,7 @@ def train_scene(cfg, scene, iterations=None, tag=None, keep_model=False, quiet_e
                 gaussians.final_prune_fastgs(min_opacity=0.1, pruning_score=pruning)
 
             if iteration < iterations:
-                if opt.optimizer_type == "default":
-                    gaussians.optimizer_step(iteration)
-                else:
-                    gaussians.optimizer.step(radii > 0, radii.shape[0])
-                    gaussians.optimizer.zero_grad(set_to_none=True)
+                gaussians.optimizer_step(iteration)
 
             # --- % tiến trình + điểm số hiện ngay trên thanh tqdm ---
             if iteration % 10 == 0:

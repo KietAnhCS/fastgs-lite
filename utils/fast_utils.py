@@ -30,18 +30,6 @@ def compute_photometric_loss(viewpoint_cam, image):
     loss = (1.0 - 0.2) * Ll1 + 0.2 * (1.0 - fast_ssim(image.unsqueeze(0), gt_image.unsqueeze(0)))
     return loss
 
-def normalize(config_value, value_tensor):
-    multiplier = config_value
-    value_tensor[value_tensor.isnan()] = 0
-
-    valid_indices = (value_tensor > 0)
-    valid_value = value_tensor[valid_indices].to(torch.float32)
-
-    ret_value = torch.zeros_like(value_tensor, dtype=torch.float32)
-    ret_value[valid_indices] = multiplier * (valid_value / torch.median(valid_value))
-
-    return ret_value
-
 def compute_gaussian_score_fastgs(camlist, gaussians, pipe, bg, args, DENSIFY = False):
     """Compute multi-view consistency scores for Gaussians to guide densification.
 
