@@ -1,0 +1,80 @@
+\documentclass[10pt,a4paper,sans]{moderncv}
+
+% ModernCV themes
+\moderncvstyle{classic}
+\moderncvcolor{blue}
+
+% Page margins
+\usepackage[top=1.5cm, bottom=1.5cm, left=1.5cm, right=1.5cm]{geometry}
+\recomputelengths
+
+% Language & Encoding
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+
+% Personal Information
+\name{Le Anh}{Kiet}
+\title{AI Engineer Intern}
+\address{Thu Duc District}{Ho Chi Minh City, Vietnam}{}
+\phone[mobile]{(+84) 964864949}
+\email{leanhk75@gmail.com}
+\homepage{github.com/KietAnhCS}
+% \social[linkedin]{your-linkedin-id}   % Uncomment và thêm LinkedIn nếu có
+
+\begin{document}
+\makecvtitle
+
+%----------------------------------------------------------------------------------
+\section{Objective}
+\cvitem{}{Second-year Computer Science student with a strong passion for Artificial Intelligence,
+seeking an AI Engineer Internship to apply foundational knowledge of machine learning and
+programming to real-world projects. A fast learner and team player, eager to grow under the
+guidance of experienced engineers and contribute to hands-on AI development.}
+%----------------------------------------------------------------------------------
+\section{Technical Skills}
+\cvitem{Languages}{Python, C/C++, SQL, Java}
+\cvitem{Tools}{PyTorch, CUDA }
+\cvitem{MLOps \& Tools}{Git, Docker, Linux, Jupyter, FastAPI, Weights \& Biases}
+\cvitem{Concepts}{Deep Learning, Computer Vision, Computer Graphics}
+
+%----------------------------------------------------------------------------------
+\section{Education}
+\cventry{2024--2029}{Bachelor of Science in Computer Science}{Major Technical University}{Vietnam}{}{}
+\begin{itemize}
+    \item Core Focus: Artificial Intelligence, Advanced Database Management Systems, Distributed Systems, Software Engineering.
+    \item Relevant coursework: Machine Learning, Data Structures \& Algorithms, Linear Algebra, Probability \& Statistics.
+    \item GPA: 80/100
+\end{itemize}
+
+%----------------------------------------------------------------------------------
+\section{Projects}
+\cventry{}{Image Classification with CNN}{Personal Project}{}{}{%
+\begin{itemize}
+    \item Built and trained a convolutional neural network in PyTorch to classify images, achieving \textasciitilde XX\% accuracy on the test set.
+    \item Applied data augmentation and transfer learning (ResNet) to improve generalization.
+    \item Deployed the model as a REST API using FastAPI and Docker.
+\end{itemize}}
+
+\cventry{}{RAG Chatbot with LLMs}{Personal Project}{}{}{%
+\begin{itemize}
+    \item Developed a retrieval-augmented generation chatbot to answer questions over a custom document set.
+    \item Used sentence embeddings and a vector database for semantic search, integrated with an LLM for answer generation.
+    \item Implemented prompt engineering strategies to reduce hallucinations and improve response quality.
+\end{itemize}}
+
+% Thêm project khác của bạn ở đây theo cùng format
+
+%----------------------------------------------------------------------------------
+\section{Experience \& Activities}
+\cventry{20XX}{Member}{AI/Data Science Club}{Ho Chi Minh City}{}{%
+\begin{itemize}
+    \item Participated in study groups on deep learning and shared knowledge through internal workshops.
+    \item Collaborated on team projects using Git for version control.
+\end{itemize}}
+
+%----------------------------------------------------------------------------------
+\section{Certifications}
+\cvitemwithcomment{IELTS}{5.5}{}
+
+\end{document}

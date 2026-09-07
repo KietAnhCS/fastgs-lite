@@ -57,3 +57,7 @@ fastgs_models.zip
 nohup.out
 wandb/
 .env
+
+# --- LaTeX ---
+# latex/.latexmkrc sends every build artifact (including the PDF) here.
+latex/out/
