@@ -107,12 +107,23 @@ def plot_leaderboard(board, save_to=None):
     """So sánh Score và ba metric giữa các scene."""
     import matplotlib.pyplot as plt
 
+    import pandas as pd
+
     frame = board.drop(index="MEAN", errors="ignore")
-    columns = [c for c in ("score", "live_score") if c in frame.columns]
-    if not columns:
-        print("chưa có cột điểm để so sánh")
+    # `score` (chấm trên ảnh test thật) là None khi scene không có ảnh test;
+    # rơi về `live_score` (chấm trên hold-out) thay vì vẽ một cột toàn None.
+    column = None
+    for candidate in ("score", "live_score"):
+        if candidate in frame.columns:
+            values = pd.to_numeric(frame[candidate], errors="coerce")
+            if values.notna().any():
+                frame = frame.assign(**{candidate: values})
+                column = candidate
+                break
+    if column is None:
+        print("chưa có cột điểm nào có số liệu để so sánh")
         return None
-    column = columns[0]
+    frame = frame[frame[column].notna()]
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.2))
     axes[0].bar(frame.index, frame[column], color="#3b7dd8")
@@ -124,7 +135,15 @@ def plot_leaderboard(board, save_to=None):
     axes[0].grid(alpha=.3, axis="y")
 
     prefix = "" if column == "score" else "live_"
-    metrics = [m for m in ("psnr_norm", "ssim", "lpips") if f"{prefix}{m}" in frame.columns]
+    metrics = []
+    for metric in ("psnr_norm", "ssim", "lpips"):
+        name = f"{prefix}{metric}"
+        if name not in frame.columns:
+            continue
+        values = pd.to_numeric(frame[name], errors="coerce")
+        if values.notna().any():
+            frame = frame.assign(**{name: values.fillna(0.0)})
+            metrics.append(metric)
     width = 0.8 / max(1, len(metrics))
     for offset, metric in enumerate(metrics):
         positions = [i + offset * width for i in range(len(frame))]
