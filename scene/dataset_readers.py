@@ -65,6 +65,22 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
+# Camera models whose first parameters are the focal length(s). Distortion
+# coefficients are ignored: the renderer is a pinhole model, so a distorted
+# dataset is treated as its pinhole approximation instead of failing outright.
+SINGLE_FOCAL_MODELS = {"SIMPLE_PINHOLE", "SIMPLE_RADIAL", "RADIAL",
+                       "SIMPLE_RADIAL_FISHEYE", "RADIAL_FISHEYE", "FOV"}
+DUAL_FOCAL_MODELS = {"PINHOLE", "OPENCV", "OPENCV_FISHEYE", "FULL_OPENCV",
+                     "THIN_PRISM_FISHEYE"}
+
+def colmap_focals(intr):
+    """Return (fx, fy) for a COLMAP intrinsics record."""
+    if intr.model in SINGLE_FOCAL_MODELS:
+        return intr.params[0], intr.params[0]
+    if intr.model in DUAL_FOCAL_MODELS:
+        return intr.params[0], intr.params[1]
+    raise ValueError("Colmap camera model not handled: {}".format(intr.model))
+
 def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
@@ -82,17 +98,9 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         R = np.transpose(qvec2rotmat(extr.qvec))
         T = np.array(extr.tvec)
 
-        if intr.model=="SIMPLE_PINHOLE":
-            focal_length_x = intr.params[0]
-            FovY = focal2fov(focal_length_x, height)
-            FovX = focal2fov(focal_length_x, width)
-        elif intr.model=="PINHOLE":
-            focal_length_x = intr.params[0]
-            focal_length_y = intr.params[1]
-            FovY = focal2fov(focal_length_y, height)
-            FovX = focal2fov(focal_length_x, width)
-        else:
-            assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
+        focal_length_x, focal_length_y = colmap_focals(intr)
+        FovY = focal2fov(focal_length_y, height)
+        FovX = focal2fov(focal_length_x, width)
 
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
