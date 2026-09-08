@@ -12,30 +12,42 @@ from pipeline.trainer import train_scene
 
 
 def setup(cfg, install=True, require_gpu=True):
-    """Cài phụ thuộc (lần đầu ~3-5 phút) rồi in cấu hình máy."""
+    """Cài phụ thuộc (lần đầu ~3-5 phút), gắn Drive, rồi in cấu hình máy.
+
+    Gắn Drive ở đây chứ không đợi tới lúc cần: hộp thoại cấp quyền của Colab
+    chặn ô đang chạy, nên Run All chỉ phải dừng đúng một lần ngay từ đầu.
+    """
     if install:
         install_dependencies()
+    if getattr(cfg, "drive_mount", False) or getattr(cfg, "autosave_to_drive", False):
+        data_mod.mount_drive(cfg)
     info = check_gpu(require=require_gpu)
     os.makedirs(cfg.output_root, exist_ok=True)
     os.makedirs(cfg.submission_dir, exist_ok=True)
     return info
 
 
-def load_data(cfg, profile=True):
-    """Tải dữ liệu nếu cần, liệt kê scene, in hồ sơ dữ liệu."""
+def load_data(cfg, profile=True, force=False):
+    """Tải dữ liệu nếu cần, liệt kê scene, kiểm tra đủ ảnh, in hồ sơ dữ liệu."""
     os.makedirs(cfg.output_root, exist_ok=True)
     os.makedirs(cfg.submission_dir, exist_ok=True)
-    data_mod.download_dataset(cfg)
+    data_mod.download_dataset(cfg, force=force)
+    data_mod.resolve_subdir(cfg)
     scenes = data_mod.find_scenes(cfg)
     if not scenes:
         raise RuntimeError(f"không thấy scene nào trong {cfg.resolved_scene_root()}")
     print("scene:", scenes)
+    for scene in scenes:
+        data_mod.verify_scene(cfg, scene)
     frame = data_mod.profile_scenes(cfg, scenes) if profile else None
     return scenes, frame
 
 
 def smoke_test(cfg, scene, iterations=None):
     """Chạy thử vài trăm vòng trên một scene để chắc chắn toàn bộ đường ống chạy được."""
+    if not getattr(cfg, "run_smoke", True):
+        print("cfg.run_smoke = False -> bỏ qua bước chạy thử")
+        return None
     trial = dataclasses.replace(cfg,
                                 output_root=os.path.join(cfg.output_root, "_smoke"),
                                 score_every=max(50, (iterations or cfg.smoke_iterations) // 2),
@@ -56,14 +68,21 @@ def run_all(cfg, scenes, iterations=None, score_submission=True):
         show_mem(f"trước {scene}")
         result, _, _ = train_scene(cfg, scene, iterations)
         results.append(result)
+        deliver.autosave_scene(cfg, scene)             # .ply lên Drive trước khi làm gì khác
+        free_memory(tag=f"sau train {scene}")
         submissions.append(submission.render_scene(cfg, scene, result["iterations"],
                                                    score=score_submission))
-        free_memory(tag=f"sau {scene}")
+        free_memory(tag=f"sau render {scene}")
+        # ghi kết quả sau MỖI scene: mất phiên giữa chừng vẫn còn phần đã chạy
+        _dump_results(cfg, results, submissions)
 
+    return results, submissions
+
+
+def _dump_results(cfg, results, submissions):
     with open(os.path.join(cfg.output_root, "results.json"), "w", encoding="utf-8") as handle:
         json.dump(dict(config=cfg.as_dict(), results=results, submissions=submissions),
                   handle, indent=1, default=str)
-    return results, submissions
 
 
 def analytics(cfg, results, submissions):

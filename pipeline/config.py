@@ -18,6 +18,14 @@ class Config:
     data_root: str = "/content/data"
     dataset_url: Optional[str] = DEMO_DATASET_URL
     dataset_archive: str = "dataset.zip"
+
+    # --- dữ liệu trên Google Drive --------------------------------------
+    # Ưu tiên: drive_mount > drive_folder_url > dataset_url
+    drive_mount: bool = False                 # True -> gắn Drive, đọc tại chỗ, không tải
+    drive_mount_point: str = "/content/drive"
+    drive_folder_url: Optional[str] = None    # link THƯ MỤC Drive -> tải bằng gdown
+    drive_subdir: Optional[str] = None        # chỉ dùng thư mục con này, vd "HCM0539"
+
     scene_root: Optional[str] = None          # None -> tự tìm trong data_root
     scenes: Sequence[str] = ()                # () -> lấy hết scene tìm được
     max_scenes: Optional[int] = None
@@ -53,6 +61,10 @@ class Config:
     submission_ext: str = ".png"
     submission_digits: int = 4                # 0001.png
     submission_resolution: int = 1            # 1 = render đúng kích thước ảnh gốc
+    # thứ tự đánh số 0001.png khi có test_poses.csv:
+    #   "csv"  = giữ nguyên thứ tự dòng trong file ban tổ chức (mặc định)
+    #   "name" = sắp theo image_name
+    submission_order: str = "csv"
 
     # --- lấy kết quả về máy ---------------------------------------------
     download_submission: bool = True
@@ -60,6 +72,10 @@ class Config:
     save_to_drive: bool = False
     drive_dir: str = "/content/drive/MyDrive"
     model_zip: str = "/content/fastgs_models.zip"
+    # chép .ply sang Drive NGAY sau mỗi scene: /content bị xoá khi phiên Colab kết thúc
+    autosave_to_drive: bool = True
+    drive_run_dir: str = "fastgs_runs"
+    run_smoke: bool = True                    # False -> Run All bỏ qua bước chạy thử
 
     # ------------------------------------------------------------------
     def model_path(self, scene: str) -> str:

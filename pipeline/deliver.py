@@ -33,16 +33,56 @@ def pack_models(cfg, scenes, extra_files=()):
     return cfg.model_zip
 
 
+def _drive_ready(cfg):
+    """Đảm bảo Drive đã gắn. Trả về False nếu không phải Colab / mount hỏng."""
+    if os.path.isdir(cfg.drive_dir):
+        return True
+    try:
+        from google.colab import drive
+
+        drive.mount(cfg.drive_mount_point)
+    except Exception as error:                         # noqa: BLE001 - ngoài Colab thì bỏ qua
+        print("không mount được Drive:", error)
+        return False
+    return os.path.isdir(os.path.dirname(cfg.drive_dir) or "/")
+
+
+def autosave_scene(cfg, scene):
+    """Chép `.ply` mới nhất + cfg_args của MỘT scene sang Drive ngay khi train xong.
+
+    Đây là bản sao duy nhất sống sót khi phiên Colab bị ngắt: `/content` bị xoá
+    sạch, còn `run.finish()` thì mãi tới cuối mới chạy.
+    """
+    if not getattr(cfg, "autosave_to_drive", False):
+        return None
+    if not _drive_ready(cfg):
+        return None
+
+    model_path = cfg.model_path(scene)
+    plys = glob.glob(os.path.join(model_path, "point_cloud", "iteration_*", "point_cloud.ply"))
+    if not plys:
+        print(f"[{scene}] chưa có .ply để lưu")
+        return None
+    plys.sort(key=lambda p: int(os.path.basename(os.path.dirname(p)).split("_")[-1]))
+    latest = plys[-1]
+
+    target_dir = os.path.join(cfg.drive_dir, cfg.drive_run_dir, scene)
+    os.makedirs(target_dir, exist_ok=True)
+    relative = os.path.relpath(latest, model_path).replace(os.sep, "/")
+    target = os.path.join(target_dir, relative.replace("/", "_"))
+    shutil.copy2(latest, target)
+    for name in ("cfg_args", "cameras.json"):
+        source = os.path.join(model_path, name)
+        if os.path.exists(source):
+            shutil.copy2(source, os.path.join(target_dir, name))
+    print(f"[{scene}] đã lưu Drive: {target} ({os.path.getsize(target) / 1024 ** 2:.1f} MB)")
+    return target
+
+
 def copy_to_drive(cfg, paths):
     """Chép file sang Google Drive (mount trước nếu chưa)."""
-    if not os.path.isdir(cfg.drive_dir):
-        try:
-            from google.colab import drive
-
-            drive.mount("/content/drive")
-        except Exception as error:                     # noqa: BLE001 - ngoài Colab thì bỏ qua
-            print("không mount được Drive:", error)
-            return []
+    if not _drive_ready(cfg):
+        return []
     os.makedirs(cfg.drive_dir, exist_ok=True)
     copied = []
     for path in paths:
@@ -67,5 +107,10 @@ def download(cfg, paths):
         return paths
     for path in paths:
         print("đang tải về:", path, f"({os.path.getsize(path) / 1024 ** 2:.1f} MB)")
-        files.download(path)
+        try:
+            files.download(path)
+        except Exception as error:                     # noqa: BLE001
+            # Run All hay bị trình duyệt chặn tải nhiều file; file vẫn nằm trên đĩa
+            # (và trên Drive nếu bật autosave) nên đây không phải lý do để dừng.
+            print(f"  không tải tự động được ({error}); tải tay ở khung Files bên trái")
     return paths

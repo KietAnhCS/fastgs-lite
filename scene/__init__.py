@@ -22,9 +22,13 @@ class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0], camera_sets=("train", "test")):
         """b
         :param path: Path to colmap scene main folder.
+        :param camera_sets: which camera sets to actually decode into memory.
+            Every Camera keeps `original_image` on `data_device` (VRAM by default),
+            so rendering-only passes should ask for ("test",) and skip the train
+            images entirely instead of paying for hundreds of unused tensors.
         """
         self.model_path = args.model_path
         self.loaded_iter = None
@@ -70,10 +74,18 @@ class Scene:
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
         for resolution_scale in resolution_scales:
-            print("Loading Training Cameras")
-            self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
-            print("Loading Test Cameras")
-            self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
+            if "train" in camera_sets:
+                print("Loading Training Cameras")
+                self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
+            else:
+                print("Skipping Training Cameras")
+                self.train_cameras[resolution_scale] = []
+            if "test" in camera_sets:
+                print("Loading Test Cameras")
+                self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
+            else:
+                print("Skipping Test Cameras")
+                self.test_cameras[resolution_scale] = []
 
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,

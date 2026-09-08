@@ -10,6 +10,7 @@ import json
 import os
 import zipfile
 
+from pipeline import testposes
 from pipeline.score import composite_score
 from pipeline.trainer import build_args
 
@@ -38,13 +39,32 @@ def render_scene(cfg, scene, iterations=None, score=True):
                                        resolution=cfg.submission_resolution, write_cfg=False)
 
     gaussians = GaussianModel(dataset.sh_degree)
-    scene_obj = Scene(dataset, gaussians, load_iteration=iterations, shuffle=False)
+    scene_obj = None
+    cams, pose_info = testposes.load_test_cameras(cfg, scene)
+
+    if cams is not None:
+        # Có test_poses.csv -> đây mới là bộ camera ban tổ chức yêu cầu.
+        # load_ply tự đặt active_sh_degree nên không cần dựng Scene, tiết kiệm cả
+        # việc đọc COLMAP lẫn việc nạp ảnh train vào VRAM.
+        ply = os.path.join(dataset.model_path, "point_cloud",
+                           f"iteration_{iterations}", "point_cloud.ply")
+        if not os.path.exists(ply):
+            raise FileNotFoundError(f"chưa có model để render: {ply}")
+        gaussians.load_ply(ply)
+    else:
+        # Không phải layout cuộc thi -> giữ hành vi cũ (llffhold tách từ tập train).
+        # Chỉ nạp test camera: ảnh train chiếm VRAM mà lượt render này không dùng tới.
+        print(f"  [{scene}] không có test_poses.csv -> dùng holdout llffhold={cfg.llffhold}")
+        scene_obj = Scene(dataset, gaussians, load_iteration=iterations, shuffle=False,
+                          camera_sets=("test",))
+        cams = sorted(scene_obj.getTestCameras(), key=lambda c: c.image_name)
+
     background = torch.tensor([1, 1, 1] if dataset.white_background else [0, 0, 0],
                               dtype=torch.float32, device="cuda")
-
-    cams = sorted(scene_obj.getTestCameras(), key=lambda c: c.image_name)
     out_dir = cfg.submission_scene_dir(scene)
     os.makedirs(out_dir, exist_ok=True)
+    if pose_info is not None and not pose_info["has_gt"]:
+        score = False                                  # ảnh GT là tensor 0, chấm sẽ vô nghĩa
 
     psnrs, ssims, lpipss, files = [], [], [], []
     with torch.no_grad():
@@ -62,11 +82,13 @@ def render_scene(cfg, scene, iterations=None, score=True):
                 lpipss.append(lpips_fn(rendered, gt, net_type=cfg.lpips_net_report).mean().item())
                 del gt
             del rendered
+            cam.original_image = None                  # trả VRAM ngay, ảnh này xong việc
 
     info = dict(scene=scene, images=len(files), out_dir=out_dir,
                 width=files[0]["width"] if files else None,
                 height=files[0]["height"] if files else None,
-                files=files)
+                camera_source="test_poses.csv" if pose_info else f"llffhold={cfg.llffhold}",
+                poses=pose_info, files=files)
     if psnrs:
         psnr_val = sum(psnrs) / len(psnrs)
         ssim_val = sum(ssims) / len(ssims)
@@ -141,7 +163,20 @@ def verify(cfg, expected=None):
                 problems.append(f"{scene}: tên file không liên tục ({files[:3]} ...)")
             with zf.open(f"{scene}/{files[0]}") as handle:
                 width, height = Image.open(io.BytesIO(handle.read())).size
-            rows.append(dict(scene=scene, images=len(files), width=width, height=height))
+            row = dict(scene=scene, images=len(files), width=width, height=height)
+
+            # đối chiếu thẳng với test_poses.csv: số ảnh và kích thước render
+            csv_path = testposes.poses_csv(cfg, scene)
+            if csv_path:
+                want = testposes.read_rows(csv_path)
+                row["expected"] = len(want)
+                if len(files) != len(want):
+                    problems.append(f"{scene}: {len(files)} ảnh nhưng CSV có {len(want)} pose")
+                want_w, want_h = int(float(want[0]["width"])), int(float(want[0]["height"]))
+                if (width, height) != (want_w, want_h):
+                    problems.append(f"{scene}: ảnh {width}x{height} nhưng CSV yêu cầu "
+                                    f"{want_w}x{want_h}")
+            rows.append(row)
 
     if expected:
         missing = [s for s in expected if s not in by_scene]
