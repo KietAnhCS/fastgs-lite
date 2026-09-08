@@ -39,6 +39,11 @@ class Config:
     iterations: int = 7000
     smoke_iterations: int = 300
     score_every: int = 1000
+    # Lịch densify của 3DGS gốc được đặt cho 30k vòng. Chạy ngắn hơn mà giữ
+    # nguyên nó thì lần reset opacity cuối rơi quá sát vòng kết thúc và model
+    # không kịp hồi phục. Co lịch theo số vòng thực tế:
+    #   densify_until_iter = densify_until_frac * iterations
+    densify_until_frac: float = 0.5
     save_every: int = 2000                    # lưu .ply định kỳ; 0 = chỉ lưu ở vòng cuối
     keep_last_checkpoint: bool = True         # xoá checkpoint giữa chừng cũ, chỉ giữ cái mới nhất
     eval_views: int = 6
@@ -96,6 +101,7 @@ class Config:
     def show(self) -> "Config":
         keys = ("repo_dir", "data_root", "scene_root", "scenes", "resolution",
                 "output_root", "iterations", "smoke_iterations", "score_every", "save_every",
+                "densify_until_frac",
                 "eval_views", "psnr_max", "mult", "submission_dir", "submission_zip",
                 "submission_resolution", "download_submission", "download_model")
         for key in keys:

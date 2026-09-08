@@ -17,13 +17,18 @@ def build_args(cfg, scene, model_path=None, iterations=None, resolution=None, ex
     from arguments import ModelParams, PipelineParams, OptimizationParams
 
     model_path = model_path or cfg.model_path(scene)
+    n_iter = int(iterations or cfg.iterations)
+    # Densify (và các lần reset opacity bên trong nó) phải kết thúc sớm hơn vòng
+    # cuối, nếu không model dừng ngay sau một lần reset và PSNR sụp.
+    densify_until = max(1, int(round(getattr(cfg, "densify_until_frac", 0.5) * n_iter)))
     parser = ArgumentParser()
     lp, op, pp = ModelParams(parser), OptimizationParams(parser), PipelineParams(parser)
     argv = ["-s", data_mod.scene_path(cfg, scene), "-m", model_path,
             "-i", cfg.images_dir,
             "-r", str(cfg.resolution if resolution is None else resolution), "--eval",
-            "--iterations", str(iterations or cfg.iterations),
-            "--position_lr_max_steps", str(iterations or cfg.iterations),
+            "--iterations", str(n_iter),
+            "--position_lr_max_steps", str(n_iter),
+            "--densify_until_iter", str(densify_until),
             "--mult", str(cfg.mult),
             "--llffhold", str(cfg.llffhold)]
     if cfg.white_background:
