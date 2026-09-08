@@ -83,6 +83,7 @@ def colmap_focals(intr):
 
 def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
     cam_infos = []
+    n_missing = 0
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
         # the exact output you're looking for:
@@ -103,6 +104,12 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         FovX = focal2fov(focal_length_x, width)
 
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
+        if not os.path.exists(image_path):
+            # The COLMAP model is reconstructed over every frame, but a
+            # split only ships its own images. Frames without a file
+            # belong to another split; skip them instead of crashing.
+            n_missing += 1
+            continue
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path)
 
@@ -110,6 +117,12 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
                               image_path=image_path, image_name=image_name, width=width, height=height)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
+    if n_missing:
+        print("Skipped {}/{} COLMAP cameras with no image in {}".format(
+            n_missing, len(cam_extrinsics), images_folder))
+    if not cam_infos:
+        raise RuntimeError(
+            "No COLMAP camera matched an image in {}".format(images_folder))
     return cam_infos
 
 def fetchPly(path):
