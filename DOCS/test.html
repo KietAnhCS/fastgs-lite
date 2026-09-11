@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AccuTile — Từ hộp bao đến elip chính xác</title>
+<style>
+  :root{
+    --bg: #0e1420;
+    --panel: #151d2e;
+    --panel-2: #1b2436;
+    --line: #2a3550;
+    --text: #e7ecf5;
+    --text-dim: #8d98b3;
+    --keep: #2dd4bf;
+    --keep-fill: rgba(45,212,191,0.28);
+    --discard: #fb7185;
+    --discard-fill: rgba(251,113,133,0.22);
+    --amber: #f5b942;
+    --ellipse: #c9d3ff;
+    --grid-line: #26304a;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family: 'Sora', -apple-system, 'Segoe UI', sans-serif;
+    padding:24px;
+    line-height:1.5;
+  }
+  .mono{ font-family:'IBM Plex Mono', 'SFMono-Regular', Menlo, monospace; }
+  h1{
+    font-size:22px; font-weight:600; margin:0 0 4px 0; letter-spacing:-0.01em;
+  }
+  .subtitle{ color:var(--text-dim); font-size:13.5px; margin:0 0 20px 0; }
+  .stats{
+    display:flex; gap:12px; margin-bottom:20px; flex-wrap:wrap;
+  }
+  .stat{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:12px 18px; min-width:130px;
+  }
+  .stat .label{ font-size:11.5px; color:var(--text-dim); margin-bottom:4px;}
+  .stat .value{ font-size:26px; font-weight:600; font-family:'IBM Plex Mono',monospace; }
+  .stat.k3dgs .value{ color:#a8b4d0; }
+  .stat.kbox .value{ color:var(--amber); }
+  .stat.kfast .value{ color:var(--keep); }
+  .stat .delta{ font-size:12px; color:var(--text-dim); margin-top:2px; }
+
+  .layout{ display:grid; grid-template-columns: 1fr 340px; gap:18px; align-items:start; }
+  @media (max-width: 880px){ .layout{ grid-template-columns: 1fr; } }
+
+  .panel{
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:16px;
+  }
+  .panel h2{ font-size:13px; text-transform:none; color:var(--text-dim); margin:0 0 12px 0; font-weight:600; letter-spacing:0.01em;}
+
+  svg{ width:100%; height:auto; display:block; border-radius:8px; background:#0a0f19; }
+
+  .legend{ display:flex; flex-wrap:wrap; gap:10px 16px; margin-top:12px; font-size:12.5px; color:var(--text-dim); }
+  .legend .sw{ display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+
+  .field-row{ display:flex; gap:8px; margin-bottom:10px; }
+  .field{ flex:1; }
+  .field label{ display:block; font-size:11.5px; color:var(--text-dim); margin-bottom:3px; }
+  .field input{
+    width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:6px;
+    color:var(--text); padding:6px 8px; font-family:'IBM Plex Mono',monospace; font-size:13px;
+  }
+  .field input:focus{ outline:1.5px solid var(--keep); }
+
+  .toggles{ display:flex; flex-direction:column; gap:8px; margin:14px 0; }
+  .toggles label{ display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; }
+  .toggles input{ accent-color: var(--keep); width:15px; height:15px; }
+
+  .warn{ background:rgba(251,113,133,0.12); border:1px solid var(--discard); color:#ffd6dc; padding:8px 10px; border-radius:8px; font-size:12.5px; margin-bottom:10px; display:none; }
+
+  .stepper{ margin-top:6px; }
+  .stepper-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .stepper-head .rowlabel{ font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--amber); }
+  .stepper-btns button{
+    background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+    padding:4px 10px; border-radius:6px; cursor:pointer; font-size:13px; margin-left:6px;
+  }
+  .stepper-btns button:disabled{ opacity:0.35; cursor:default; }
+  .stepper-btns button:hover:not(:disabled){ border-color:var(--keep); }
+
+  .calc-line{ font-family:'IBM Plex Mono',monospace; font-size:12.3px; color:var(--text-dim); padding:2px 0; }
+  .calc-line b{ color:var(--text); font-weight:500; }
+  .calc-line .tag{ color:var(--amber); }
+
+  .divider{ height:1px; background:var(--line); margin:14px 0; }
+
+  footer{ margin-top:18px; color:var(--text-dim); font-size:11.5px; }
+
+  .preset-btn{
+    flex:1; background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+    padding:8px 10px; border-radius:8px; cursor:pointer; font-size:12px; line-height:1.3;
+  }
+  .preset-btn:hover{ border-color:var(--keep); }
+  .hint{ font-size:11.5px; color:var(--text-dim); margin-top:2px; }
+</style>
+</head>
+<body>
+
+<h1>AccuTile: hộp bao &rarr; elip chính xác</h1>
+<p class="subtitle">Chỉnh Σ, p, mult, o để xem elip, hộp bao và tập tile giữ lại thay đổi theo thời gian thực.</p>
+
+<div class="stats">
+  <div class="stat k3dgs">
+    <div class="label">K_3dgs (vuông 3σ)</div>
+    <div class="value mono" id="stat-k3dgs">—</div>
+  </div>
+  <div class="stat kbox">
+    <div class="label">K_box (compact box)</div>
+    <div class="value mono" id="stat-kbox">—</div>
+  </div>
+  <div class="stat kfast">
+    <div class="label">K_fastgs (elip chính xác)</div>
+    <div class="value mono" id="stat-kfast">—</div>
+    <div class="delta" id="stat-delta">—</div>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="panel">
+    <h2>Sơ đồ tile (đơn vị: pixel, tile = 16&times;16)</h2>
+    <svg id="canvas" viewBox="0 0 100 100"></svg>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--keep-fill); border:1px solid var(--keep);"></span>Tile giữ (FastGS)</span>
+      <span><span class="sw" style="background:var(--discard-fill); border:1px solid var(--discard);"></span>Tile bị loại (chỉ có trong box)</span>
+      <span><span class="sw" style="background:transparent; border:1.5px dashed var(--amber);"></span>Hộp bao (compact box)</span>
+      <span><span class="sw" style="background:transparent; border:1.5px solid var(--ellipse);"></span>Elip Δᵀ M Δ = t</span>
+      <span><span class="sw" style="background:var(--amber); border-radius:50%;"></span>Tiếp điểm elip–hộp</span>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <h2>Input</h2>
+      <div class="warn" id="warn">det(Σ') ≤ 0 — không phải ma trận hợp lệ (elip suy biến).</div>
+
+      <div class="field-row" style="margin-bottom:14px;">
+        <button type="button" id="preset1" class="preset-btn">Ví dụ 1 — Σ12&gt;0 (25&rarr;15&rarr;9)</button>
+        <button type="button" id="preset2" class="preset-btn">Ví dụ 2 — Σ12&lt;0 (25&rarr;12&rarr;10)</button>
+      </div>
+
+      <div class="field-row">
+        <div class="field"><label>Σ11</label><input type="number" id="S11" value="80" step="1"></div>
+        <div class="field"><label>Σ12</label><input type="number" id="S12" value="-40" step="1"></div>
+        <div class="field"><label>Σ22</label><input type="number" id="S22" value="50" step="1"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>p_x</label><input type="number" id="px" value="100" step="1"></div>
+        <div class="field"><label>p_y</label><input type="number" id="py" value="70" step="1"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>mult</label><input type="number" id="mult" value="0.5" step="0.05"></div>
+        <div class="field"><label>opacity o</label><input type="number" id="opac" value="1" step="0.05" min="0.01" max="1"></div>
+      </div>
+      <div class="hint">Đổi Σ mà quên đổi p sẽ ra K_box sai (p quyết định vị trí tuyệt đối trên lưới tile, half_x/half_y chỉ quyết định độ rộng). Dùng 2 nút preset ở trên để nạp trọn bộ, khỏi thiếu số.</div>
+
+      <div class="toggles">
+        <label><input type="checkbox" id="toggle-grid" checked> Lưới tile &amp; nhãn cột/hàng</label>
+        <label><input type="checkbox" id="toggle-box" checked> Hộp bao (compact box)</label>
+        <label><input type="checkbox" id="toggle-ellipse" checked> Elip chính xác</label>
+        <label><input type="checkbox" id="toggle-tangent" checked> Tiếp điểm &amp; nửa cạnh</label>
+        <label><input type="checkbox" id="toggle-discard" checked> Tô tile bị loại</label>
+      </div>
+    </div>
+
+    <div style="height:14px"></div>
+
+    <div class="panel">
+      <h2>Quét từng hàng (AccuTile)</h2>
+      <div class="stepper">
+        <div class="stepper-head">
+          <span class="rowlabel" id="step-title">—</span>
+          <span class="stepper-btns">
+            <button id="btn-prev">&larr;</button>
+            <button id="btn-next">&rarr;</button>
+          </span>
+        </div>
+        <div id="step-body"></div>
+      </div>
+      <div class="divider"></div>
+      <div class="calc-line">Tổng cộng dồn: <b id="step-running">—</b></div>
+    </div>
+  </div>
+</div>
+
+<footer>Công thức: A,B,C = (1/det)(Σ22, −Σ12, Σ11) &nbsp;·&nbsp; d±(h) = (−Bh ± √(disc·h²+tk))/k &nbsp;·&nbsp; t = mult·2ln(255o)</footer>
+
+<script>
+const TILE = 16;
+
+function N(u0,u1){ return Math.floor(u1/TILE) - Math.floor(u0/TILE) + 1; }
+
+function compute(S11,S12,S22,px,py,mult,o){
+  const det = S11*S22 - S12*S12;
+  if(det<=0) return {valid:false};
+  const mid = (S11+S22)/2;
+  const rad = Math.sqrt(Math.max(mid*mid-det,0));
+  const lmax = mid+rad, lmin = mid-rad;
+  const A = S22/det, B = -S12/det, C = S11/det;
+  const disc = B*B-A*C;
+  const t = mult*2*Math.log(255*o);
+  const halfx = Math.sqrt(t*S11), halfy = Math.sqrt(t*S22);
+  const xterm = -(B/A)*halfy;
+  const yterm = -(B/C)*halfx;
+  const theta = 0.5*Math.atan2(2*S12, S11-S22);
+  const a = Math.sqrt(t*lmax), b = Math.sqrt(t*lmin);
+
+  const xmin=px-halfx, xmax=px+halfx, ymin=py-halfy, ymax=py+halfy;
+  const Nx = N(xmin,xmax), Ny = N(ymin,ymax);
+  const Kbox = Nx*Ny;
+
+  const r = Math.ceil(3*Math.sqrt(lmax));
+  const K3dgs = N(px-r,px+r) * N(py-r,py+r);
+
+  const isY = Ny <= Nx;
+
+  function dpm(h,sign,k){
+    const val = disc*h*h + t*k;
+    const s = Math.sqrt(Math.max(val,0));
+    return (-B*h+sign*s)/k;
+  }
+
+  let rows=[]; // generic: each item = {j, lo, hi, hlo, hhi, dmin, dmax, r0, r1, cmin, cmax, n, hasA, hasB}
+  if(isY){
+    const jmin=Math.floor(ymin/TILE), jmax=Math.floor(ymax/TILE);
+    for(let j=jmin;j<=jmax;j++){
+      const loTile=j*TILE, hiTile=(j+1)*TILE;
+      const lo=Math.max(ymin,loTile), hi=Math.min(ymax,hiTile);
+      const hlo=lo-py, hhi=hi-py;
+      const leftExtreme = py - yterm, rightExtreme = py + yterm;
+      const hasLeft = leftExtreme>=lo-1e-9 && leftExtreme<=hi+1e-9;
+      const hasRight = rightExtreme>=lo-1e-9 && rightExtreme<=hi+1e-9;
+      const dminj = hasLeft ? -halfx : Math.min(dpm(hlo,-1,A),dpm(hhi,-1,A));
+      const dmaxj = hasRight ? halfx : Math.max(dpm(hlo,1,A),dpm(hhi,1,A));
+      const r0=px+dminj, r1=px+dmaxj;
+      const cmin=Math.floor(r0/TILE), cmax=Math.floor(r1/TILE);
+      rows.push({j,lo,hi,hlo,hhi,dminj,dmaxj,r0,r1,cmin,cmax,n:cmax-cmin+1,hasA:hasLeft,hasB:hasRight});
+    }
+  } else {
+    const imin=Math.floor(xmin/TILE), imax=Math.floor(xmax/TILE);
+    for(let i=imin;i<=imax;i++){
+      const loTile=i*TILE, hiTile=(i+1)*TILE;
+      const lo=Math.max(xmin,loTile), hi=Math.min(xmax,hiTile);
+      const hlo=lo-px, hhi=hi-px;
+      const botExtreme = px - xterm, topExtreme = px + xterm;
+      const hasBot = botExtreme>=lo-1e-9 && botExtreme<=hi+1e-9;
+      const hasTop = topExtreme>=lo-1e-9 && topExtreme<=hi+1e-9;
+      const dminj = hasBot ? -halfy : Math.min(dpm(hlo,-1,C),dpm(hhi,-1,C));
+      const dmaxj = hasTop ? halfy : Math.max(dpm(hlo,1,C),dpm(hhi,1,C));
+      const r0=py+dminj, r1=py+dmaxj;
+      const cmin=Math.floor(r0/TILE), cmax=Math.floor(r1/TILE);
+      rows.push({j:i,lo,hi,hlo,hhi,dminj,dmaxj,r0,r1,cmin,cmax,n:cmax-cmin+1,hasA:hasBot,hasB:hasTop});
+    }
+  }
+  const Kfastgs = rows.reduce((s,r)=>s+r.n,0);
+
+  return {valid:true,det,mid,lmax,lmin,A,B,C,disc,t,halfx,halfy,xterm,yterm,theta,a,b,
+    xmin,xmax,ymin,ymax,Nx,Ny,Kbox,r,K3dgs,isY,rows,Kfastgs};
+}
+
+let state = { step: 0 };
+
+function fmt(x,d=2){ return (Math.round(x*Math.pow(10,d))/Math.pow(10,d)).toFixed(d); }
+
+function render(){
+  const S11=+document.getElementById('S11').value;
+  const S12=+document.getElementById('S12').value;
+  const S22=+document.getElementById('S22').value;
+  const px=+document.getElementById('px').value;
+  const py=+document.getElementById('py').value;
+  const mult=+document.getElementById('mult').value;
+  const o=+document.getElementById('opac').value;
+
+  const res = compute(S11,S12,S22,px,py,mult,o);
+  document.getElementById('warn').style.display = res.valid ? 'none' : 'block';
+  if(!res.valid){ return; }
+
+  document.getElementById('stat-k3dgs').textContent = res.K3dgs;
+  document.getElementById('stat-kbox').textContent = res.Kbox;
+  document.getElementById('stat-kfast').textContent = res.Kfastgs;
+  const pct = (100*(res.Kbox-res.Kfastgs)/res.Kbox);
+  document.getElementById('stat-delta').textContent = 'giảm ' + fmt(pct,1) + '% so với box';
+
+  if(state.step > res.rows.length-1) state.step = res.rows.length-1;
+  if(state.step < 0) state.step = 0;
+
+  drawSVG(res);
+  drawStepper(res);
+}
+
+function drawSVG(res){
+  const showGrid = document.getElementById('toggle-grid').checked;
+  const showBox = document.getElementById('toggle-box').checked;
+  const showEllipse = document.getElementById('toggle-ellipse').checked;
+  const showTangent = document.getElementById('toggle-tangent').checked;
+  const showDiscard = document.getElementById('toggle-discard').checked;
+
+  const colMinBox = Math.floor(res.xmin/TILE), colMaxBox = Math.floor(res.xmax/TILE);
+  const rowMinBox = Math.floor(res.ymin/TILE), rowMaxBox = Math.floor(res.ymax/TILE);
+  const colD0 = colMinBox-1, colD1 = colMaxBox+1;
+  const rowD0 = rowMinBox-1, rowD1 = rowMaxBox+1;
+
+  const originX = colD0*TILE, originY = rowD0*TILE;
+  const SCALE = 5;
+  const W = (colD1-colD0+1)*TILE*SCALE;
+  const H = (rowD1-rowD0+1)*TILE*SCALE;
+  const PAD = 24;
+
+  const sx = x => (x-originX)*SCALE + PAD;
+  const sy = y => (y-originY)*SCALE + PAD;
+
+  const svg = document.getElementById('canvas');
+  svg.setAttribute('viewBox', `0 0 ${W+PAD*2} ${H+PAD*2+18}`);
+
+  let s = '';
+
+  // build kept/discard map
+  const keptMap = {}; // key "row,col" -> true
+  res.rows.forEach(r=>{
+    if(res.isY){
+      for(let c=r.cmin;c<=r.cmax;c++) keptMap[r.j+','+c]=true;
+    } else {
+      for(let rr=r.cmin;rr<=r.cmax;rr++) keptMap[rr+','+r.j]=true;
+    }
+  });
+
+  // grid tiles
+  for(let row=rowD0; row<=rowD1; row++){
+    for(let col=colD0; col<=colD1; col++){
+      const inBoxRange = (col>=colMinBox && col<=colMaxBox && row>=rowMinBox && row<=rowMaxBox);
+      const x = sx(col*TILE), y = sy(row*TILE);
+      let fill = 'none', stroke = 'var(--grid-line)', op='1';
+      if(inBoxRange){
+        const kept = keptMap[row+','+col];
+        if(kept){
+          fill = 'var(--keep-fill)'; stroke='var(--keep)';
+        } else if(showDiscard){
+          fill = 'var(--discard-fill)'; stroke='var(--discard)';
+        }
+      }
+      s += `<rect x="${x}" y="${y}" width="${TILE*SCALE}" height="${TILE*SCALE}" fill="${fill}" stroke="${stroke}" stroke-width="1"/>`;
+    }
+  }
+
+  if(showGrid){
+    for(let col=colD0; col<=colD1; col++){
+      s += `<text x="${sx(col*TILE+TILE/2)}" y="${PAD-8}" font-size="10" fill="var(--text-dim)" text-anchor="middle" font-family="IBM Plex Mono, monospace">${col}</text>`;
+    }
+    for(let row=rowD0; row<=rowD1; row++){
+      s += `<text x="${PAD-8}" y="${sy(row*TILE+TILE/2)+3}" font-size="10" fill="var(--text-dim)" text-anchor="end" font-family="IBM Plex Mono, monospace">${row}</text>`;
+    }
+  }
+
+  // highlight current step row/col
+  const cur = res.rows[state.step];
+  if(cur){
+    let hx,hy,hw,hh;
+    if(res.isY){
+      hx = sx(colD0*TILE); hy = sy(cur.j*TILE); hw = (colD1-colD0+1)*TILE*SCALE; hh = TILE*SCALE;
+    } else {
+      hx = sx(cur.j*TILE); hy = sy(rowD0*TILE); hw = TILE*SCALE; hh = (rowD1-rowD0+1)*TILE*SCALE;
+    }
+    s += `<rect x="${hx}" y="${hy}" width="${hw}" height="${hh}" fill="none" stroke="var(--amber)" stroke-width="2" stroke-dasharray="6 3"/>`;
+  }
+
+  // compact box
+  if(showBox){
+    s += `<rect x="${sx(res.xmin)}" y="${sy(res.ymin)}" width="${(res.xmax-res.xmin)*SCALE}" height="${(res.ymax-res.ymin)*SCALE}" fill="none" stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="5 4"/>`;
+  }
+
+  // ellipse (parametric, robust to orientation)
+  if(showEllipse){
+    const N_PTS = 96;
+    let pts = [];
+    for(let i=0;i<=N_PTS;i++){
+      const ang = 2*Math.PI*i/N_PTS;
+      const X = res.a*Math.cos(ang)*Math.cos(res.theta) - res.b*Math.sin(ang)*Math.sin(res.theta);
+      const Y = res.a*Math.cos(ang)*Math.sin(res.theta) + res.b*Math.sin(ang)*Math.cos(res.theta);
+      pts.push([sx(+document.getElementById('px').value + X), sy(+document.getElementById('py').value + Y)]);
+    }
+    const d = 'M ' + pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' L ');
+    s += `<path d="${d} Z" fill="rgba(201,211,255,0.06)" stroke="var(--ellipse)" stroke-width="1.8"/>`;
+  }
+
+  // center + tangent points
+  const pxv=+document.getElementById('px').value, pyv=+document.getElementById('py').value;
+  s += `<circle cx="${sx(pxv)}" cy="${sy(pyv)}" r="3" fill="#fff"/>`;
+  s += `<text x="${sx(pxv)+6}" y="${sy(pyv)-6}" font-size="10.5" fill="#fff" font-family="IBM Plex Mono, monospace">p(${pxv},${pyv})</text>`;
+
+  if(showTangent){
+    const tpts = [
+      [pxv+res.xterm, pyv+res.halfy, 'trên'],
+      [pxv-res.xterm, pyv-res.halfy, 'dưới'],
+      [pxv+res.halfx, pyv+res.yterm, 'phải'],
+      [pxv-res.halfx, pyv-res.yterm, 'trái'],
+    ];
+    tpts.forEach(([tx,ty,label])=>{
+      s += `<circle cx="${sx(tx)}" cy="${sy(ty)}" r="3.2" fill="var(--amber)" stroke="#0e1420" stroke-width="1"/>`;
+    });
+    // half_x / half_y guide lines
+    s += `<line x1="${sx(pxv)}" y1="${sy(pyv)}" x2="${sx(pxv+res.halfx)}" y2="${sy(pyv)}" stroke="var(--amber)" stroke-width="1" stroke-dasharray="2 2" opacity="0.6"/>`;
+    s += `<line x1="${sx(pxv)}" y1="${sy(pyv)}" x2="${sx(pxv)}" y2="${sy(pyv+res.halfy)}" stroke="var(--amber)" stroke-width="1" stroke-dasharray="2 2" opacity="0.6"/>`;
+  }
+
+  svg.innerHTML = s;
+}
+
+function drawStepper(res){
+  const cur = res.rows[state.step];
+  const isY = res.isY;
+  const title = isY ? `Hàng j = ${cur.j}` : `Cột j = ${cur.j}`;
+  document.getElementById('step-title').textContent = `${title}  (${state.step+1}/${res.rows.length})`;
+
+  const axisLabel = isY ? 'y' : 'x';
+  const otherLabel = isY ? 'x' : 'y';
+  const specialA = isY ? 'trái (d_min=−half_x)' : 'dưới (d_min=−half_y)';
+  const specialB = isY ? 'phải (d_max=+half_x)' : 'trên (d_max=+half_y)';
+
+  let body = '';
+  body += `<div class="calc-line">${axisLabel} &isin; [<b>${fmt(cur.lo)}</b>, <b>${fmt(cur.hi)}</b>] (đã clip vào bbox)</div>`;
+  body += `<div class="calc-line">h &isin; [<b>${fmt(cur.hlo)}</b>, <b>${fmt(cur.hhi)}</b>]  (h = ${axisLabel} − p_${axisLabel})</div>`;
+  if(cur.hasA) body += `<div class="calc-line"><span class="tag">Chứa tiếp điểm ${specialA}</span> &rarr; lấy thẳng biên hộp bao</div>`;
+  else if(cur.hasB) body += `<div class="calc-line"><span class="tag">Chứa tiếp điểm ${specialB}</span> &rarr; lấy thẳng biên hộp bao</div>`;
+  else body += `<div class="calc-line">Không chứa tiếp điểm &rarr; so 2 đầu lát</div>`;
+  body += `<div class="calc-line">d_min = <b>${fmt(cur.dminj)}</b> &nbsp; d_max = <b>${fmt(cur.dmaxj)}</b></div>`;
+  body += `<div class="calc-line">${otherLabel} &isin; [<b>${fmt(cur.r0)}</b>, <b>${fmt(cur.r1)}</b>] &rarr; ${isY?'cột':'hàng'} <b>${cur.cmin}</b>..<b>${cur.cmax}</b> &rarr; <b>${cur.n} tile</b></div>`;
+
+  document.getElementById('step-body').innerHTML = body;
+
+  let running = 0;
+  for(let i=0;i<=state.step;i++) running += res.rows[i].n;
+  document.getElementById('step-running').textContent = `${running} / ${res.Kfastgs} tile`;
+
+  document.getElementById('btn-prev').disabled = state.step<=0;
+  document.getElementById('btn-next').disabled = state.step>=res.rows.length-1;
+}
+
+document.querySelectorAll('input').forEach(el=>{
+  el.addEventListener('input', ()=>{ state.step=0; render(); });
+});
+
+function loadPreset(vals){
+  document.getElementById('S11').value = vals.S11;
+  document.getElementById('S12').value = vals.S12;
+  document.getElementById('S22').value = vals.S22;
+  document.getElementById('px').value = vals.px;
+  document.getElementById('py').value = vals.py;
+  document.getElementById('mult').value = vals.mult;
+  document.getElementById('opac').value = vals.o;
+  state.step = 0;
+  render();
+}
+document.getElementById('preset1').addEventListener('click', ()=>{
+  loadPreset({S11:117,S12:54,S22:36,px:120,py:88,mult:0.5,o:1});
+});
+document.getElementById('preset2').addEventListener('click', ()=>{
+  loadPreset({S11:80,S12:-40,S22:50,px:100,py:70,mult:0.5,o:1});
+});
+document.getElementById('btn-prev').addEventListener('click', ()=>{ state.step=Math.max(0,state.step-1); render(); });
+document.getElementById('btn-next').addEventListener('click', ()=>{ state.step=state.step+1; render(); });
+
+render();
+</script>
+</body>
+</html>

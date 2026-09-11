@@ -110,9 +110,11 @@ a) Tính $R_{\text{tile}}$ theo công thức liên tục của §4.5:
 
 $$R_{\text{tile}}\approx\frac{\pi}{4}\cdot\frac{4t\sqrt{\Sigma'_{11}\Sigma'_{22}}}{36\,\lambda_{\max}}$$
 
+> ⚠️ **Bẫy:** hệ số $\pi/4$ được §4.4 suy ra từ $\dfrac{\pi\,\text{half}_x\text{half}_y}{4\,\text{half}_x\text{half}_y}$ — tức giả định ellipse có **bán trục** đúng bằng $\text{half}_x,\text{half}_y$. Điều đó chỉ đúng khi $\Sigma'_{12}=0$. Trước khi tính, hãy kiểm tra bằng cách lấy diện tích ellipse **trực tiếp** từ dạng conic, rồi sửa lại hệ số.
+
 b) So với kết quả đo ở câu 8c. Chênh lệch theo hướng nào? **Giải thích tại sao** — nêu đúng cơ chế gây ra chênh lệch.
 
-c) Bước lọc ellipse ở câu 7c loại bỏ bao nhiêu phần trăm? So với con số tiệm cận $1-\pi/4\approx21.5\%$. Vì sao khác?
+c) Bước lọc ellipse ở câu 7c loại bỏ bao nhiêu phần trăm? So với con số tiệm cận đúng ở câu 9a. Chênh theo hướng nào, và vì sao?
 
 ### Câu 10 — Quét tham số (§4.3)
 
@@ -146,8 +148,11 @@ d) Câu hỏi khái niệm: ở cấu hình (i), $\texttt{mult}=1.0$ có đưa h
 | Giao đường thẳng | $v_\pm=\dfrac{-Bh\pm\sqrt{\text{disc}\cdot h^2+tk}}{k}+p_v$ | `auxiliary.h:159-174` |
 | | ($k=C$ khi cắt theo $x$; $k=A$ khi cắt theo $y$) | |
 | Biệt thức | $\text{disc}=B^2-AC$, cần $<0$ | `auxiliary.h:305` |
+| Diện tích ellipse | $S=\dfrac{\pi t}{\sqrt{AC-B^2}}=\pi t\sqrt{\det\Sigma'}$ | (toán thuần) |
+| Diện tích hộp | $4t\sqrt{\Sigma'_{11}\Sigma'_{22}}$ | (toán thuần) |
+| Hệ số lọc ellipse | $\dfrac{S_{\text{ellipse}}}{S_{\text{box}}}=\dfrac\pi4\sqrt{1-\rho_{xy}^2}$, $\ \rho_{xy}=\dfrac{\Sigma'_{12}}{\sqrt{\Sigma'_{11}\Sigma'_{22}}}$ | hiệu chỉnh §4.4 |
 
-Hằng số: $\ln 255=5.541264$, $\ln 25.5=3.238679$, $\ln 5.1=1.629241$, $\pi/4=0.785398$.
+Hằng số: $\ln 255=5.541264$, $\ln 25.5=3.238679$, $\ln 5.1=1.629241$, $\pi/4=0.785398$, $\sqrt{1-0.83205^2}=0.554700$.
 
 ---
 ---
@@ -169,7 +174,9 @@ Splat này dẹt tỉ lệ **4:1** — nằm đúng vùng "bình thường sau k
 
 **c)**
 
-$$\frac{\text{hộp vuông}}{\text{ellipse }3\sigma}=\frac{36\,\sigma_{\max}^2}{9\pi\,\sigma_{\max}\sigma_{\min}}=\frac{4}{\pi}\rho=\frac{4}{\pi}\cdot 4=\mathbf{5.093\times}$$
+Đặt $S_{\text{3dgs}}$ = diện tích hộp vuông $3\sigma$, $S_{3\sigma}$ = diện tích ellipse $3\sigma$:
+
+$$\frac{S_{\text{3dgs}}}{S_{3\sigma}}=\frac{36\,\sigma_{\max}^2}{9\pi\,\sigma_{\max}\sigma_{\min}}=\frac{4}{\pi}\rho=\frac{4}{\pi}\cdot 4=\mathbf{5.093\times}$$
 
 Phép thử tỉnh táo: đặt $\rho=1$ → $4/\pi\approx1.273$, đúng bằng tỉ lệ hình vuông trên hình tròn nội tiếp. ✅
 
@@ -186,7 +193,7 @@ $$A=\tfrac{1}{36}=0.0277778,\qquad B=-\tfrac{1}{24}=-0.0416667,\qquad C=\tfrac{1
 
 $$\text{disc}=B^2-AC=\frac{1}{576}-\frac{1}{36}\cdot\frac{13}{144}=\frac{9}{5184}-\frac{13}{5184}=-\frac{4}{5184}=-\frac{1}{1296}$$
 
-$$\text{disc}=-7.716\times10^{-4}<0\quad ✅$$
+$$\text{disc}=-7.716\times10^{-4}<0\quad\checkmark$$
 
 **Chứng minh $\text{disc}=-1/\det\Sigma'$:** với $M$ đối xứng $2\times2$,
 
@@ -211,7 +218,9 @@ Xác nhận: $-1/1296$ ✓. Đây là cách kiểm tra $(A,B,C)$ rẻ nhất —
 
 **c)** Vì `mult` nhân vào $t$, mà $t$ đứng **dưới dấu căn** ở nửa cạnh:
 
-$$\text{half}_x=\sqrt{t\,\Sigma'_{11}}\ \Rightarrow\ \text{cạnh}\propto\sqrt{\texttt{mult}},\qquad \text{diện tích}=4\,\text{half}_x\text{half}_y\propto \texttt{mult}$$
+$$\text{half}_x=\sqrt{t\,\Sigma'_{11}}\ \Rightarrow\ \text{half}\propto\sqrt{\texttt{mult}},\qquad S_{\text{box}}=4\,\text{half}_x\,\text{half}_y\propto \texttt{mult}$$
+
+(cạnh co theo $\sqrt{\texttt{mult}}$, diện tích co theo $\texttt{mult}$)
 
 Cạnh co theo $\sqrt{0.5}=0.707$, diện tích co theo $0.5$. Cách hiểu sai ("nhân 0.5 thẳng vào cạnh") sẽ cho diện tích $0.25$ — sai lệch gấp đôi.
 
@@ -262,7 +271,7 @@ $$2A\,dx+2B\,dy=0\ \Longrightarrow\ dx=-\frac{B}{A}dy$$
 
 Thay $dy=\text{half}_y=14.124$:
 
-$$dx=-\frac{-0.0416667}{0.0277778}\times14.124=1.5\times14.124=\mathbf{21.186}\quad ✅\ =x_{\text{term}}$$
+$$dx=-\frac{-0.0416667}{0.0277778}\times14.124=1.5\times14.124=\mathbf{21.186}=x_{\text{term}}\quad\checkmark$$
 
 Đối xứng, cực đại $dx$ đạt khi $2B\,dx+2C\,dy=0\Rightarrow dy=-\tfrac{B}{C}dx=\tfrac{6}{13}\times25.462=\mathbf{11.752}=y_{\text{term}}$ ✅
 
@@ -315,7 +324,7 @@ $dx_{\max}$ lấy tại hai biên lát:
 
 $dx_{\max}=\max(-0.360,\,-21.186)=-0.360$ ⟹ $x_{\max}=119.640$
 
-$$x\in[94.538,\,119.640]\ \Rightarrow\ \text{cột }\lfloor5.909\rfloor=5\ \text{đến}\ \lfloor7.478\rfloor=7\ \Rightarrow\ \mathbf{3\ tile}$$
+$$x\in[94.538,\,119.640]\ \Rightarrow\ \text{col }\lfloor5.909\rfloor=5\ \to\ \lfloor7.478\rfloor=7\ \Rightarrow\ \mathbf{3\ tile}$$
 
 **Hàng 5** ($y\in[80,96]$, $h\in[-8,+8]$): không chứa tiếp điểm nào ⟹ lấy cả hai biên.
 - $h=-8$: $dx\in[-23.640,\,-0.360]$
@@ -323,7 +332,7 @@ $$x\in[94.538,\,119.640]\ \Rightarrow\ \text{cột }\lfloor5.909\rfloor=5\ \text
 
 $dx\in[-23.640,\,23.640]$ ⟹ $x\in[96.360,\,143.640]$
 
-$$\text{cột }\lfloor6.023\rfloor=6\ \text{đến}\ \lfloor8.978\rfloor=8\ \Rightarrow\ \mathbf{3\ tile}$$
+$$\text{col }\lfloor6.023\rfloor=6\ \to\ \lfloor8.978\rfloor=8\ \Rightarrow\ \mathbf{3\ tile}$$
 
 **Hàng 6** ($y\in[96,112]$, phần hữu hiệu $[96,\,102.124]$):
 
@@ -331,7 +340,7 @@ Tiếp điểm $y=99.752$ **nằm trong** hàng ⟹ $dx_{\max}=+25.462$ ⟹ $x_{
 
 $dx_{\min}$: tại $y=96$ ($h=8$) là $0.360$; tại $y=102.124$ (tiếp tuyến đỉnh) là $+21.186$. ⟹ $dx_{\min}=0.360$ ⟹ $x_{\min}=120.360$
 
-$$x\in[120.360,\,145.462]\ \Rightarrow\ \text{cột }\lfloor7.523\rfloor=7\ \text{đến}\ \lfloor9.091\rfloor=9\ \Rightarrow\ \mathbf{3\ tile}$$
+$$x\in[120.360,\,145.462]\ \Rightarrow\ \text{col }\lfloor7.523\rfloor=7\ \to\ \lfloor9.091\rfloor=9\ \Rightarrow\ \mathbf{3\ tile}$$
 
 **c)**
 
@@ -379,12 +388,32 @@ Chuỗi ba con số đáng nhớ: $25 \to 15 \to 9$.
 **a)**
 
 $$\sqrt{\Sigma'_{11}\Sigma'_{22}}=\sqrt{117\times36}=\sqrt{4212}=64.900$$
-$$4t\sqrt{\Sigma'_{11}\Sigma'_{22}}=4\times5.5413\times64.900=1438.6\quad[\text{diện tích hộp, px}^2]$$
-$$36\,\lambda_{\max}=36\times144=5184\quad[\text{diện tích hộp vuông, px}^2]$$
+$$S_{\text{box}}=4t\sqrt{\Sigma'_{11}\Sigma'_{22}}=4\times5.5413\times64.900=1438.5\ \text{px}^2$$
+$$S_{\text{3dgs}}=36\,\lambda_{\max}=36\times144=5184\ \text{px}^2$$
 
-$$R_{\text{tile}}\approx\frac{\pi}{4}\times\frac{1438.6}{5184}=0.785398\times0.27753=\mathbf{0.2180}$$
+($S_{\text{box}}$ = diện tích hộp compact, $S_{\text{3dgs}}$ = diện tích hộp vuông 3DGS)
 
-**b)** Đo được $0.360$, tiệm cận cho $0.218$ — **giá trị đo cao hơn 65%**.
+**Sập bẫy $\pi/4$.** Diện tích ellipse $\Delta^\top M\Delta=t$ **không** bằng $\pi\,\text{half}_x\text{half}_y$. Tính trực tiếp từ conic:
+
+$$S_{\text{ellipse}}=\frac{\pi t}{\sqrt{AC-B^2}}=\pi t\sqrt{\det\Sigma'}=\pi\times5.5413\times36=\mathbf{626.7}\ \text{px}^2$$
+
+trong khi hộp bao là $1438.5$ px². Vậy tỉ lệ ellipse/hộp là
+
+$$\frac{\pi t\sqrt{\det}}{4t\sqrt{\Sigma'_{11}\Sigma'_{22}}}=\frac{\pi}{4}\sqrt{1-\rho_{xy}^2},\qquad \rho_{xy}=\frac{\Sigma'_{12}}{\sqrt{\Sigma'_{11}\Sigma'_{22}}}=\frac{54}{64.900}=0.83205$$
+
+$$\frac{\pi}{4}\sqrt{1-0.83205^2}=0.785398\times0.55470=\mathbf{0.43566}$$
+
+Hệ số $\pi/4=0.785$ của §4.4 chỉ là trường hợp riêng $\rho_{xy}=0$ (ellipse không nghiêng). Ellipse nghiêng **luôn** chiếm tỉ lệ nhỏ hơn trong hộp bao trục của nó — càng nghiêng càng nhỏ. Công thức đúng:
+
+$$\boxed{\;R_{\text{tile}}\approx\frac{\pi}{4}\sqrt{1-\rho_{xy}^2}\cdot\frac{4t\sqrt{\Sigma'_{11}\Sigma'_{22}}}{36\,\lambda_{\max}}=\frac{\pi t\sqrt{\det\Sigma'}}{36\,\lambda_{\max}}\;}$$
+
+$$R_{\text{tile}}\approx 0.43566\times\frac{1438.5}{5184}=0.43566\times0.27749=\mathbf{0.1209}$$
+
+(kiểm tra thẳng: $626.7/5184=0.1209$ ✓ — dạng gọn $\pi t\sqrt{\det}/(36\lambda_{\max})$ không cần đến $\rho_{xy}$ chút nào)
+
+Nếu dùng $\pi/4$ như §4.5 viết, ta được $0.785398\times0.27749=0.2180$ — **cao gấp 1.80 lần giá trị đúng**. Sai số này chính bằng $1/\sqrt{1-\rho_{xy}^2}$.
+
+**b)** Đo được $0.360$, tiệm cận cho $0.1209$ — **giá trị đo cao gấp 2.98 lần**.
 
 Nguyên nhân: **lượng tử hoá lưới tile**, cụ thể là số hạng "$+1$". Một splat phủ $W$ px theo trục $x$ chạm khoảng $W/16+1$ tile, chứ không phải $W/16$. Hằng số $+1$ đó **không co lại** khi splat nhỏ đi, nên nó chiếm tỉ trọng lớn hơn ở hộp nhỏ:
 
@@ -398,11 +427,17 @@ Theo trục $x$, hộp fastgs hẹp hơn 29% nhưng **vẫn chạm đúng 5 cộ
 
 Công thức tiệm cận chỉ đúng trong **giới hạn splat lớn** (nhiều tile), khi $+1$ trở nên không đáng kể. Splat trong bài ($5\times3$ tile) còn rất xa giới hạn đó.
 
-**c)** Đo được: loại $6/15=40\%$. Tiệm cận: $1-\pi/4=21.5\%$.
+**c)** Đo được: loại $6/15=40\%$. Tiệm cận đúng: $1-0.43566=\mathbf{56.4\%}$ (không phải $1-\pi/4=21.5\%$).
 
-Cùng một nguyên nhân, nhưng chiều tác động ngược: tỉ số $\pi/4$ giả định ellipse nội tiếp hộp **liên tục**. Ở quy mô $5\times3$ tile, mỗi tile là một khối 16px thô — bốn góc hộp bị cắt trọn vẹn thành từng tile nguyên, nên tỉ lệ loại nhảy vọt. Với splat 20×20 tile, con số sẽ hội tụ về gần $21.5\%$.
+**Đo được loại ÍT hơn tiệm cận** — cùng chiều và cùng cơ chế với câu 9b, không phải hai câu chuyện ngược nhau:
 
-> 📌 Điều cần rút ra từ câu 9: **cả hai con số $0.218$ và $0.360$ đều không sai** — chúng đo hai thứ khác nhau. $0.218$ là tỉ lệ **diện tích**, $0.360$ là tỉ lệ **số tile**. Kernel trả tiền theo tile, nên $0.360$ mới là con số đi vào mô hình chi phí ở Phần II.
+`processTiles` không đếm tập tile thật thoả $\min_{\Delta\in T}\Delta^\top M\Delta\le t$. Nó lấy **bao lồi theo hai biên lát** rồi làm tròn **ra ngoài** tới biên tile (§4.4, `auxiliary.h:230-267`). Cả hai bước đều chỉ có thể **giữ thêm** tile, không bao giờ bớt. Ở quy mô $5\times3$ tile, mỗi lần làm tròn ăn trọn một khối 16px, nên phần "thừa" chiếm tỉ trọng lớn — kernel giữ lại 9 tile thay vì $\approx 15\times0.436=6.5$ tile mà tỉ lệ diện tích dự báo.
+
+Với splat $20\times20$ tile, phần thừa co lại theo chu vi/diện tích và con số sẽ hội tụ về gần $56.4\%$.
+
+> 📌 Điều cần rút ra từ câu 9: **cả hai con số $0.1209$ và $0.360$ đều không sai** — chúng đo hai thứ khác nhau. $0.1209$ là tỉ lệ **diện tích**, $0.360$ là tỉ lệ **số tile**. Kernel trả tiền theo tile, nên $0.360$ mới là con số đi vào mô hình chi phí ở Phần II.
+>
+> Và bài học thứ hai: **mọi sai lệch ở câu 9 đều cùng một dấu.** Lượng tử hoá lưới tile chỉ làm $K$ **tăng** so với dự báo diện tích. Nếu bạn tính ra một chỗ lệch ngược dấu, gần như chắc chắn hằng số diện tích đã sai — đúng như trường hợp $\pi/4$ ở đây.
 
 ---
 
@@ -487,7 +522,10 @@ Trong codebase này **không có đường quay lại** cách dựng hộp của
 | Tile — chỉ hộp | $K_{\text{box}}$ | $15$ |
 | Tile — fastgs | $K_{\text{fastgs}}$ | $\mathbf{9}$ |
 | **Tỉ số** | $R_{\text{tile}}$ | $\mathbf{0.360}$ |
-| Tiệm cận (§4.5) | $R_{\text{tile}}^{\text{lim}}$ | $0.218$ |
+| Tương quan chuẩn hoá | $\rho_{xy}$ | $0.832$ |
+| Hệ số lọc ellipse (đúng) | $\tfrac\pi4\sqrt{1-\rho_{xy}^2}$ | $0.4357$ |
+| Tiệm cận (§4.5, đã hiệu chỉnh) | $R_{\text{tile}}^{\text{lim}}$ | $\mathbf{0.1209}$ |
+| Tiệm cận nếu dùng $\pi/4$ (sai) | | $0.218$ |
 
 Ba bài học chính:
 
