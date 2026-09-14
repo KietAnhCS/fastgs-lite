@@ -1,3 +1,184 @@
+[← Mục lục](00-muc-luc.md) · Chương 11/15
+
+# Chương 11 — Gradient Flow & Backpropagation
+
+> Nguồn: `DOCS/Report/06-gradient-flow.md`, `DOCS/Report/test/06-test.md`
+
+## 11.1 Lý thuyết
+
+# Chương 6 — Gradient Flow
+
+> Mũi tên xanh trong sơ đồ: từ Image ngược qua Rasterizer, Projection, về 3D Gaussians. Gồm ba việc: (1) backward qua blend, (2) backward qua projection về 59 tham số, (3) cập nhật tham số bằng Adam.
+> **FastGS-lite thay đổi ở (1)** — thêm gradient trị tuyệt đối — **và ở (3)** — đòn bẩy 3: Adam thưa dần, lr SH riêng.
+> Code: `backward.cu`, `scene/gaussian_model.py:190-209` (`optimizer_step`), `:167-181` (`training_setup`), `:494-495` (`add_densification_stats`).
+
+## 6.1 — Backward qua blend
+
+Fork này (kế thừa Taming-3DGS) duyệt **theo chiều forward**, mỗi warp một cửa sổ 32 Gaussian, dùng checkpoint `sampled_T`/`sampled_ar` để khôi phục trạng thái. Nên công thức viết bằng **hiệu hai tiền tố** thay vì tổng đuôi.
+
+Đặt $C^{\le n}=\sum_{k\le n}c_k\alpha_kT_k$, $C^{\text{tot}}=C^{\le\text{end}}$:
+
+$$
+\boxed{\ \frac{\partial C_{\text{ch}}}{\partial\alpha_n}
+=c_{n,\text{ch}}T_n-\frac{C^{\text{tot}}_{\text{ch}}-C^{\le n}_{\text{ch}}}{1-\alpha_n}-\frac{T_{\text{final}}\,C_{\text{bg},\text{ch}}}{1-\alpha_n}\ }
+$$
+
+Số hạng thứ ba hay bị quên: background cũng phụ thuộc $\alpha_n$ qua $T_{\text{final}}$.
+
+Chuỗi còn lại:
+
+$$
+\frac{\partial\mathcal L}{\partial c_n}=\alpha_nT_n\frac{\partial\mathcal L}{\partial C},\qquad
+\frac{\partial\mathcal L}{\partial\alpha_n}=G_n\frac{\partial\mathcal L}{\partial\alpha_n(x)},\qquad
+\frac{\partial\mathcal L}{\partial G_n}=\alpha_n\frac{\partial\mathcal L}{\partial\alpha_n(x)}
+$$
+
+$$
+\frac{\partial G}{\partial\Delta_u}=-G\,(A\Delta_u+B\Delta_v),\qquad
+\frac{\partial G}{\partial\Delta_v}=-G\,(C\Delta_v+B\Delta_u)
+$$
+
+$$
+\frac{\partial\mathcal L}{\partial\mu'_u}=\frac{\partial\mathcal L}{\partial G}\frac{\partial G}{\partial\Delta_u}\cdot\frac W2,\qquad
+\frac{\partial\mathcal L}{\partial\mu'_v}=\frac{\partial\mathcal L}{\partial G}\frac{\partial G}{\partial\Delta_v}\cdot\frac H2
+$$
+
+$$
+\frac{\partial\mathcal L}{\partial A}=-\tfrac12G\Delta_u^2\frac{\partial\mathcal L}{\partial G},\quad
+\frac{\partial\mathcal L}{\partial B}=-\tfrac12G\Delta_u\Delta_v\frac{\partial\mathcal L}{\partial G},\quad
+\frac{\partial\mathcal L}{\partial C}=-\tfrac12G\Delta_v^2\frac{\partial\mathcal L}{\partial G}
+$$
+
+### FastGS: gradient 4 cột (`backward.cu:589-597`)
+
+Cộng dồn trong register qua toàn bộ pixel $x$ của tile, rồi `atomicAdd` một lần:
+
+$$
+g_n=\sum_x\frac{\partial\mathcal L}{\partial\mu'_n}\Big|_x\qquad(\text{cột 0–1, có dấu — như 3DGS})
+$$
+
+$$
+\boxed{\ g^{\text{abs}}_n=\sum_x\Bigl|\frac{\partial\mathcal L}{\partial\mu'_n}\Big|_x\Bigr|\ }\qquad(\text{cột 2–3, trị tuyệt đối — mới})
+$$
+
+Vì sao cần: Gaussian phủ biên vật thể nhận gradient đẩy sang trái ở nửa trái footprint và sang phải ở nửa phải — **trong cùng một ảnh**. Tổng có dấu triệt tiêu về $\approx0$, 3DGS gốc không thấy nó cần split. Bất đẳng thức, đúng tầng pixel:
+
+$$
+\Bigl\lVert\sum_xg_x\Bigr\rVert\le\sum_x\lVert g_x\rVert
+$$
+
+![Gradient tại biên vật thể](../Report/assets/ch6_edge_gradient.png)
+
+*Trục là toạ độ pixel u, v. Đường thẳng đứng đen là biên vật thể; mũi tên đỏ là $\partial\mathcal L/\partial\mu'$ tại các Gaussian hai bên biên — nửa trái đẩy trái, nửa phải đẩy phải. Cộng có dấu qua toàn ảnh gần như triệt tiêu; cộng trị tuyệt đối (độ dài mũi tên) thì không, nên $g^{abs}$ giữ được tín hiệu "cần split" ở biên.*
+
+Đây là lý do `screenspace_points` có 4 cột thay vì 3.
+
+## 6.2 — Backward qua Projection về 59 tham số
+
+Chuỗi $\partial\mathcal L/\partial M\to\partial\mathcal L/\partial\Sigma'\to\partial\mathcal L/\partial\Sigma\to(\partial\mathcal L/\partial q,\ \partial\mathcal L/\partial s)$; đồng thời $\partial\mathcal L/\partial\Sigma'\to\partial\mathcal L/\partial J\to\partial\mathcal L/\partial t$ (có cổng clamp: gradient bằng 0 nếu $t_x/t_z$ đã bị clip); và $\partial\mathcal L/\partial c\to\partial\mathcal L/\partial k_{lm}$ (chặn ở kênh bị `clamped`), $\to\partial\mathcal L/\partial\vec d\to\partial\mathcal L/\partial\mu$.
+
+$\mu$ nhận gradient từ **ba** nguồn: qua $\mu'$ (chiếu tâm), qua $J$ (chiếu covariance), qua $\vec d$ (SH). Chuẩn hoá quaternion do autograd PyTorch lo.
+
+## 6.3 — Tích luỹ thống kê cho Adaptive Density Control
+
+`add_densification_stats`, chỉ với Gaussian nhìn thấy ($\text{radii}>0$):
+
+$$
+\text{accum}_i\mathrel{+}=\lVert g_i\rVert_2,\qquad
+\text{accum}^{\text{abs}}_i\mathrel{+}=\lVert g^{\text{abs}}_i\rVert_2,\qquad
+\text{denom}_i\mathrel{+}=1
+$$
+
+Lấy `norm` **trước** khi cộng qua iteration — sau đó mọi số đều không âm, không còn gì triệt tiêu. Chương 7 dùng $\bar g_i=\text{accum}_i/\text{denom}_i$.
+
+## 6.4 — Cập nhật tham số: Adam — **FastGS thay nhịp gọi**
+
+### Update rule (giữ nguyên)
+
+$$
+m\leftarrow\beta_1m+(1-\beta_1)g,\qquad v\leftarrow\beta_2v+(1-\beta_2)g^2
+$$
+
+$$
+\theta\leftarrow\theta-\eta_\theta\frac{\hat m}{\sqrt{\hat v}+\epsilon},\qquad\epsilon=10^{-15}
+$$
+
+![Quỹ đạo Adam trên mặt loss đồ chơi](../Report/assets/ch6_adam_trajectory.png)
+
+*Trục x, y là hai chiều của tham số đồ chơi $\theta_1,\theta_2$. Đường viền xám là các mức đường đồng mức của hàm loss; đường đỏ là quỹ đạo $\theta$ qua từng bước Adam, từ chấm xanh $\theta_0$ hội tụ về sao đen — quỹ đạo uốn cong theo trục dốc hơn, đặc trưng của chuẩn hoá theo $\sqrt{\hat v}$.*
+
+### Hai optimizer, sáu nhóm learning rate
+
+| Nhóm | Optimizer | $\eta$ mặc định | Không gian |
+|---|---|---|---|
+| `xyz` | `optimizer` | $1.6\times10^{-4}\cdot\text{extent}$, decay xuống $1.6\times10^{-6}\cdot\text{extent}$ | world |
+| `f_dc` | `optimizer` | `lowfeature_lr` $=0.0025$ | SH bậc 0 |
+| `opacity` | `optimizer` | $0.025$ | logit |
+| `scaling` | `optimizer` | $0.005$ | log |
+| `rotation` | `optimizer` | $0.001$ | quaternion thô |
+| `f_rest` | `shoptimizer` | $\boxed{\texttt{highfeature\_lr}/20}=0.005/20=0.00025$ | SH bậc 1–3 |
+
+⚠️ Giá trị `--highfeature_lr` bị **chia 20** trước khi tới Adam. Ở mặc định, SH bậc cao học với lr nhỏ hơn 10× SH bậc thấp. Preset 0.02 cũng chỉ ra 0.001.
+
+Decay của `xyz`:
+
+$$
+\eta_{xyz}(t)=\text{extent}\cdot\exp\Bigl((1-\tfrac tT)\ln\eta_{\text{init}}+\tfrac tT\ln\eta_{\text{final}}\Bigr),\qquad T=\texttt{position\_lr\_max\_steps}=30000
+$$
+
+![Suy giảm learning rate vị trí](../Report/assets/ch6_lr_decay.png)
+
+*Trục x là vòng lặp $t$ (0→30000), trục y là $\eta_{xyz}(t)$ vẽ theo thang log. Đường cong gần như tuyến tính trên thang log — đúng bản chất nội suy log-linear — giảm khoảng 100× từ đầu tới cuối.*
+
+### Lịch step thưa dần (`optimizer_step`)
+
+$$
+\mathbb 1_{\text{main}}(t)=\begin{cases}
+1&t\le15000\\
+[t\bmod32=0]&15000<t\le20000\\
+[t\bmod64=0]&t>20000
+\end{cases}
+\qquad
+\mathbb 1_{\text{SH}}(t)=\begin{cases}
+[t\bmod16=0]&t\le15000\\
+\mathbb 1_{\text{main}}(t)&t>15000
+\end{cases}
+$$
+
+![Lịch step thưa dần: main vs SH](../Report/assets/ch6_step_schedule.png)
+
+*Trên: trục x là $t$, trục y là số bước step luỹ kế — đường xanh (main) gãy khúc thoải dần tại $t=15000,20000$; đường đỏ (SH) tăng chậm hơn rồi nhập cùng lịch main sau 15000. Dưới: mỗi vạch là một thời điểm step thực sự trong 0–20000 — hàng SH thưa hơn hẳn hàng main, đúng tỉ lệ 1/16 so với 1/1.*
+
+Đếm chính xác trên 30 000 vòng (vòng cuối không step vì `if iteration < opt.iterations`):
+
+| | `optimizer` | `shoptimizer` | tổng |
+|---|---|---|---|
+| 3DGS gốc | 29 999 | 29 999 | 59 998 |
+| FastGS-lite | 15 313 | 1 250 | 16 563 |
+| tỉ số | 0.510 | 0.042 | **0.276** |
+
+(Khoảng $(15000,20000]$ có **157** bội của 32 vì $20000=32\times625$ — đếm nhẩm dễ hụt đúng bước này.)
+
+### Gradient tích luỹ giữa hai lần step
+
+`zero_grad` chỉ gọi khi step, nên gradient đưa vào Adam là
+
+$$
+g^{(t)}_{\text{eff}}=\sum_{t'=t_{\text{prev}}+1}^{t}\nabla\mathcal L^{(t')}
+$$
+
+Nhưng Adam chuẩn hoá theo $\sqrt{\hat v}$: cộng 64 gradient rồi step một lần cho bước đi cỡ $\approx\eta$, **không** bằng 64 bước nhỏ. Đó là lý do giai đoạn 15k–30k gần như miễn phí về thời gian và cũng học được rất ít. Hạ `--iterations` xuống 15k tiết kiệm rất ít nhưng mất `final_prune_fastgs` (chương 7); sàn hợp lý là 20k, và phải đồng bộ `position_lr_max_steps`, `densify_until_iter` cùng hai ngưỡng cứng 15000/20000 trong `optimizer_step`.
+
+### Tách lr SH ≠ đòn bẩy tốc độ
+
+Lr là số nhân vô hướng, không đổi số phép tính. Thứ tăng tốc là nhịp $1/16$. Cộng cả hai, trong 0–15k `f_rest` nhận lr nhỏ hơn 10× và số bước ít hơn 16× so với `f_dc` — đó là lý do vệt specular hội tụ chậm.
+
+## 6.5 — Đầu ra của khối
+
+Mũi tên xanh kết thúc ở **3D Gaussians**: $\theta_i\leftarrow\theta_i-\Delta\theta_i$ khi $\mathbb 1(t)=1$, và ba mảng thống kê $(\text{accum},\text{accum}^{\text{abs}},\text{denom})$ sẵn sàng cho **Adaptive Density Control** (chương 7).
+
+## 11.2 Kiểm định số — Chương 6, Gradient
+
 # Test số chương 6 — Gradient Flow
 
 > Tính trên cảnh đồ chơi ở `00-scene.md` (4 điểm SfM, 3 camera, ảnh $48\times32$, $f_x=f_y=40$).
@@ -49,7 +230,7 @@ $\mathcal L=\text{L1}$ trung bình: $\mathcal L^{(1)}=0.2593$ (camera 1); $\part
 
 ### (a) Tại một pixel có 4 Gaussian đóng góp
 
-![Ba số hạng của ∂C/∂α_n](figures/ch06_dC_dalpha.png)
+![Ba số hạng của ∂C/∂α_n](../Report/test/figures/ch06_dC_dalpha.png)
 
 *Hình: ba số hạng của công thức hiệu hai tiền tố tại pixel (23,15), kênh R, cho 4 Gaussian — giá trị giải tích trùng khít sai phân hữu hạn.*
 
@@ -123,11 +304,11 @@ Gradient tâm tại pixel (nhân $W/2=24$, $H/2=16$ như `ddelx_dx`): G1: $(5.04
 
 ### (c) FastGS: gradient 4 cột (`backward.cu:583-597`), cộng dồn qua **toàn bộ** 1536 pixel, camera 1
 
-![Trường gradient per-pixel của μ'_1 (G1)](figures/ch06_grad_field.png)
+![Trường gradient per-pixel của μ'_1 (G1)](../Report/test/figures/ch06_grad_field.png)
 
 *Hình: quiver cho thấy nửa trái footprint của G1 kéo gradient sang trái, nửa phải kéo sang phải — tổng có dấu gần triệt tiêu (‖g‖=4.83e−4) trong khi tổng trị tuyệt đối vẫn lớn (‖g_abs‖=3.71e−2, gấp 77 lần); đây là lý do FastGS cần cột "abs".*
 
-![Gradient 4 cột: có dấu vs trị tuyệt đối](figures/ch06_4cols.png)
+![Gradient 4 cột: có dấu vs trị tuyệt đối](../Report/test/figures/ch06_4cols.png)
 
 *Hình: so sánh ‖g‖ và ‖g_abs‖ cho cả 4 Gaussian (trục log) với hai ngưỡng τ_grad và τ_abs; cả 4 Gaussian đều vượt cả hai ngưỡng sau khi tích luỹ qua 3 camera.*
 
@@ -160,7 +341,7 @@ Toàn bộ chuỗi backward (3 số hạng $\alpha$ → $G$ → $d$ → $\mu'_{\
 
 ## 6.2 — Backward qua projection
 
-![Kiểm chứng giải tích vs sai phân hữu hạn](figures/ch06_fd_check.png)
+![Kiểm chứng giải tích vs sai phân hữu hạn](../Report/test/figures/ch06_fd_check.png)
 
 *Hình: mọi đại lượng đã kiểm chứng (∂C/∂α, ∂G/∂Δ, ∂L/∂A,B,C, 8 thành phần gradient) nằm khít trên đường y=x — sai số tương đối tối đa dưới 1e−7.*
 
@@ -251,7 +432,7 @@ $$\eta_{xyz}(t)=\exp\bigl((1-\tfrac tT)\ln\eta_{\text{init}}+\tfrac tT\ln\eta_{\
 
 ### (d) $g_{\text{eff}}$: cộng 64 gradient rồi 1 step vs 64 step nhỏ
 
-![Adam bằng số và decay learning rate](figures/ch06_adam.png)
+![Adam bằng số và decay learning rate](../Report/test/figures/ch06_adam.png)
 
 *Hình: (a) sau 3 bước Adam với gradient lặp lại, m̂/(√v̂+ε) → 1.000 nên Δθ ≈ η cho cả 6 nhóm lr; (b) decay η_xyz(t) trên thang log; (c) cộng 64 gradient rồi step 1 lần cho bước đi nhỏ hơn nhiều so với 64 step nhỏ liên tiếp.*
 
@@ -267,7 +448,7 @@ Tỉ số $63.6\times$: gộp 64 gradient rồi step một lần chỉ đi đư�
 
 ## 6.5 — Đầu ra của khối
 
-![Lịch step thưa dần của optimizer_step](figures/ch06_schedule.png)
+![Lịch step thưa dần của optimizer_step](../Report/test/figures/ch06_schedule.png)
 
 *Hình: tần suất step của optimizer (xyz, f_dc, opacity, scaling, rotation) và shoptimizer (f_rest) theo t = 1..29999 — tổng 16563 so với 59998 của 3DGS gốc, tỉ số R_adam = 0.276.*
 
@@ -284,3 +465,23 @@ Tỉ số $63.6\times$: gộp 64 gradient rồi step một lần chỉ đi đư�
 | 4 | $1.681544\times10^{-2}$ | $6.913455\times10^{-2}$ | 3 | $5.605145\times10^{-3}$ | $2.304485\times10^{-2}$ | True | True |
 
 Kèm: $\eta_{xyz}(t)$ bảng 6.4(b), `extent` $=1.690$, và bước Adam $\lvert\Delta\theta\rvert\approx\eta$ cho mọi nhóm. Với chương 7: cả 4 Gaussian là ứng viên densify; theo chương 1, $\max s_i\in[0.8505,1.115]\gt \delta\cdot\text{extent}=0.00169$ nên đều đi nhánh **split**.
+
+## Bài tập (Exercise)
+
+**Bài tập 11.1.** Công thức $\partial C_{\text{ch}}/\partial\alpha_n$ ở mục 6.1 có ba số hạng: $c_{n,\text{ch}}T_n$, $-(C^{\text{tot}}_{\text{ch}}-C^{\le n}_{\text{ch}})/(1-\alpha_n)$, và $-T_{\text{final}}C_{\text{bg,ch}}/(1-\alpha_n)$. Giải thích bằng lời tại sao số hạng thứ ba tồn tại — nghĩa là vì sao nền (background) lại phụ thuộc vào $\alpha_n$ của một Gaussian $n$ bất kỳ nằm trước nó trong thứ tự depth. Dựa vào bảng ở mục 6.1(a) của phần kiểm định số (pixel $(23,15)$, $T_{\text{final}}=0.6894$), hãy nêu vì sao số hạng này "lớn nhất ở mọi $n$" trong ví dụ đó, và điều gì sẽ xảy ra với cảnh có $T_{\text{final}}\to0$ (ví dụ nhiều Gaussian mờ đục hơn).
+
+**Bài tập 11.2.** Dùng đúng bảng ở mục 6.1(a) (4 Gaussian tại pixel $(23,15)$, thứ tự depth G1, G4, G2, G3), tính tay $\partial C_R/\partial\alpha_1$ (kênh R, Gaussian G1) từ ba số hạng đã cho: $(1)=(0.8,0.2,0.2)$, $(2)=(-0.06338,-0.1155,-0.1348)$, $(3)=-0.7657$. So sánh với giá trị $-0.02909$ trong bảng kết quả. Sau đó bỏ số hạng $(3)$ đi và tính lại — xác nhận kết quả đổi dấu thành $+0.737$ như văn bản đã nêu, và giải thích ý nghĩa vật lý của sự đổi dấu này (mô hình sẽ học sai hướng nếu quên số hạng nền).
+
+**Bài tập 11.3.** Mục 6.1 giải thích vì sao `screenspace_points` cần 4 cột thay vì 3 (cột có dấu và cột trị tuyệt đối). Dựa trên bất đẳng thức $\lVert\sum_x g_x\rVert\le\sum_x\lVert g_x\rVert$ và số liệu Gaussian 1 ở mục 6.1(c) ($\lVert g\rVert=4.830\times10^{-4}$, $\lVert g^{\text{abs}}\rVert=3.705\times10^{-2}$, tỉ số $76.7\times$): giải thích tại sao Gaussian nằm gần tâm ảnh (footprint đối xứng qua biên vật thể) có tỉ số $\lVert g^{\text{abs}}\rVert/\lVert g\rVert$ lớn hơn nhiều so với Gaussian 4 (tỉ số chỉ $10.7$). Điều này gợi ý gì về việc dùng $g$ có dấu làm tiêu chí densify duy nhất (như 3DGS gốc)?
+
+**Bài tập 11.4.** Trace code: đọc đoạn văn bản ở mục "Phát hiện khi đối chiếu code" (cuối mục 6.1(b)). Giải thích vì sao FD của $\partial\mathcal L/\partial B$ lớn gấp đúng 2 lần giá trị lưu trong `backward.cu:594`, và vì sao đây **không phải là lỗi**, bằng cách nêu vai trò của `backward.cu:212-214` trong `computeCov2DCUDA`. Nếu một sinh viên chỉ đọc công thức $-\tfrac12G\Delta_u\Delta_v$ trong `06-gradient-flow.md` mà không đọc code, họ có thể mắc lỗi gì khi tự cài đặt lại kernel backward?
+
+**Bài tập 11.5.** Chương 6.4(c) so sánh "cộng 64 gradient rồi step 1 lần" với "64 step nhỏ liên tiếp", cho kết quả $\Delta\theta=-2.704\times10^{-4}$ (tức $-1.000\eta$) so với $-1.720\times10^{-2}$ (tức $-63.60\eta$). Giải thích bằng công thức Adam ($m\leftarrow\beta_1m+(1-\beta_1)g$, $v\leftarrow\beta_2v+(1-\beta_2)g^2$, $\theta\leftarrow\theta-\eta\hat m/(\sqrt{\hat v}+\epsilon)$) tại sao gộp gradient rồi step một lần luôn cho bước đi cỡ $\approx\eta$ bất kể độ lớn $\sum g$ — miễn $\lvert g\rvert$ đồng dấu và đủ lớn so với $\epsilon=10^{-15}$. Từ đó suy luận: nếu FastGS-lite hạ `--iterations` xuống 15000 (bỏ hẳn giai đoạn thưa dần 15k–30k), điều gì sẽ mất đi ngoài thời gian huấn luyện (gợi ý: đọc lại đoạn về `final_prune_fastgs` ở cuối mục 6.4).
+
+**Bài tập 11.6.** Đếm chính xác số lần step trong bảng mục 6.4 (`optimizer_step`, `gaussian_model.py:190-209`): với lịch $\mathbb 1_{\text{main}}(t)$ và $\mathbb 1_{\text{SH}}(t)$ đã cho, hãy tự đếm số bội của 64 trong khoảng $(20000,29999]$ và xác nhận ra con số 156 đã nêu trong bảng. Sau đó giải thích bằng lời tại sao khoảng $(15000,20000]$ có đúng 157 bội của 32 (không phải 156 hay 158) — chú ý biên $20000=32\times625$ và $15000/32=468.75$.
+
+**Bài tập 11.7.** So sánh sáu nhóm learning rate ở bảng mục 6.4: `xyz`, `f_dc`, `opacity`, `scaling`, `rotation` dùng `optimizer`, còn `f_rest` dùng `shoptimizer` riêng với lr $=\texttt{highfeature\_lr}/20=0.00025$. Dựa vào mục "Tách lr SH ≠ đòn bẩy tốc độ", giải thích vì sao bản thân giá trị lr nhỏ hơn **không** làm giảm chi phí tính toán, trong khi nhịp step thưa ($1/16$ trong giai đoạn $t\le15000$) mới là thứ giảm chi phí. Kết hợp cả hai yếu tố (lr nhỏ hơn 10× và số bước ít hơn 16×), hãy giải thích hiện tượng "vệt specular hội tụ chậm" được nhắc ở cuối mục 6.4.
+
+---
+
+[← Chương 10](10-anh-den-loss-metrics.md) | [Mục lục](00-muc-luc.md) | [Chương 12 →](12-adaptive-density-control.md)

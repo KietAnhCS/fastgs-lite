@@ -1,3 +1,7 @@
+[← Mục lục](00-muc-luc.md) · Chương 2/15
+
+> Nguồn: `DOCS/DIGITAL-TWIN-GS-PIPELINE-1.md` (toàn văn, §1–§18)
+
 # DIGITAL TWIN GS PIPELINE (1/3) — Từ câu lệnh tới dữ liệu sẵn sàng
 
 > **Tài liệu tham chiếu kỹ thuật đầy đủ cho codebase fastgs-lite hiện hành.**
@@ -1073,3 +1077,23 @@ self.xyz_scheduler_args = get_expon_lr_func(
 - `iteration > 20000`: cả hai chỉ step mỗi 64 iteration.
 
 Đây là cơ chế fastgs-lite thay thế cho sparse Adam để tăng tốc (comment trong mã nguồn: `"An optimization schdeuler. The goal is similar to the sparse Adam of taming 3dgs."`, `:226`) — càng về cuối quá trình train, gradient được tích luỹ (qua `loss.backward()` mỗi iteration vẫn chạy bình thường, chỉ có bước `optimizer.step()` là bị giãn ra) rồi mới áp dụng, giảm số lần cập nhật tham số thật sự để tiết kiệm thời gian mà (theo giả thuyết thiết kế) không ảnh hưởng nhiều tới chất lượng ở giai đoạn hội tụ.
+
+## Bài tập (Exercise)
+
+**Bài tập 2.1.** Giải thích cơ chế "mẹo shorthand bằng tiền tố `_`" của `ParamGroup.__init__` (`arguments/__init__.py:19-38`). Vì sao thuộc tính `_source_path` sinh ra cờ `--source_path` với shorthand `-s`, trong khi thuộc tính `eval` (không có `_` ở đầu) không có shorthand nào? Kiểu dữ liệu của mỗi cờ CLI được xác định như thế nào (nêu rõ vì sao nhánh `bool` không cho phép `--no-xxx`)?
+
+**Bài tập 2.2.** So sánh cách `train.py::__main__` và `pipeline.trainer.build_args` cùng dựng ra ba `GroupParams` (`ModelParams`, `OptimizationParams`, `PipelineParams`) nhưng theo hai con đường khác nhau. Trích ra ít nhất 3 khác biệt cụ thể giữa hai đường (dựa vào bảng so sánh ở mục 1.3), kèm số dòng/hàm liên quan.
+
+**Bài tập 2.3.** Hai cờ `--test_iterations` và `--checkpoint_iterations` được mô tả là gần như "cờ chết" trên đường CLI. Giải thích cụ thể vì sao mỗi cờ trở nên vô tác dụng (một cờ do dòng gọi bị comment, cờ còn lại do không được đọc ở đâu trong thân hàm). Việc `--start_checkpoint` vẫn "hoạt động" trong khi không có cơ chế nào tạo ra checkpoint đó nói lên điều gì về tính nhất quán của `train.py` hiện tại?
+
+**Bài tập 2.4.** Trace giá trị `highfeature_lr` qua ba tầng: (a) giá trị mặc định khai báo trong `OptimizationParams` (`arguments/__init__.py`, mục 8), (b) giá trị override trong `Config.train_extra_args` của pipeline (mục 9, bảng ánh xạ), và (c) công thức thực sự gán vào optimizer tại `scene/gaussian_model.py:174` (`training_args.highfeature_lr / 20.0`). Với giá trị override `0.02` mà `train_extra_args` mặc định đặt, LR thật sự áp dụng cho nhóm tham số `f_rest` là bao nhiêu?
+
+**Bài tập 2.5.** Với `llffhold=8` (mặc định) và `--eval` được bật, hãy mô tả quy tắc chia train/test theo chỉ số `idx % llffhold` (§15). Nếu một scene có đúng 24 ảnh (đã sort theo `image_name`), hãy liệt kê chỉ số (0-based) của các ảnh rơi vào tập test, và cho biết tổng số ảnh train/test tương ứng. Điều gì xảy ra nếu ai đó cố ý truyền `--llffhold 0` để "tắt hold-out" — kết quả thực sự nhận được là gì (xem cảnh báo cuối §6)?
+
+**Bài tập 2.6.** `getNerfppNorm` tính `radius = diagonal * 1.1`, trong đó `diagonal` là khoảng cách Euclid xa nhất từ tâm trung bình các camera **train** tới một tâm camera bất kỳ. Giải thích vì sao giá trị `radius` này (gán vào `cameras_extent`) lại ảnh hưởng trực tiếp tới quyết định "Gaussian nào bị clone, Gaussian nào bị split" thông qua ngưỡng `args.dense * extent` (`scene/gaussian_model.py:486-487`). Một cảnh có camera trải rộng hơn (bán kính lớn hơn) sẽ khiến ngưỡng kích thước tuyệt đối cho split thay đổi ra sao so với một cảnh nhỏ, cùng giá trị `dense=0.001`?
+
+**Bài tập 2.7.** Mục §18 chỉ ra rằng lịch giảm LR của `xyz` (`get_expon_lr_func(..., max_steps=position_lr_max_steps)`) đọc `position_lr_max_steps` (mặc định `30000`) chứ không đọc `--iterations`. Nếu một người chạy CLI thuần với `--iterations 7000` mà quên truyền `--position_lr_max_steps`, hãy tính giá trị `t = step/max_steps` tại `step=7000` theo công thức trong bài, và giải thích hệ quả với LR vị trí tại thời điểm train kết thúc. Vì sao `pipeline.trainer.build_args` (đường notebook) không gặp vấn đề này?
+
+---
+
+[← Chương 1](01-gioi-thieu-tong-quan.md) | [Mục lục](00-muc-luc.md) | [Chương 3 →](03-vong-lap-huan-luyen-phan-2.md)

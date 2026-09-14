@@ -1,3 +1,123 @@
+[← Mục lục](00-muc-luc.md) · Chương 9/15
+
+# Chương 9 — Differentiable Tile Rasterizer
+
+> Nguồn: `DOCS/Report/04-rasterizer.md`, `DOCS/Report/test/04-test.md`
+
+## 9.1 Lý thuyết
+
+# Chương 4 — Differentiable Tile Rasterizer
+
+> Khối biến các splat 2D thành ảnh. **Toán học giữ nguyên 3DGS**; FastGS-lite chỉ đưa vào ít cặp (tile, Gaussian) hơn.
+> Code: `rasterizer_impl.cu` (sort, ranges), `forward.cu` (`renderCUDA`).
+
+## 4.1 — Đơn vị công việc: cặp (tile, Gaussian)
+
+Ảnh chia thành lưới tile $16\times16$. Chi phí rasterize **không** tỉ lệ với $N$ mà với
+
+$$
+P=\sum_{i=1}^{N}K_i\approx N\cdot K
+$$
+
+Ba trong bốn bước dưới đây tỉ lệ với $P$.
+
+## 4.2 — Prefix sum và sinh khoá
+
+$$
+\text{offset}_i=\sum_{j<i}K_j
+$$
+
+Mỗi cặp $(T,i)$ nhận một khoá 64-bit (`auxiliary.h:278-280`):
+
+$$
+\boxed{\ \text{key}(T,i)=\bigl(\text{id}(T)\ll32\bigr)\ \big|\ \text{bit\_cast}_{u32}(\text{depth}_i)\ }
+$$
+
+32 bit cao gom entry cùng tile; 32 bit thấp xếp theo độ sâu trong tile. `bit_cast` float→uint32 giữ đúng thứ tự chỉ khi depth dương — bảo đảm bởi cull $t_z>0.2$ (chương 3.2).
+
+## 4.3 — Radix sort
+
+$$
+T_{\text{sort}}=O(P)=O(NK)
+$$
+
+Chỉ sort $32+\lceil\log_2(\text{số tile})\rceil$ bit thay vì 64 (ảnh 1600×1040 → 45 bit). Sau sort, `identifyTileRanges` cho $\text{ranges}[T]=[\text{start},\text{end})$ — danh sách Gaussian $\mathcal G_T$ của tile $T$ theo độ sâu tăng dần.
+
+## 4.4 — Alpha tại pixel
+
+Với pixel $x=(u,v)$ trong tile $T$, Gaussian $n\in\mathcal G_T$, $\Delta=x-\mu'_n$:
+
+$$
+\text{power}_n(x)=-\tfrac12\bigl(A_n\Delta_u^2+2B_n\Delta_u\Delta_v+C_n\Delta_v^2\bigr)=-\tfrac12\Delta^\top M_n\Delta
+$$
+
+$$
+G_n(x)=e^{\text{power}_n(x)},\qquad
+\boxed{\ \alpha_n(x)=\min\bigl(0.99,\ \alpha_n\,G_n(x)\bigr)\ }
+$$
+
+![Bản đồ alpha quanh tâm splat](../Report/assets/ch4_alpha_field.png)
+
+*Trục $\Delta_u,\Delta_v$ là độ lệch pixel so với tâm $\mu'$ (hệ toạ độ cục bộ, không phải toạ độ ảnh tuyệt đối). Màu là giá trị $\alpha_n(x)$: sáng nhất ở tâm, tắt dần ra ngoài theo hình ellipse nghiêng ($B\ne0$). Viền xanh là ngưỡng $1/255$ — ngoài đó kernel bỏ qua splat.*
+
+Ba cửa loại, đúng thứ tự code:
+
+| Điều kiện | Hành động | Ý nghĩa |
+|---|---|---|
+| $\text{power}_n>0$ | bỏ splat | $M$ không PSD (lỗi số học) |
+| $\alpha_n(x)<1/255$ | bỏ splat | dưới bước lượng tử 8-bit — cùng ngưỡng với compact box |
+| $T\,(1-\alpha_n)<10^{-4}$ | dừng pixel | early termination |
+
+$1/255$ lọc **từng splat**, $10^{-4}$ dừng **cả vòng lặp pixel** — hai hằng khác nhau, hai việc khác nhau.
+
+## 4.5 — Alpha-blending front-to-back
+
+$$
+T_1=1,\qquad T_{n+1}=T_n\bigl(1-\alpha_n(x)\bigr)
+$$
+
+$$
+\boxed{\ C(x)=\sum_{n\in\mathcal G_T}c_n\,\alpha_n(x)\,T_n\;+\;T_{\text{final}}\cdot C_{\text{bg}}\ }
+$$
+
+![Cột chồng minh hoạ C(x)](../Report/assets/ch4_alpha_blend_stack.png)
+![Transmittance Tₙ giảm dần](../Report/assets/ch4_transmittance_decay.png)
+
+*Hình trái: một cột duy nhất chia lớp theo ví dụ 3 Gaussian đỏ/lục/lam ở dưới — mỗi khối màu là một số hạng $c_n\alpha_nT_n$ xếp chồng theo thứ tự depth, cộng phần nền $T_{final}C_{bg}$ trên cùng. Hình phải: trục x là thứ tự Gaussian $n$ theo độ sâu, trục y là $T_n$ — luôn giảm đơn điệu vì $T_{n+1}=T_n(1-\alpha_n)\le T_n$.*
+
+Ví dụ: ba Gaussian $(\text{đỏ},0.5),(\text{lục},0.4),(\text{lam},0.6)$, nền trắng:
+
+| $n$ | $c_n$ | $\alpha_n$ | $T_n$ | đóng góp |
+|---|---|---|---|---|
+| 1 | (1,0,0) | 0.5 | 1.0 | (0.5, 0, 0) |
+| 2 | (0,1,0) | 0.4 | 0.5 | (0, 0.2, 0) |
+| 3 | (0,0,1) | 0.6 | 0.3 | (0, 0, 0.18) |
+
+$T_4=0.12$ → $C=(0.5,0.2,0.18)+0.12\,(1,1,1)=(0.62,0.32,0.30)$. Gaussian gần nhất đóng góp nhiều nhất dù $\alpha$ không cao nhất — đó là lý do phải sort theo depth.
+
+Mỗi tile là một CUDA block 256 thread (một thread/pixel), duyệt Gaussian theo batch 256 nạp vào shared memory. Block dừng khi **mọi** pixel đã bão hoà (`__syncthreads_count(done)==256`).
+
+## 4.6 — Dữ liệu lưu cho backward
+
+| Mảng | Nội dung | Dùng cho |
+|---|---|---|
+| `final_Ts[x]` | $T_{\text{final}}$ | gradient của số hạng background |
+| `n_contrib[x]` | số Gaussian thực sự đóng góp tại pixel | backward bỏ qua splat sau early termination |
+| `sampled_T`, `sampled_ar` | checkpoint mỗi 32 Gaussian: $T$ và $C^{\le n}$ | backward duyệt **xuôi** (chương 6) |
+| `max_contrib[T]` | $\max_{x\in T}n_{\text{contrib}}(x)$ | cắt cả warp trong backward |
+
+Số bucket của tile: $\#\text{bucket}_T=\lceil|\mathcal G_T|/32\rceil$. Backward khởi chạy $\sum_T\#\text{bucket}_T$ warp — thường **ít hơn** $NK$ nhờ early termination, nên $bNK$ là cận trên cho backward.
+
+## 4.7 — Đầu ra của khối
+
+$$
+I_{\text{rend}}=\{C(x)\}_{x\in H\times W}
+$$
+
+đi sang khối **Image** (chương 5) để tính loss; cùng với `final_Ts`, `n_contrib`, checkpoint đi ngược vào **Gradient Flow** (chương 6).
+
+## 9.2 Kiểm định số — Chương 4, Rasterizer
+
 # Chương 4 — Test số: Differentiable Tile Rasterizer (camera 1, nền trắng)
 
 > Cảnh: [`00-scene.md`](00-scene.md). Script: [`scripts/ch04_test.py`](scripts/ch04_test.py) — mọi số dưới đây
@@ -59,11 +179,11 @@ Nhận xét: với cảnh này $\text{half}_{x,y}\approx15$ px trên ảnh $48\t
 
 ## 4.2 — Prefix sum và sinh khoá
 
-![Khoá 64-bit và thứ tự sau sort](figures/ch04_keys.png)
+![Khoá 64-bit và thứ tự sau sort](../Report/test/figures/ch04_keys.png)
 
 *Hình: 24 cặp (tile, Gaussian) xếp theo 6 tile; mỗi ô ghi khoá rút gọn (tile_id | bit_cast(depth)); sau sort mọi tile đều có cùng thứ tự [G1, G4, G2, G3] theo độ sâu tăng dần.*
 
-![bit_cast float→uint32 giữ đúng thứ tự khi depth dương](figures/ch04_bitcast.png)
+![bit_cast float→uint32 giữ đúng thứ tự khi depth dương](../Report/test/figures/ch04_bitcast.png)
 
 *Hình: giá trị uint32 tăng đơn điệu theo depth dương (4.0 → 0x40800000 lớn hơn 3.5 → 0x40600000); điểm phản chứng depth âm (−1.0) lại cho uint32 lớn hơn depth dương nhỏ (2.0) — lý do phải cull t_z ≤ 0.2.*
 
@@ -165,11 +285,11 @@ Sau sort (`point_list_keys`, `point_list`):
 
 ## 4.4 – 4.5 — Alpha tại pixel và alpha-blending front-to-back (render đầy đủ 48×32)
 
-![Alpha-blending front-to-back tại 2 pixel + ví dụ chương](figures/ch04_blend_pixel.png)
+![Alpha-blending front-to-back tại 2 pixel + ví dụ chương](../Report/test/figures/ch04_blend_pixel.png)
 
 *Hình: transmittance T_n giảm dần và đóng góp từng Gaussian cho pixel (24,16) và (25,15); subplot tái hiện đúng ví dụ 3 Gaussian của chương 4.5, ra (0.62, 0.32, 0.30).*
 
-![Ba cửa loại dọc theo một hàng pixel](figures/ch04_gates.png)
+![Ba cửa loại dọc theo một hàng pixel](../Report/test/figures/ch04_gates.png)
 
 *Hình: quét ngang hàng y=16 qua tâm G1 — đường α_n(x) của 4 Gaussian so với ngưỡng 1/255, cùng T_final(x) và n_contrib(x) dọc hàng đó.*
 
@@ -218,7 +338,7 @@ Ba cửa: `power>0 → continue`; `alpha<1/255 → continue`; `T(1−alpha)<1e-4
 
 Lưu: `scripts/ch04_render_cam1.npy` (float32, shape (32, 48, 3), HWC, RGB ∈ [0,1]) và `scripts/ch04_render_cam1.ppm` (P3, 8-bit).
 
-![I_rend, I_gt, |diff| với lưới tile và pixel ví dụ](figures/ch04_render.png)
+![I_rend, I_gt, |diff| với lưới tile và pixel ví dụ](../Report/test/figures/ch04_render.png)
 
 *Hình: ba ảnh 48×32 phóng to cạnh nhau (α=0.1, α=0.9 "GT", và trị tuyệt đối hiệu số); lưới tile 16 px, tâm 4 Gaussian, và 3 pixel ví dụ (24,16)/(25,15)/(0,0) được đánh dấu.*
 
@@ -277,7 +397,7 @@ $T_4=0.12$ → $C=(0.5, 0.2, 0.18)+0.12\cdot(1,1,1)=\mathbf{(0.62, 0.32, 0.3)}$ 
 
 ## 4.6 — Dữ liệu lưu cho backward
 
-![final_T, n_contrib và thống kê bucket](figures/ch04_aux_maps.png)
+![final_T, n_contrib và thống kê bucket](../Report/test/figures/ch04_aux_maps.png)
 
 *Hình: bản đồ final_T và n_contrib toàn ảnh cho cả α=0.1 và α=0.9 (GT); GT có final_T nhỏ hơn nhiều (nhiều Gaussian đục hơn) nhưng vẫn không có pixel early-termination trong cảnh 4-Gaussian này.*
 
@@ -461,3 +581,22 @@ Tham khảo nhanh cho chương 5: $\text{mean}|I_{rend}-I_{gt}|$ (L1 trung bình
 
 Dữ liệu cho backward (chương 6) lưu ở `scripts/ch04_aux_cam1.npz`: `final_T` (32,48), `n_contrib` (32,48), `n_real`, `ranges` (6,2), `point_list` (P,), `keys_sorted`, `max_contrib` (6,), `mu2` (4,2), `conic` (4,3), `depth`, `alpha`, `colors`, cùng `final_T_gt`, `n_contrib_gt` cho bản α=0.9.
 
+## Bài tập (Exercise)
+
+**Bài tập 9.1.** Với ảnh $48\times32$ và tile $16\times16$, lưới tile là $3\times2$ (6 tile). Nếu đổi ảnh sang $64\times64$ (cùng cỡ tile $16\times16$), lưới tile sẽ là bao nhiêu? Với 4 Gaussian có $\text{half}_x,\text{half}_y\approx15$–16 px như trong bảng mục 4.0, ước lượng liệu mỗi Gaussian còn phủ **toàn bộ** lưới tile mới hay không, và giải thích ảnh hưởng lên $K_i$ và $P=\sum_iK_i$.
+
+**Bài tập 9.2.** Giải thích vì sao khoá 64-bit $\text{key}(T,i)=(\text{id}(T)\ll32)\ |\ \text{bit\_cast}_{u32}(\text{depth}_i)$ (`auxiliary.h:278-280`) cần đặt id tile ở 32 bit **cao** chứ không phải 32 bit thấp. Nếu đảo ngược thứ tự (depth ở 32 bit cao, tile ở 32 bit thấp), kết quả sort theo khoá đó còn dùng được cho `identifyTileRanges` không? Vì sao?
+
+**Bài tập 9.3.** Dùng ví dụ phản chứng ở mục 4.3 (depth $=-1.0\to$ `0xBF800000`, depth $=2.0\to$ `0x40000000`): tính `bit_cast` uint32 cho depth $=-0.5$ và depth $=0.1$, so sánh thứ tự uint32 với thứ tự depth thật. Từ đó phát biểu lại chính xác điều kiện cull $t_z>0.2$ (chương 3.2) cần thiết ở đâu trong chuỗi lập luận "bit_cast giữ đúng thứ tự".
+
+**Bài tập 9.4.** Cho ba Gaussian tại một pixel theo thứ tự depth tăng dần với $(c_n,\alpha_n)$ lần lượt là $(\text{đỏ},0.5)$, $(\text{lục},0.4)$, $(\text{lam},0.6)$ như ví dụ mục 4.5 ($T_1=1$, nền trắng, $C=(0.62,0.32,0.30)$). Nếu đảo thứ tự duyệt thành lam → lục → đỏ (tức sort sai theo depth giảm dần), tính lại $T_n$ và $C(x)$ từng bước. So sánh với kết quả đúng và giải thích bằng lời tại sao alpha-blending **không giao hoán** theo thứ tự Gaussian.
+
+**Bài tập 9.5.** Tại pixel nền $x=(0,0)$ (mục "Ba pixel trình bày chi tiết", phần (c)), cả 4 Gaussian đều bị cửa $\alpha_n(x)<1/255$ loại bỏ dù $\text{power}_n\le0$ với mọi $n$. Giải thích vì sao hai điều kiện $\text{power}_n>0$ và $\alpha_n(x)<1/255$ là hai cửa lọc **độc lập** — cho một ví dụ số $(\alpha_i, \text{power})$ mà $\text{power}\le0$ nhưng vẫn bị cửa $1/255$ loại, và một ví dụ khác mà $\text{power}>0$ (bị cửa đầu loại trước khi cửa thứ hai kịp xét).
+
+**Bài tập 9.6.** Tính số bucket backward $\#\text{bucket}_T=\lceil|\mathcal G_T|/32\rceil$ cho tile $T=0$ trong bảng mục 4.6 ($|\mathcal G_T|=4$). Nếu một cảnh thực tế có $|\mathcal G_T|=100$ cho một tile, tính $\#\text{bucket}_T$ và giải thích tại sao tổng $\sum_T\#\text{bucket}_T$ (số warp backward khởi chạy) thường **nhỏ hơn** cận trên $P=\sum_iK_i$ — nêu rõ vai trò của `n_contrib`/early termination trong việc này (tham chiếu `rasterizer_impl.cu:perTileBucketCount`).
+
+**Bài tập 9.7.** So sánh hai hằng số $1/255$ (lọc $\alpha_n(x)$ từng splat) và $10^{-4}$ (ngưỡng dừng $T(1-\alpha_n)$ của cả pixel) trong bảng "Ba cửa loại" mục 4.4. Với 4 Gaussian có $\alpha_i=0.1$ như trong test số, tính $T$ nhỏ nhất lý thuyết có thể đạt được tại một pixel nếu cả 4 splat đều đóng góp $\alpha_n(x)=\alpha_i$ tối đa (tức $x=\mu'_i$, $G_n=1$), rồi so với ngưỡng $10^{-4}$: liệu early termination có thể xảy ra với cảnh 4-Gaussian, $\alpha=0.1$ này không? Đối chiếu với kết luận số liệu ở mục 4.6/4.7 (0 pixel early-termination cho cả $\alpha=0.1$ và $\alpha=0.9$).
+
+---
+
+[← Chương 8](08-projection-compact-box.md) | [Mục lục](00-muc-luc.md) | [Chương 10 →](10-anh-den-loss-metrics.md)

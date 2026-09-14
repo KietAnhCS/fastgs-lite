@@ -1,3 +1,119 @@
+[← Mục lục](00-muc-luc.md) · Chương 10/15
+
+# Chương 10 — Từ Ảnh đến Loss & Metrics
+
+> Nguồn: `DOCS/Report/05-image-loss.md`, `DOCS/Report/test/05-test.md`
+
+## 10.1 Lý thuyết
+
+# Chương 5 — Image → Loss và Metrics
+
+> Khối cuối của Operation Flow. Ảnh render được so với ground-truth để (a) sinh loss cho Gradient Flow và (b) chấm điểm.
+> **FastGS-lite giữ nguyên loss.** Code: `train.py:100-103`, `pipeline/trainer.py:118-120`, `utils/loss_utils.py`, `pipeline/score.py`.
+
+## 5.1 — Loss huấn luyện
+
+$$
+\boxed{\ \mathcal L=(1-\lambda)\,\mathcal L_1+\lambda\,\mathcal L_{\text{D-SSIM}}\ }
+$$
+
+![Loss theo λ](../Report/assets/ch5_loss_mix.png)
+
+*Trục x là $\lambda\in[0,1]$, trục y là $\mathcal L(\lambda)$ — đoạn thẳng nội suy tuyến tính giữa $\mathcal L_1$ (tại $\lambda=0$) và $\mathcal L_{D\text{-}SSIM}$ (tại $\lambda=1$). Hai vạch đứng đánh dấu $\lambda=0.2$ (mặc định) và $0.25$ (preset).*
+
+$$
+\mathcal L_1=\frac{1}{3HW}\sum_{x,\text{ch}}\bigl|I_{\text{rend}}(x)-I_{\text{gt}}(x)\bigr|,
+\qquad
+\mathcal L_{\text{D-SSIM}}=1-\text{SSIM}(I_{\text{rend}},I_{\text{gt}})
+$$
+
+| Tham số | Giá trị | Nguồn |
+|---|---|---|
+| $\lambda$ | $0.2$ | `arguments/__init__.py:82` |
+| $\lambda$ (preset notebook) | $0.25$ | `pipeline/config.py:44` |
+
+SSIM dùng cửa sổ Gaussian $11\times11$, $\sigma=1.5$, $C_1=0.01^2$, $C_2=0.03^2$:
+
+$$
+\text{SSIM}=\frac{(2\mu_1\mu_2+C_1)(2\sigma_{12}+C_2)}{(\mu_1^2+\mu_2^2+C_1)(\sigma_1^2+\sigma_2^2+C_2)}
+$$
+
+![Cửa sổ Gaussian 11×11, σ=1.5 trong SSIM](../Report/assets/ch5_ssim_window.png)
+
+*Trục x, y là độ lệch pixel (u, v) từ tâm cửa sổ 11×11, màu là trọng số Gaussian — đỉnh sáng nhất ở tâm, giảm đối xứng ra biên; đường đồng mức là các hình tròn đồng tâm vì σ bằng nhau theo cả hai trục.*
+
+Hai implementation cho cùng công thức: `fused_ssim` (kernel CUDA, dùng trong vòng lặp train) và `utils/loss_utils.ssim` (PyTorch thuần, dùng khi chấm báo cáo). Cả hai dùng zero-padding `same`.
+
+**Điểm cần nhớ cho mô hình chi phí:** $\mathcal L$ tính trên toàn ảnh $H\times W$ — chi phí **không phụ thuộc $N$**. Đây là số hạng $F$ ở chương 8, đặt trần Amdahl cho mọi nỗ lực tăng tốc.
+
+## 5.2 — Không có loss nào khác
+
+Toàn bộ loss chỉ gồm hai số hạng trên. Không có mask loss, pose loss, depth loss. Hàm `get_loss`/`compute_photometric_loss` trong `utils/fast_utils.py` chỉ phục vụ việc tính điểm số multi-view của chương 7, không nằm trong công thức loss chính.
+
+## 5.3 — Nền ngẫu nhiên
+
+Khi `random_background=True`, $C_{\text{bg}}\sim\mathcal U[0,1]^3$ mỗi vòng. Số hạng $T_{\text{final}}C_{\text{bg}}$ ở chương 4.5 khi đó phạt các Gaussian "trong suốt nửa vời" ở vùng nền — chúng phải hoặc đục hẳn hoặc biến mất.
+
+## 5.4 — Metrics chấm điểm
+
+Ba metric của cuộc thi, tính trên mỗi ảnh test rồi trung bình theo cảnh:
+
+$$
+\text{PSNR}=20\log_{10}\frac{1}{\sqrt{\text{MSE}}},\qquad
+\text{MSE}=\frac{1}{3HW}\sum_{x,\text{ch}}\bigl(I_{\text{rend}}-I_{\text{gt}}\bigr)^2
+$$
+
+![PSNR theo MSE](../Report/assets/ch5_psnr.png)
+
+*Trục x là MSE (thang log), trục y là PSNR (dB). Đường cong gần như tuyến tính trên thang log-tuyến vì $\text{PSNR}=-10\log_{10}(\text{MSE})$ — dốc âm không đổi, minh hoạ vì sao PSNR "nổ" rất nhanh khi MSE tiệm cận 0.*
+
+$$
+\text{LPIPS}=\sum_{l}\frac{1}{H_lW_l}\sum_{h,w}\bigl\lVert w_l\odot(\hat\phi_l^{\text{rend}}-\hat\phi_l^{\text{gt}})_{hw}\bigr\rVert_2^2
+$$
+
+với $\hat\phi_l$ là đặc trưng lớp $l$ của mạng (AlexNet/VGG) đã chuẩn hoá theo kênh, đầu vào ảnh được map về $[-1,1]$.
+
+Điểm tổng hợp:
+
+$$
+\boxed{\ \text{Score}=0.4\,(1-\text{LPIPS})+0.3\,\text{SSIM}+0.3\,\operatorname{clamp}\Bigl(\frac{\text{PSNR}}{30},0,1\Bigr)\ }
+$$
+
+![Phân rã Score thành 3 thành phần](../Report/assets/ch5_score_decomp.png)
+
+*Bốn cột: ba thành phần $0.4(1-\text{LPIPS})$, $0.3\cdot\text{SSIM}$, $0.3\cdot\text{clamp}(\text{PSNR}/30)$ và cột Score tổng; trục y là giá trị đóng góp (thang 0–1). Ví dụ dùng LPIPS=0.15, SSIM=0.82, PSNR=27dB.*
+
+### Hai lỗi đã sửa trong repo
+
+| Lỗi | Trước | Sau |
+|---|---|---|
+| PSNR trên tensor `[3,H,W]` không batch dim | `view(shape[0], -1)` → 3 PSNR riêng theo kênh rồi trung bình → **luôn cao hơn** PSNR thật (Jensen: $\text{mean}(-\log m_c)\ge-\log\text{mean}(m_c)$) | `utils/image_utils.py` tự thêm batch dim khi input 3D |
+| LPIPS nhận ảnh $[0,1]$ | hằng số `ScalingLayer` (mean $-.030/-.088/-.188$, std $.458/.448/.450$) giả định input $[-1,1]$ | `lpipsPyTorch.lpips(..., normalize=True)` map $2x-1$ trước khi vào mạng |
+
+Số PSNR/LPIPS trong `history-train.md` được tính trước hai sửa này, không so sánh trực tiếp được với số sau sửa.
+
+### Ba chỗ phụ thuộc bộ chấm của ban tổ chức
+
+1. **SSIM**: Gaussian $11\times11$ (Wang 2004, code hiện tại) hay uniform $7\times7$ (`skimage` mặc định)?
+2. **Thứ tự trung bình**: $\operatorname{clamp}(\overline{\text{PSNR}}/30)$ hay $\overline{\operatorname{clamp}(\text{PSNR}_i/30)}$ — khác nhau khi có ảnh $>30$ dB.
+3. **Chấm trên float hay PNG 8-bit** đã lưu.
+
+## 5.5 — Live score ≠ điểm cuối
+
+| | Live (trong lúc train) | Cuối (báo cáo) |
+|---|---|---|
+| LPIPS net | AlexNet | VGG |
+| Độ phân giải | `resolution=2` | full-res |
+| Số view | `eval_views=6` | toàn bộ test |
+
+Chênh lệch ~0.1 Score giữa hai cột là do thiết kế, không phải lỗi.
+
+## 5.6 — Đầu ra của khối
+
+$\mathcal L$ (một scalar) đi ngược vào **Gradient Flow** (chương 6). Metrics chỉ để theo dõi, không tham gia tối ưu.
+
+## 10.2 Kiểm định số — Chương 5, Loss
+
 # Bài test số chương 5 — Image → Loss và Metrics
 
 > Cảnh đồ chơi chung: `00-scene.md` (4 điểm SfM, 3 camera, ảnh $48\times32$, $f_x=f_y=40$).
@@ -48,7 +164,7 @@ Tại pixel tâm G1 $(x,y)=(24,16)$: $I_{\text{rend}}=(0.8258,0.8155,0.8273)$, $
 
 ### $\mathcal L_1$ (`loss_utils.py:20`: `torch.abs(a-b).mean()` — mean trên $3HW$)
 
-![L1 giữa ảnh render và GT](figures/ch05_l1.png)
+![L1 giữa ảnh render và GT](../Report/test/figures/ch05_l1.png)
 
 *Hình: I_rend, I_gt, |I_rend−I_gt| và histogram sai số theo pixel — L1 = 1194.75 / 4608 = 0.2593.*
 
@@ -62,7 +178,7 @@ Sai số lớn nhất $0.6025$ tại kênh B, pixel $(y,x)=(16,22)$ (gần tâm 
 
 ### SSIM (`loss_utils.py:26-66`, cài lại từng dòng)
 
-![Cửa sổ Gauss, bản đồ SSIM, ví dụ thay số](figures/ch05_ssim.png)
+![Cửa sổ Gauss, bản đồ SSIM, ví dụ thay số](../Report/test/figures/ch05_ssim.png)
 
 *Hình: cửa sổ Gauss 11×11 σ=1.5 dùng trong SSIM; bản đồ SSIM per-pixel (mean 0.6478); minh hoạ thay số tại tâm G1 kênh R (μ1=0.8293, μ2=0.75 → SSIM=0.7366).*
 
@@ -96,7 +212,7 @@ $$
 
 ### Loss (`train.py:102`)
 
-![Hai thành phần của loss huấn luyện](figures/ch05_loss.png)
+![Hai thành phần của loss huấn luyện](../Report/test/figures/ch05_loss.png)
 
 *Hình: (1−λ)·L1 = 0.2074 và λ·D-SSIM = 0.0704 cộng thành 𝓛 = 0.2779 (λ=0.2), so với λ=0.25.*
 
@@ -146,7 +262,7 @@ $$
 
 ### PSNR "lỗi cũ" (`view(shape[0]=3,-1)` → 3 PSNR theo kênh rồi trung bình)
 
-![PSNR lỗi cũ và bất đẳng thức Jensen](figures/ch05_psnr_bug.png)
+![PSNR lỗi cũ và bất đẳng thức Jensen](../Report/test/figures/ch05_psnr_bug.png)
 
 *Hình: MSE và PSNR theo từng kênh so với PSNR đúng trên cả 3 kênh (10.27 dB thật vs 10.58 dB "lỗi cũ", luôn cao hơn — bất đẳng thức Jensen); subplot thứ tự trung bình PSNR minh hoạ chênh lệch clamp(mean) vs mean(clamp).*
 
@@ -162,7 +278,7 @@ $10.5775\ge10.2726$ (chênh $+0.3049$ dB). Đúng Jensen: $-10\log_{10}$ là hà
 
 ### LPIPS và Score (`score.py:12-18`)
 
-![Điểm tổng hợp Score và trần 1.0](figures/ch05_score.png)
+![Điểm tổng hợp Score và trần 1.0](../Report/test/figures/ch05_score.png)
 
 *Hình: ba thành phần của Score (0.4(1−LPIPS) + 0.3·SSIM + 0.3·clamp(PSNR/30), LPIPS giả định 0.30) cộng thành 0.577; Score theo α mô hình cho thấy trần 1.0 khi α → 0.9.*
 
@@ -189,7 +305,7 @@ Chênh $0.3\times(1-0.944444)=\mathbf{0.016667}$ điểm Score — chỉ xuất 
 
 ## 5.5 — Độ nhạy: loss theo $\alpha$ mô hình (GT cố định $\alpha=0.9$)
 
-![Độ nhạy của loss và PSNR theo opacity mô hình](figures/ch05_sensitivity.png)
+![Độ nhạy của loss và PSNR theo opacity mô hình](../Report/test/figures/ch05_sensitivity.png)
 
 *Hình: L1, D-SSIM, 𝓛 và PSNR theo α mô hình ∈ [0.05, 0.95] — cả 3 loss giảm đơn điệu về 0 và PSNR → ∞ đúng tại α = 0.9 (GT).*
 
@@ -336,3 +452,23 @@ LPIPS     = 0.3 (gia dinh)
 Score     = 0.577058
 T_final mean (nen trang, alpha=0.1) = 0.897887
 ```
+
+## Bài tập (Exercise)
+
+**Bài tập 10.1.** Với $\mathcal L_1=0.259278$ và $\mathcal L_{\text{D-SSIM}}=0.352227$ (camera 1, $\alpha=0.1$ so với GT $\alpha=0.9$), tính $\mathcal L=(1-\lambda)\mathcal L_1+\lambda\mathcal L_{\text{D-SSIM}}$ cho $\lambda=0.1$ và $\lambda=0.4$, rồi so sánh với hai giá trị đã cho trong bảng mục 5.1 ($\lambda=0.2\to0.277867$, $\lambda=0.25\to0.282515$). Vẽ (bằng lời hoặc trên giấy) xu hướng $\mathcal L(\lambda)$ và giải thích tại sao nó là một đoạn thẳng.
+
+**Bài tập 10.2.** Giải thích bằng lời ý nghĩa của bất đẳng thức Jensen áp dụng cho lỗi PSNR cũ ở mục 5.4: tại sao $\text{mean}_c(-10\log_{10}m_c)\ge-10\log_{10}(\text{mean}_c\,m_c)$ luôn đúng khi $-10\log_{10}$ là hàm lồi? Dùng số liệu $\text{MSE}_R=0.049965$, $\text{MSE}_G=0.115396$, $\text{MSE}_B=0.116386$ để tính lại PSNR theo kênh rồi lấy trung bình, kiểm tra kết quả có khớp $10.5775$ dB không, và cho biết điều kiện để dấu "=" xảy ra.
+
+**Bài tập 10.3.** Bảng "Thứ tự trung bình" ở mục 5.4 dùng ví dụ 3 view PSNR $=25,32,35$ để so sánh $\operatorname{clamp}(\overline{\text{PSNR}}/30)$ với $\overline{\operatorname{clamp}(\text{PSNR}_i/30)}$. Lặp lại phép tính này với 3 view PSNR $=10,20,50$ (giữ nguyên công thức $\operatorname{clamp}(\cdot,0,1)$), so sánh chênh lệch Score $0.3\times|\Delta|$ thu được với chênh lệch $0.016667$ trong ví dụ gốc, và giải thích tại sao chênh lệch phụ thuộc vào số lượng view có PSNR $>30$ dB.
+
+**Bài tập 10.4.** Từ công thức $\text{Score}=0.4(1-\text{LPIPS})+0.3\,\text{SSIM}+0.3\,\operatorname{clamp}(\text{PSNR}/30,0,1)$ và số liệu camera 1 ($\text{SSIM}=0.647773$, $\text{PSNR}=10.2726$ dB, LPIPS giả định $=0.30$ cho Score $=0.577058$): nếu mô hình cải thiện tới $\alpha=0.5$ (bảng mục 5.5: $\text{SSIM}=0.895140$, $\text{PSNR}=18.803$ dB) nhưng LPIPS giữ nguyên giả định $0.30$, tính Score mới. Nhận xét thành phần nào ($0.4(1-\text{LPIPS})$, $0.3\,\text{SSIM}$, hay $0.3\,\text{PSNR}_{\text{norm}}$) đóng góp nhiều nhất vào mức tăng.
+
+**Bài tập 10.5.** Mục 5.3 chỉ ra rằng trên cảnh đồ chơi này, $\mathcal L_1$ *giảm* khi chuyển từ nền trắng ($0.259278$) sang nền ngẫu nhiên seed 0 ($0.194567$) — ngược với trực giác "nền ngẫu nhiên luôn phạt thêm". Giải thích bằng lập luận trong văn bản (mean $I_{gt}=0.6828$ tối hơn nền trắng, mean $I_{rend}=0.9421$ gần trắng) tại sao đây là hiện tượng đặc thù của cảnh 4-Gaussian này chứ không phải phản ví dụ cho ý nghĩa của số hạng phạt $T_{\text{final}}C_{bg}$. Dùng số liệu 42 pixel nền thuần và $|C_{bg}-\mathbf 1|=(0.451186, 0.284811, 0.397237)$ (seed 0) để tính đóng góp $\mathcal L_1$ riêng tại các pixel nền thuần, so với $0$ khi nền trắng.
+
+**Bài tập 10.6.** Trace code: `train.py:100-103` gọi `l1_loss` và `fast_ssim` để tính $\mathcal L$; `utils/image_utils.py:21-26` tính PSNR (bản đã sửa batch dim); `pipeline/score.py:46-47` chọn cách $\operatorname{clamp}(\overline{\text{PSNR}}/30)$. Với mỗi trong ba lỗi/điểm mơ hồ nêu trong chương ("PSNR không batch dim", "LPIPS input $[0,1]$ thay vì $[-1,1]$", "thứ tự trung bình PSNR/clamp"), chỉ ra: (a) triệu chứng số (chênh lệch bao nhiêu, ví dụ $+0.3049$ dB), (b) dòng code đã sửa, (c) vì sao lỗi luôn thiên lệch về một hướng (cao hơn hoặc thấp hơn giá trị đúng) chứ không ngẫu nhiên.
+
+**Bài tập 10.7.** Bảng độ nhạy mục 5.5 cho $\mathcal L$ tại $\alpha=0.1,0.3,0.5,0.7,0.9$ lần lượt là $0.277867, 0.174283, 0.100769, 0.042374, 0$. Tính độ dốc trung bình $\Delta\mathcal L/\Delta\alpha$ trên từng đoạn $[0.1,0.3]$, $[0.3,0.5]$, $[0.5,0.7]$, $[0.7,0.9]$, so sánh với độ dốc $\approx-0.52$ trên đoạn đầu đã nêu trong văn bản, và nhận xét đường cong $\mathcal L(\alpha)$ dốc nhất ở vùng nào — điều này có ý nghĩa gì cho tốc độ hội tụ gradient descent ở chương 6 khi $\alpha$ khởi tạo ở $0.1$?
+
+---
+
+[← Chương 9](09-differentiable-tile-rasterizer.md) | [Mục lục](00-muc-luc.md) | [Chương 11 →](11-gradient-flow-backprop.md)

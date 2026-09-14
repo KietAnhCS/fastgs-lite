@@ -22,7 +22,16 @@ os.makedirs(FIG, exist_ok=True)
 sys.path.insert(0, HERE)
 import ch04_test as T4   # noqa: E402  (chỉ import hàm, main() không chạy)
 
-plt.rcParams.update({"font.family": "DejaVu Sans", "axes.grid": True, "grid.alpha": 0.3})
+plt.rcParams.update({
+    "font.family": "DejaVu Sans", "font.size": 11,
+    "axes.grid": True, "grid.alpha": 0.25, "grid.linewidth": 0.6,
+    "axes.linewidth": 1.1, "axes.titleweight": "bold", "axes.labelsize": 10.5,
+    "axes.spines.top": False, "axes.spines.right": False,
+    "legend.framealpha": 0.9, "legend.edgecolor": "0.75",
+    "xtick.labelsize": 9, "ytick.labelsize": 9,
+    "figure.facecolor": "white", "axes.facecolor": "white",
+    "savefig.dpi": 450,
+})
 GCOL = ["#d62728", "#2ca02c", "#1f77b4", "#7f7f7f"]     # G1..G4
 GNAME = ["G1 (đỏ)", "G2 (lục)", "G3 (lam)", "G4 (xám)"]
 W, H, BLK, GX, GY = T4.W, T4.H, T4.BLOCK_X, T4.GRID_X, T4.GRID_Y
@@ -41,7 +50,7 @@ proj, alpha, cols = R["proj"], R["alpha"], R["cols"]
 
 def save(fig, name):
     path = os.path.join(FIG, name)
-    fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
+    fig.savefig(path, dpi=450, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print("[saved]", os.path.abspath(path))
 

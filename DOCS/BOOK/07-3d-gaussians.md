@@ -1,3 +1,119 @@
+[← Mục lục](00-muc-luc.md) · Chương 7/15
+
+# Chương 7 — Biểu diễn 3D Gaussians
+
+> Nguồn: `DOCS/Report/02-3d-gaussians.md`, `DOCS/Report/test/02-test.md`
+
+## 7.1 Lý thuyết
+
+# Chương 2 — 3D Gaussians
+
+> Khối trung tâm của sơ đồ: mọi mũi tên đều đi vào hoặc đi ra khỏi đây. **FastGS-lite giữ nguyên.**
+> Code: `scene/gaussian_model.py:33-40` (activation), `forward.cu:120-150` (`computeCov3D`), `computeColorFromSH`.
+
+## 2.1 — Tham số hoá: 59 số mỗi Gaussian
+
+| Nhóm | Tham số thô (được tối ưu) | Kích hoạt | Giá trị dùng | Số chiều |
+|---|---|---|---|---|
+| Vị trí | $\mu_i$ | — | $\mu_i$ | 3 |
+| Xoay | $\tilde q_i$ | chuẩn hoá | $q_i=\tilde q_i/\lVert\tilde q_i\rVert$ | 4 |
+| Scale | $\tilde s_i$ | $\exp$ | $s_i=\exp(\tilde s_i)$ | 3 |
+| Opacity | $\tilde\alpha_i$ | sigmoid | $\alpha_i=\sigma(\tilde\alpha_i)$ | 1 |
+| SH bậc 0 (`features_dc`) | $k_{i,00}$ | — | | 3 |
+| SH bậc 1–3 (`features_rest`) | $k_{i,lm}$ | — | | 45 |
+| | | | **Tổng** | **59** |
+
+Tham số sống ở **không gian không ràng buộc** và đi qua activation. Đây là mắt xích cần nhớ khi đọc learning rate ở chương 6: $\eta_{\text{scaling}}=0.005$ là lr trên **log-scale**, $\eta_{\text{opacity}}=0.025$ là lr trên **logit**.
+
+## 2.2 — Hình dạng: covariance 3D
+
+$$
+R_i=R(q_i)\in SO(3),\qquad S_i=\operatorname{diag}(s_{i,1},s_{i,2},s_{i,3})
+$$
+
+$$
+\boxed{\ \Sigma_i=R_iS_iS_i^\top R_i^\top=(R_iS_i)(R_iS_i)^\top\ }
+$$
+
+![Ellipsoid covariance 3D](../Report/assets/ch2_covariance_ellipsoid.png)
+
+*Ellipsoid trong world space (trục x, y, z). Ba đoạn màu là ba trục chính — hướng do $R_i$ quyết định, độ dài do $s_{i,1},s_{i,2},s_{i,3}$ quyết định. Gaussian không tròn đều mà là khối "trứng" dẹt/dài tuỳ tỉ lệ scale.*
+
+Vì sao phân rã thay vì học thẳng 6 phần tử của $\Sigma$: $\Sigma$ phải bán xác định dương; tối ưu trực tiếp rất dễ vi phạm. Dạng $MM^\top$ với $M=R_iS_i$ **luôn** PSD theo cấu trúc, bất kể cập nhật thế nào.
+
+Chi tiết code: chuẩn hoá quaternion nằm ở tầng Python (`rotation_activation`), kernel nhận `rot` và dùng thẳng. Gradient của phép chuẩn hoá do autograd lo.
+
+## 2.3 — Mật độ: hàm Gaussian
+
+$$
+G_i(x)=\exp\!\Bigl(-\tfrac12(x-\mu_i)^\top\Sigma_i^{-1}(x-\mu_i)\Bigr),\qquad x\in\mathbb R^3
+$$
+
+![Gaussian bump G(x)](../Report/assets/ch2_gaussian_bump.png)
+
+*Mặt cong 3D, trục x, y là độ lệch $(x-\mu_x, y-\mu_y)$ so với tâm, trục z là mật độ $G(x)$. Hình "quả chuông": đỉnh cao 1 tại tâm, giảm dần ra biên; vì $\Sigma$ không đẳng hướng nên đường đồng mức là ellipse chứ không phải hình tròn.*
+
+Cực đại $=1$ tại tâm, giảm theo khoảng cách Mahalanobis. Khi thực sự tính alpha tại pixel (chương 4), $\Sigma$ ở đây phải hiểu là $\Sigma'$ đã chiếu 2D (chương 3), không phải $\Sigma$ 3D.
+
+## 2.4 — Màu: Spherical Harmonics phụ thuộc hướng nhìn
+
+Với $\vec d_i=(\mu_i-\text{campos})/\lVert\mu_i-\text{campos}\rVert=(x,y,z)$:
+
+$$
+c_i(\vec d)=\max\!\Bigl(0,\ 0.5+\sum_{l=0}^{D(t)}\sum_{m=-l}^{l}k_{i,lm}\,Y_{lm}(\vec d)\Bigr)
+$$
+
+![Màu SH trên mặt cầu hướng nhìn](../Report/assets/ch2_sh_sphere.png)
+
+*Mặt cầu đơn vị trong không gian hướng — trục x, y, z là ba thành phần của vector hướng nhìn $\vec d$ với $\lVert\vec d\rVert=1$. Màu tại mỗi điểm là màu Gaussian phát ra khi camera đứng theo đúng hướng đó nhìn vào tâm — hai phía đối diện có thể ra màu khác nhau, đó là "màu phụ thuộc góc nhìn".*
+
+Khai triển đúng như `computeColorFromSH`:
+
+$$
+c=\underbrace{C_0k_{00}}_{\texttt{features\_dc}}
+\;\underbrace{-C_1y\,k_{1,-1}+C_1z\,k_{10}-C_1x\,k_{11}}_{l=1}
+\;+\underbrace{\sum_mC_2^{(m)}P_2^{(m)}(x,y,z)\,k_{2m}}_{l=2}
+\;+\underbrace{\sum_mC_3^{(m)}P_3^{(m)}(x,y,z)\,k_{3m}}_{l=3}
+$$
+
+với $C_0=\tfrac12\sqrt{1/\pi}$, $C_1=\tfrac12\sqrt{3/\pi}$. Offset $+0.5$ dịch dải màu về quanh $0.5$; clamp $\max(\cdot,0)$ được ghi lại vào `clamped[]` để backward chặn gradient của kênh bị cắt.
+
+**Lịch tăng bậc SH** (`oneupSHdegree`, mỗi 1000 vòng):
+
+$$
+D(t)=\min\bigl(3,\ \lfloor t/1000\rfloor\bigr)
+\quad\Rightarrow\quad \text{số hệ số/kênh}=(D+1)^2:\ 1\to4\to9\to16
+$$
+
+![Lịch tăng bậc SH](../Report/assets/ch2_sh_degree_schedule.png)
+
+*Đồ thị bậc thang: trục x là vòng lặp $t$, trục y là bậc SH $D(t)\in\{0,1,2,3\}$. Hàm bậc thang tăng dần, nhảy đúng tại $t=1000,2000,3000$ rồi giữ nguyên — không phải đường liên tục.*
+
+Hệ quả cho mô hình chi phí: hệ số $a$ trong $aN$ (chương 8) tăng dần trong 3000 vòng đầu rồi mới ổn định.
+
+## 2.5 — Phân chia SH thấp / cao — vì sao quan trọng cho chương 6
+
+| | `features_dc` ($l=0$) | `features_rest` ($l=1..3$) |
+|---|---|---|
+| Ý nghĩa | màu cơ bản, không phụ thuộc góc nhìn | hiệu chỉnh theo góc nhìn (specular, phản xạ) |
+| Số hệ số | 3 | 45 |
+| Optimizer | `optimizer`, lr `lowfeature_lr` | `shoptimizer`, lr `highfeature_lr / 20` |
+| Nhịp step (FastGS) | mỗi vòng (0–15k) | mỗi 16 vòng (0–15k) |
+
+SH bậc 0 mang phần lớn năng lượng màu — lr cao ở đó làm cả ảnh dao động. SH bậc cao là hiệu chỉnh nhỏ với 15× số tham số — cho chúng lr đầy đủ ở nhịp đầy đủ vừa tốn optimizer vừa dễ overfit theo góc chụp. Chi tiết ở chương 6.
+
+## 2.6 — Đầu ra của khối
+
+Tại vòng lặp $t$, khối này cung cấp cho **Projection** (chương 3):
+
+$$
+\bigl(\mu_i,\ \Sigma_i,\ \alpha_i,\ \{k_{i,lm}\}_{l\le D(t)}\bigr)_{i=1}^{N}
+$$
+
+và nhận ngược lại gradient $\nabla_{\theta_i}\mathcal L$ (chương 6) cùng các thao tác thêm/xoá từ **Adaptive Density Control** (chương 7).
+
+## 7.2 Kiểm định số — Chương 2, 3D Gaussians
+
 # Test số — Chương 2: 3D Gaussians
 
 > Cảnh: `00-scene.md` (4 điểm SfM, 3 camera). Script sinh số: `scripts/ch02_test.py` (chỉ numpy).
@@ -54,7 +170,7 @@ Thay số cho G1: $\lVert(1,0,0,0)\rVert=1\Rightarrow q=(1,0,0,0)$; $s=e^{-0.161
 
 Đếm tham số (script đếm từ shape của mảng): $\mu$ 3 + $\tilde q$ 4 + $\tilde s$ 3 + $\tilde\alpha$ 1 + `features_dc` 3 + `features_rest` $3\times15=45$ = **59** (assert qua).
 
-![Ba activation: chuẩn hoá quaternion, exp cho scale, sigmoid cho opacity](figures/ch02_activation.png)
+![Ba activation: chuẩn hoá quaternion, exp cho scale, sigmoid cho opacity](../Report/test/figures/ch02_activation.png)
 
 *Hình: (a) cặp cột xám/đỏ là $\tilde q=(0.9,0.1,0.3,0.2)$ trước/sau chia cho $\lVert\tilde q\rVert=0.9747$ (hộp góc phải) — thành phần $r$ ra 0.9234 như mục 2.2b; (b) 4 chấm màu là $s_i=\exp\tilde s_i$ của bảng trên (G1 0.8505 … G3 1.1150) nằm trên đường $\exp$; (c) chấm đỏ tại $\tilde\alpha=-2.197$ cho $\alpha=0.1$ — cả 4 Gaussian trùng một điểm. Script vẽ: `scripts/ch02_plot.py`.*
 
@@ -123,7 +239,7 @@ $$
 
 Trị riêng đúng bằng $s^2$ và vector riêng là các cột của $R$: $\Sigma$ là ellipsoid bán trục $s$, xoay theo $R$. Script cũng đối chiếu với cách viết trong `computeCov3D` (glm column-major, `M = S*R; Sigma = M^T M`) — ra cùng ma trận.
 
-![Lát cắt 1σ của Σ: hình tròn đẳng hướng của G1 và ellipse dị hướng bị R(q) xoay trên 3 mặt](figures/ch02_covariance.png)
+![Lát cắt 1σ của Σ: hình tròn đẳng hướng của G1 và ellipse dị hướng bị R(q) xoay trên 3 mặt](../Report/test/figures/ch02_covariance.png)
 
 *Hình: (a) lát $xy$ của $\Sigma_1=0.7233\,I$ là hình tròn bán kính $s_1=0.8505$ (mũi tên) — xoay bởi $q$ nào cũng không đổi, đúng nhận xét trên; (b)–(d) với $s=(0.6,0.3,0.1)$ và cùng $\tilde q$: ellipse nét đứt là $R=I$, ellipse đỏ là sau khi xoay, hộp góc trái ghi đúng các phần tử $\Sigma_{xx}=0.2026,\ \Sigma_{xy}=0.0898,\ \Sigma_{xz}=-0.1418,\dots$ của ma trận trên; dòng vàng dưới cùng ghi trị riêng $(0.01,0.09,0.36)=s^2$ và $\det=3.24\times10^{-4}$.*
 
@@ -140,7 +256,7 @@ Với $\Sigma=s^2I$: $G(\mu+t\,s\,e_x)=\exp(-\tfrac12 t^2)$. Lý thuyết: $t=0\
 
 Với $\Sigma$ dị hướng xoay ở 2.2b, dịch dọc trục chính $R[:,0]$ một đoạn $s_1=0.6$ và $2s_1$: $G=0.606531$ và $0.135335$ — cùng luật, chỉ khác trục.
 
-![Mật độ G(x) của G1: lát cắt 1D dọc trục x và heatmap trên mặt xy](figures/ch02_density.png)
+![Mật độ G(x) của G1: lát cắt 1D dọc trục x và heatmap trên mặt xy](../Report/test/figures/ch02_density.png)
 
 *Hình: (a) đường đỏ là $G(\mu+d\,e_x)$ với $s_1=0.8505$; ba chấm đen ghi đúng ba giá trị của bảng: $d=0\to1$, $d=s_1=0.8505\to0.6065$, $d=2s_1=1.7010\to0.1353$; (b) cùng ba điểm (chấm xanh) trên heatmap lát $xy$ — hai vòng nét đứt là đường mức $e^{-1/2}$ (1σ) và $e^{-2}$ (2σ), tròn vì $\Sigma=s^2I$.*
 
@@ -190,7 +306,7 @@ $\text{raw}=(0.8,\ 0.297721,\ -0.532904)$ → $c=\max(\text{raw},0)=(0.8,\ 0.297
 
 Cùng hệ số, nhìn từ camera 3 ($c_3=(-1.5,0.5,-4)$): $\vec d=(0.348743,-0.116248,0.929981)$, raw $=(0.805680,\ 0.290878,\ -0.430468)$ → $c=(0.805680,\ 0.290878,\ 0)$, vẫn clamp kênh B nhưng R, G đã đổi: **màu phụ thuộc góc nhìn** đúng như mục đích của SH bậc $\ge1$.
 
-![Màu SH: ô màu bậc 0 của 4 Gaussian, màu G1 bậc 1 theo z của hướng nhìn, và trường hợp clamp](figures/ch02_sh.png)
+![Màu SH: ô màu bậc 0 của 4 Gaussian, màu G1 bậc 1 theo z của hướng nhìn, và trường hợp clamp](../Report/test/figures/ch02_sh.png)
 
 *Hình: (a) 4 ô màu là $c=0.5+C_0k_{00}$ của mục 2.4b, ghi kèm $k_{00}$ và $c$ — trùng màu SfM; (b) G1 với $k_{10}=(0,0.2,0)$: chỉ kênh G (đường xanh lục) đổi theo $z$ của $\vec d$, chấm đen tại $z=1$ (camera 1) ghi $0.2977$ như mục 2.4c, dải màu dưới trục là màu thực tế của G1 khi $z$ chạy từ $-1\to1$; (c) với $k_{10}=(0,0.2,-1.5)$: cột xám là raw, cột màu là sau $\max(\cdot,0)$ — kênh B từ $-0.5329$ bị cắt về $0$, `clamped=(F,F,T)`.*
 
@@ -215,7 +331,7 @@ Cùng hệ số, nhìn từ camera 3 ($c_3=(-1.5,0.5,-4)$): $\vec d=(0.348743,-0
 
 Trong 3000 vòng đầu, số float SH đọc trong kernel tăng $3\to12\to27\to48$ mỗi Gaussian (16×), là nguồn của hệ số $a$ tăng dần ở chương 8. Tổng tham số vẫn 59 từ đầu — chỉ số **được dùng** trong forward thay đổi; 45 hệ số `rest` luôn tồn tại trong bộ nhớ và optimizer.
 
-![Lịch bậc SH D(t) dạng bậc thang và số float SH hoạt động](figures/ch02_sh_schedule.png)
+![Lịch bậc SH D(t) dạng bậc thang và số float SH hoạt động](../Report/test/figures/ch02_sh_schedule.png)
 
 *Hình: bậc thang đen là $D(t)=\min(3,\lfloor t/1000\rfloor)$ (trục trái), nhảy đúng tại $t=1000,2000,3000$; đường cam nét đứt (trục phải) là $3(D+1)^2$ float SH/Gaussian $=3\to12\to27\to48$ và đường tím là $\times N=4$ ($12\to48\to108\to192$) — mỗi hộp ghi đúng một hàng của bảng trên.*
 
@@ -239,3 +355,23 @@ Màu bậc 0 không phụ thuộc camera nên cùng bảng dùng cho cả 3 came
 4. **Hằng $C_0$**: bài 01 ghi $C_0=1/(2\sqrt\pi)\approx0.28209$; script assert khớp `0.28209479177387814` trong `sh_utils.py` tới $10^{-15}$. Không import được `utils/sh_utils.py` trực tiếp vì file đó `import torch` — hằng và `eval_sh` được chép nguyên văn.
 5. **Lịch $D(t)$**: `train.py` chạy `iteration` từ 1, tăng bậc khi `iteration % 1000 == 0`, nên $D=1$ có hiệu lực từ vòng 1000 (không phải 1001) — khớp công thức $\lfloor t/1000\rfloor$ ở bài 02. Với `max_sh_degree=3` các mốc 4000, 5000… không tăng nữa.
 6. **Với scale đẳng hướng, $R$ không có tác dụng** ($\Sigma=s^2I$). Bài 02 không sai, nhưng đáng ghi chú: ở $t=0$ gradient đối với $\tilde q$ qua $\Sigma$ bằng 0 vì $\partial\Sigma/\partial q=0$ khi $S\propto I$; $\tilde q$ chỉ bắt đầu học sau khi $\tilde s$ trở nên dị hướng.
+
+## Bài tập (Exercise)
+
+**Bài tập 7.1.** Vì sao $\Sigma_i$ được tham số hoá qua phân rã $\Sigma_i=(R_iS_i)(R_iS_i)^\top$ thay vì học trực tiếp 6 phần tử độc lập của ma trận đối xứng $\Sigma_i$? Giải thích cụ thể điều gì có thể xảy ra nếu tối ưu thẳng 6 số đó bằng gradient descent, và vì sao dạng $MM^\top$ với $M=R_iS_i$ tránh được vấn đề đó "theo cấu trúc" (structurally), không phải nhờ ràng buộc tường minh.
+
+**Bài tập 7.2.** Cho $\tilde q=(0.9,\,0.1,\,0.3,\,0.2)$ như trong mục 2.2b. Hãy tự tính lại $\lVert\tilde q\rVert$, quaternion chuẩn hoá $q=(r,x,y,z)$, rồi dùng bảng công thức $R_{00},R_{11},R_{22}$ (đường chéo của `build_rotation`) để kiểm tra $\operatorname{tr}(R)=R_{00}+R_{11}+R_{22}$ bằng đúng giá trị đã cho trong ma trận $R$ ở mục 2.2b. Từ $\operatorname{tr}(R)$ vừa tính, biết công thức $\operatorname{tr}(R)=4r^2-1$ đúng cho quaternion đơn vị, hãy kiểm chứng chéo bằng $r=0.923381$.
+
+**Bài tập 7.3.** Với $s=(0.6,0.3,0.1)$ và cùng $q$ ở mục 2.2b, sách đã cho $\Sigma$ có trị riêng $(0.01,0.09,0.36)$ và vector riêng là các cột của $R$. Giải thích bằng lời (không cần tính lại ma trận): vì sao trị riêng của $\Sigma=RSS^\top R^\top$ luôn đúng bằng $s_1^2,s_2^2,s_3^2$ bất kể $R$ là gì, và vì sao vector riêng tương ứng luôn là các cột của $R$ chứ không phải của $S$.
+
+**Bài tập 7.4.** Dùng bảng Gaussian G1–G4 ở mục "Đầu vào của khối" (2.1), Gaussian nào có $\tilde s_i$ âm và Gaussian nào có $\tilde s_i$ dương? Giải thích ý nghĩa hình học: $\tilde s_i<0$ tương ứng $s_i<1$ hay $s_i>1$? Đối chiếu với $d^2_{\text{knn3}}$ của từng điểm để giải thích vì sao G3 có bán kính khởi tạo lớn nhất trong 4 Gaussian.
+
+**Bài tập 7.5.** Từ công thức mật độ $G(\mu+t\,s\,e_x)=\exp(-t^2/2)$ (mục 2.3), hãy tính $t$ sao cho $G=0.5$ (tức "bán kính nửa cực đại"), rồi so sánh với ngưỡng $1\sigma$ ($t=1$, $G=0.6065$) và $2\sigma$ ($t=2$, $G=0.1353$) đã cho trong bảng. Gaussian nào trong 4 Gaussian của cảnh đồ chơi có bán kính $1\sigma$ theo trục $x$ lớn nhất về mặt tuyệt đối (đơn vị scene), và tại sao con số $\sigma$ tuyệt đối này chưa nói lên được splat sẽ to hay nhỏ trên ảnh (gợi ý: liên hệ tới phép chiếu ở chương 8)?
+
+**Bài tập 7.6.** Với $k_{10}=(0,\,0.2,\,-1.5)$ nhìn từ camera 1 ($\vec d=(0,0,1)$), mục 2.4d cho $c=(0.8,\ 0.297721,\ 0)$ và `clamped=(F,F,T)`. Giả sử ta đổi camera sao cho $\vec d=(0,0,-1)$ (nhìn từ phía đối diện, cùng khoảng cách). Hãy tính lại số hạng $+C_1zk_{10}$ và cho biết kênh B có còn bị clamp hay không. Từ đó giải thích vì sao việc `clamped[]` được ghi lại là cần thiết cho backward pass (mục nào của chương nói về vai trò này?).
+
+**Bài tập 7.7.** Trace code: đọc chú thích "Ghi chú đối chiếu code" mục 1 và 3. Giải thích cụ thể sự khác biệt giữa hai đường tính rotation: `get_covariance` (`gaussian_model.py:130-131`, gọi `build_rotation` trên `self._rotation` thô) và đường kernel dùng `get_rotation` (`F.normalize`, đưa `rot` đã chuẩn hoá vào `forward.cu:120-150`). Hai đường có cho cùng kết quả số không? Vì sao script kiểm định ở mục 2.2 chỉ cần dùng một trong hai đường mà vẫn đại diện được cho cả hai?
+
+---
+
+[← Chương 6](06-initialization.md) | [Mục lục](00-muc-luc.md) | [Chương 8 →](08-projection-compact-box.md)

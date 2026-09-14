@@ -1,3 +1,7 @@
+[← Mục lục](00-muc-luc.md) · Chương 4/15
+
+> Nguồn: `DOCS/DIGITAL-TWIN-GS-PIPELINE-3.md` (toàn văn, §34–§48)
+
 # DIGITAL TWIN GS PIPELINE (3/3) — Lưu, render, chấm điểm, submission
 
 > Phần cuối của bộ ba tài liệu tham chiếu, đi từ lúc `Scene.save`/`GaussianModel.save_ply` ghi
@@ -634,3 +638,25 @@ Lưu ý quan trọng: nhiều tham số của `OptimizationParams` (`arguments/_
 | Compact box | Vùng bao (bounding) được co gọn quanh mỗi splat để giới hạn số tile nó chạm tới khi rasterize, điều khiển bởi hệ số `mult` |
 | COLMAP sparse | Kết quả tái tạo camera pose + point cloud thưa từ COLMAP structure-from-motion, đọc bởi `scene/dataset_readers.py::readColmapSceneInfo`, nằm trong thư mục `sparse/0/` của scene |
 | Extent | Kích thước (bán kính) không gian của cảnh, tính từ vị trí các camera (`scene.cameras_extent`); dùng làm đơn vị co giãn cho các ngưỡng clone/split và ngưỡng kích thước loại bỏ Gaussian quá to (`0.1 * extent`) |
+
+## Bài tập (Exercise)
+
+**Bài tập 4.1.** Bảng ở §34 tính rằng với `sh_degree = 3`, mỗi Gaussian chiếm 62 cột `float32`. Hãy tính lại số cột và số byte mỗi vertex (theo cùng công thức `construct_list_of_attributes`) nếu `sh_degree = 2` thay vì 3 — tức `f_rest` có $3\times((2+1)^2-1) = 3\times 8 = 24$ cột thay vì 45. Đối chiếu kết quả với assertion phía đọc `load_ply`: `len(extra_f_names) == 3*(max_sh_degree+1)**2 - 3`.
+
+**Bài tập 4.2.** Giải thích tại sao cột `nx, ny, nz` trong `point_cloud.ply` luôn bằng 0 (§34), và tại sao `opacities`, `scale`, `rotation` được ghi ở dạng **thô** (chưa qua `sigmoid`/`exp`/chuẩn hoá) thay vì ghi giá trị đã activate. Việc ghi thô này có ảnh hưởng gì tới cách `load_ply` (§38) phải xử lý lại các tensor này khi đọc?
+
+**Bài tập 4.3.** So sánh hai cơ chế lưu checkpoint mô tả ở §33 và §36: `train.py` dùng `saving_iterations` (không xoá checkpoint cũ) trong khi `pipeline/trainer.py::_save_checkpoint` dùng `cfg.save_every` + `keep_last_checkpoint=True` (xoá checkpoint trung gian trước đó). Nêu một tình huống cụ thể mà lựa chọn của `train.py` (giữ mọi mốc) có lợi hơn, và một tình huống mà lựa chọn mặc định của pipeline Colab (chỉ giữ một mốc) là bắt buộc.
+
+**Bài tập 4.4.** Dựa vào công thức `composite_score` ở §44: $\text{score} = 0.4(1-\text{lpips}) + 0.3\cdot\text{ssim} + 0.3\cdot\text{clamp}(\text{psnr}/\text{psnr\_max}, 0, 1)$ với `psnr_max = 30.0`. Tính `score` cho một scene có `PSNR = 28 dB`, `SSIM = 0.85`, `LPIPS = 0.15` (trình bày từng số hạng như bảng minh hoạ trong §44). So sánh kết quả với hàng `PSNR=30, SSIM=0.90, LPIPS=0.10` đã có sẵn trong bảng — kết luận scene nào có score cao hơn và vì sao.
+
+**Bài tập 4.5.** §44 chỉ ra $\partial\text{score}/\partial\text{lpips} = -0.4$ là đạo hàm tuyệt đối lớn nhất trong ba metric. Nếu bạn chỉ có ngân sách cải thiện **một trong hai**: giảm LPIPS đi 0.05, hoặc tăng PSNR thêm 3 dB (giả sử đang ở PSNR = 25 dB, dưới ngưỡng `psnr_max`), phương án nào cho điểm `score` tăng nhiều hơn? Tính cụ thể mức tăng của từng phương án.
+
+**Bài tập 4.6.** `render.py::render_set` (§37) đặt tên file kiểu `{0:05d}.png` (5 chữ số, ví dụ `00000.png`), trong khi `pipeline/submission.py::render_scene` (§39) đặt tên `{index:04d}.png` (4 chữ số, bắt đầu từ 1, ví dụ `0001.png`). Giải thích tại sao sự khác biệt về số chữ số đệm và điểm bắt đầu đếm (0 so với 1) giữa hai đường không gây ra lỗi gì trong thực tế — hai file này có bao giờ được so sánh/ghép chung với nhau không?
+
+**Bài tập 4.7.** §40 liệt kê những gì `verify()` **không thể** kiểm tra (số test-pose thật của ban tổ chức, độ phân giải chuẩn, nội dung hình ảnh đúng/sai). Từ đó, hãy giải thích tại sao câu "`verify()` báo OK" không đủ để kết luận "submission chắc chắn được điểm cao", và đề xuất một bước kiểm tra thủ công bổ sung (gợi ý: xem §46, hàm nào trong `pipeline/report.py` phục vụ việc này).
+
+**Bài tập 4.8.** §42 cho biết `pipeline/score.py::evaluate_cameras` dùng LPIPS mạng `alex` (`cfg.lpips_net_live`) trong lúc train, còn `pipeline/submission.py::render_scene` dùng mạng `vgg` (`cfg.lpips_net_report`) khi chấm nộp bài. Giải thích lựa chọn này dựa trên bảng backbone ở §42 (`alexnet` so với `vgg16`) và tần suất gọi hàm `lpips(...)` ở mỗi nơi — vì sao mỗi lần gọi lại phải build lại toàn bộ mạng (`LPIPS(net_type, version)` không cache)?
+
+---
+
+[← Chương 3](03-vong-lap-huan-luyen-phan-2.md) | [Mục lục](00-muc-luc.md) | [Chương 5 →](05-ky-hieu-nen-tang-toan-hoc.md)

@@ -1,3 +1,7 @@
+[← Mục lục](00-muc-luc.md) · Chương 3/15
+
+> Nguồn: `DOCS/DIGITAL-TWIN-GS-PIPELINE-2.md` (toàn văn, §19–§33)
+
 # DIGITAL TWIN GS PIPELINE (2/3) — Một vòng lặp train: render, loss, backward, densify
 
 Tài liệu này mổ xẻ đúng một vòng lặp `for iteration in range(...)` của fastgs-lite: từ lúc bốc camera, gọi rasterizer CUDA, tính loss, `loss.backward()`, đến các bước điều khiển mật độ Gaussian (densify/prune/reset) và bước `optimizer.step()`. Toàn bộ nội dung được đối chiếu trực tiếp với `train.py` (đường dòng lệnh) và `pipeline/trainer.py::train_scene()` (đường notebook), không mang lại bất kỳ khái niệm nào từ bản tài liệu cũ (mask SAM2, DUSt3R, `pose_optimizer`, `compute_combined_loss`... — những thứ đó **không tồn tại** trong mã nguồn hiện tại).
@@ -578,3 +582,34 @@ Hệ quả khi train ít hơn 30 000 iteration (ví dụ mặc định notebook 
 - `pipeline/trainer.py`: `_save_checkpoint(scene_obj, iteration, previous, drop_previous)` (dòng 39-47) gọi `scene_obj.save(iteration)` rồi, nếu `drop_previous=True` và có `previous`, xoá thư mục `point_cloud/iteration_<previous>/` bằng `shutil.rmtree`. Vòng lặp gọi hàm này mỗi `cfg.save_every` iteration (mặc định **2000**, `pipeline/config.py:34`) khi `iteration < iterations` (dòng 186-189), truyền `cfg.keep_last_checkpoint` (mặc định **True**, dòng 35) làm `drop_previous` — nghĩa là mặc định chỉ giữ **một** checkpoint trung gian tại một thời điểm (checkpoint mới ghi đè bằng cách xoá cái cũ ngay sau khi ghi cái mới), để tiết kiệm dung lượng đĩa Colab. Sau khi vòng lặp kết thúc, còn một lần lưu cuối cùng bắt buộc: `_save_checkpoint(scene_obj, iterations, saved_at, cfg.keep_last_checkpoint)` (dòng 194) — đảm bảo luôn có checkpoint tại đúng iteration cuối cùng dù `save_every` có chia hết cho `iterations` hay không.
 
 **`.ply` không phải checkpoint có thể resume.** `save_ply` (dòng 260-277) chỉ ghi `xyz, f_dc, f_rest, opacity, scale, rotation` dưới dạng thuộc tính PLY thuần — không có `optimizer.state_dict()`, không có `xyz_gradient_accum`/`xyz_gradient_accum_abs`/`denom`/`max_radii2D`, không có `active_sh_degree` hay `spatial_lr_scale` (những thứ mà `capture()`/`restore()` mới lưu đủ, dòng 73-131, dùng cho checkpoint `.pth`). `train.py` vẫn có **nửa** cơ chế này: nếu truyền `--start_checkpoint`, nó `torch.load(checkpoint)` rồi `gaussians.restore(model_params, opt)` (dòng 43-45) để khôi phục đầy đủ trạng thái Adam/densify từ một file `.pth`. Nhưng **nửa còn lại — ghi file đó — không tồn tại**: tham số `--checkpoint_iterations` được khai báo (`train.py:252`, mặc định `[30_000]`) và truyền vào `training(...)` nhưng không hề được dùng bên trong hàm để gọi `torch.save((gaussians.capture(...), iteration), ...)` ở bất kỳ đâu — đây là phần vestigial còn sót lại từ mã 3DGS gốc, không hoạt động trong repo hiện tại. `pipeline/trainer.py` không có cơ chế `--start_checkpoint`/`.pth` nào cả, chỉ dùng `.ply` qua `_save_checkpoint`. Kết luận chung: trong pipeline hiện tại (cả `train.py` chạy mặc định lẫn `pipeline/trainer.py`), việc dừng giữa chừng rồi "tiếp tục" chỉ có thể khôi phục lại đám mây điểm từ `.ply`, không khôi phục được trạng thái Adam hay các bộ đếm densify — train tiếp từ một `.ply` tương đương khởi động lại optimizer/densify từ đầu trên một point cloud đã qua huấn luyện, chứ không phải "tiếp tục đúng như đang dở".
+
+## Bài tập (Exercise)
+
+**Bài tập 3.1.** Bảng ở §19 đối chiếu từng bước của `train.py::training()` với `pipeline/trainer.py::train_scene()`. Hãy liệt kê ba thứ mà `train_scene` **bỏ** so với `train.py` (websocket viewer, TensorBoard, `--debug_from`) và với mỗi thứ, giải thích bằng một câu tại sao việc bỏ nó hợp lý trong bối cảnh chạy trên notebook Colab thay vì CLI cục bộ.
+
+**Bài tập 3.2.** Đọc lại đoạn code `update_learning_rate` ở §20:
+```python
+for param_group in self.optimizer.param_groups:
+    if param_group["name"] == "xyz":
+        lr = self.xyz_scheduler_args(iteration)
+        param_group['lr'] = lr
+        return lr
+```
+Giải thích vì sao hàm `return lr` ngay trong vòng `for` không cần `break`, và vì sao giá trị trả về không được `train.py`/`train_scene` sử dụng. Nhóm tham số nào (trong 5 nhóm ở bảng §20) *không* được hàm này cập nhật, và learning rate của chúng thay đổi thế nào trong suốt quá trình train?
+
+**Bài tập 3.3.** Tại §22, kernel CUDA tính ngưỡng cắt hộp bao theo công thức $t = 2\log(\text{opacity}\times 255)$, sau đó $t = \text{mult}\times t$. Với một Gaussian có `opacity = 0.5` (sau sigmoid), tính $t$ trước khi nhân `mult`, rồi tính $t$ sau khi nhân với hai giá trị `mult` khác nhau: `mult = 0.5` (mặc định `opt.mult`) và `mult = 0.7` (preset `train_big.sh`). `mult` nào cho hộp bao hẹp hơn, và hệ quả về tốc độ/độ chính xác rasterize là gì?
+
+**Bài tập 3.4.** So sánh hai cách "mượn gradient" được mô tả ở §26: tại sao `screenspace_points` phải được khởi tạo bằng 0 và gọi `retain_grad()`, thay vì lấy trực tiếp `pc.get_xyz.grad`? Trong câu trả lời, hãy chỉ rõ `means3D` và `means2D` đóng vai trò gì khác nhau trong lời gọi rasterizer.
+
+**Bài tập 3.5.** Dùng đúng ví dụ số ở §28 (rút gọn $V=3$ camera, bảng $G_A$/$G_B$/$G_C$ với `full_metric_counts` lần lượt là 21, 12, 2):
+- (a) Xác minh lại phép tính `importance_score = floor(full_metric_counts / V)` cho cả ba Gaussian.
+- (b) Giải thích bằng lời tại sao $G_B$ (có `12 px` lỗi nặng chỉ ở cam 1) lại có `importance_score` thấp hơn $G_A$ (có lỗi trải đều 8/6/7 px ở cả 3 cam), dù tổng lỗi thô của $G_B$ nhỏ hơn $G_A$ (12 < 21).
+- (c) Nếu ngưỡng `metric_mask = importance_score > 5` được áp dụng đúng như trong `scene/gaussian_model.py`, Gaussian nào trong ba Gaussian trên đủ điều kiện densify?
+
+**Bài tập 3.6.** Đoạn "Mẹo tự bắt lỗi" ở §28 lập luận rằng nếu hiểu `importance_score` là "số camera bỏ phiếu" (cờ 0/1 mỗi view) thay vì "số pixel lỗi", thì nhánh densify sẽ "chết hoàn toàn". Hãy tự chứng minh lại lập luận này: với $V=10$, nếu `counts` chỉ nhận giá trị 0 hoặc 1 mỗi view, miền giá trị có thể có của `floor(sum(counts)/10)` là gì? Vì sao điều đó mâu thuẫn với dữ kiện thực nghiệm trong `DOCS/assets/history.csv` (số Gaussian của `drjohnson` tăng từ 87.375 lên 174.003 giữa iteration 1000 và 7000)?
+
+**Bài tập 3.7.** §31 mô tả "phẫu thuật" trạng thái Adam khi số Gaussian thay đổi: sau khi tạo `nn.Parameter` mới, code phải `del opt.state[group['params'][0]]` (khoá cũ) rồi gán lại `opt.state[group['params'][0]] = stored_state` (khoá mới). Giải thích bằng cơ chế `id()`/object identity của `torch.optim.Optimizer.state` tại sao bỏ qua bước `del`/gán lại này sẽ gây lỗi shape hoặc rò rỉ bộ nhớ GPU. Việc này khác gì giữa trường hợp **xoá điểm** (`_prune_optimizer`) và trường hợp **thêm điểm** (`cat_tensors_to_optimizer`) về giá trị khởi tạo của `exp_avg`/`exp_avg_sq`?
+
+---
+
+[← Chương 2](02-kien-truc-pipeline-phan-1.md) | [Mục lục](00-muc-luc.md) | [Chương 4 →](04-luu-render-cham-diem-phan-3.md)

@@ -1,3 +1,482 @@
+[← Mục lục](00-muc-luc.md) · Chương 13/15
+
+# Chương 13 — Tổng hợp Mô hình Chi phí & Phương pháp Tăng tốc FastGS
+
+> Nguồn: `DOCS/Report/08-tong-hop.md`, `DOCS/Report/test/08-test.md`, `DOCS/fastgs-acceleration-method.md` (toàn văn, Phần I–IX)
+
+## 13.1 Tổng hợp theo Report (mô hình chi phí ba đòn bẩy)
+
+# Chương 8 — Tổng hợp: mô hình chi phí và ba đòn bẩy
+
+> Gom bảy chương trước thành một công thức duy nhất, rồi chỉ ra mỗi khối của sơ đồ ảnh hưởng tới số hạng nào.
+> Mô phỏng chạy được không cần GPU: `demos/fastgs_cost_model.py`.
+
+## 8.1 — Một vòng lặp huấn luyện làm gì
+
+Theo đúng thứ tự sơ đồ:
+
+| # | Khối | Việc | Chi phí tỉ lệ với |
+|---|---|---|---|
+| 1 | Projection (ch. 3) | chiếu $N$ Gaussian, nghịch đảo conic, SH, đếm tile | $N$ |
+| 2 | Rasterizer (ch. 4) | sinh khoá, sort, blend trên $P=NK$ cặp | $NK$ |
+| 3 | Image (ch. 5) | $\mathcal L_1$ + SSIM trên $H\times W$ | — |
+| 4 | Gradient Flow (ch. 6) | backward qua blend ($\le NK$), qua projection ($N$), Adam ($59N$ tham số) | $NK$, $N$ |
+| 5 | ADC (ch. 7), định kỳ | 20 render phụ + densify/prune | (overhead) |
+
+## 8.2 — Mô hình chi phí
+
+$$
+\boxed{\ T_{\text{iter}}=\underbrace{a\,N}_{\text{preprocess}}+\underbrace{b\,NK}_{\text{dup+sort+blend+backward}}+\underbrace{c\,N\cdot\mathbb 1[\text{Adam step}]}_{\text{optimizer}}+\underbrace{F}_{\text{loss, SSIM, IO}}\ }
+$$
+
+![Mô hình chi phí T_iter theo N](../Report/assets/ch8_cost_model.png)
+
+*Trục x là $N$ (số Gaussian), trục y là $T_{\text{iter}}$. Biểu đồ stacked area: 4 vùng màu ứng 4 số hạng — 3 vùng đầu tăng theo $N$ (tuyến tính hoặc gần tuyến tính), vùng $F$ là dải phẳng không đổi theo $N$ (trần Amdahl).*
+
+Ba đại lượng có thể can thiệp: $N$, $K$, $\mathbb 1[\text{Adam}]$. $F$ thì không.
+
+## 8.3 — Ba đòn bẩy của FastGS-lite ↔ ba khối của sơ đồ
+
+| Đòn bẩy | Khối | Cơ chế | Tỉ số |
+|---|---|---|---|
+| Giảm $K$ | **Projection** | compact box $t=\texttt{mult}\cdot2\ln(255\alpha)$ + lọc ellipse | $R_{\text{tile}}=K_{\text{fast}}/K_{\text{3dgs}}$ — đo được (ví dụ $9/25=0.36$) |
+| Giảm $N$ | **Adaptive Density Control** | Importance/Pruning score, densify AND, prune multinomial, final prune | $R_{\text{gauss}}=N_{\text{fast}}/N_{\text{3dgs}}$ — giả định, chưa đo A/B |
+| Giảm nhịp Adam | **Gradient Flow** | lịch $1\to1/32\to1/64$, SH $1/16$ | $R_{\text{adam}}=16563/59998=0.276$ — đếm chính xác |
+
+Số hạng nặng nhất co theo **tích**:
+
+$$
+b\,N_{\text{fast}}K_{\text{fast}}=b\,N_{\text{3dgs}}K_{\text{3dgs}}\cdot R_{\text{gauss}}R_{\text{tile}}
+$$
+
+![Ba đòn bẩy nhân nhau — waterfall tăng tốc](../Report/assets/ch8_levers_waterfall.png)
+
+*Trục x là cấu hình (thêm dần từng đòn bẩy), trục y là tăng tốc (×). Cột cuối "cả ba" đo được 3.83× thấp hơn tích các cột riêng lẻ (4.37×) — hai đòn bẩy nhân nhau ở số hạng $bNK$ nhưng không nhân được ở số hạng $F$ không co giãn.*
+
+Hai đòn bẩy **nhân** nhau, không cộng.
+
+## 8.4 — Trần Amdahl
+
+$$
+S_{\max}=\frac{T^{\text{3dgs}}_{\text{iter}}}{F}=\frac1f,\qquad f=\frac{F}{T^{\text{3dgs}}_{\text{iter}}}
+$$
+
+![Trần Amdahl S_max = 1/f](../Report/assets/ch8_amdahl.png)
+
+*Trục x là $f$ (tỉ lệ chi phí không co giãn), trục y là speedup trần $S_{\max}$. Hyperbol giảm dần; điểm đánh dấu $f=0.15\to6.7\times$ — không cơ chế nào tăng tốc vượt quá đường cong này.*
+
+Nếu loss + SSIM + IO chiếm 15% thì không cơ chế nào vượt $6.7\times$. Đây là lý do các con số tăng tốc thực tế của họ 3DGS nhanh nằm ở $2$–$5\times$.
+
+## 8.5 — Kết quả mô hình (giả định chia chi phí 15/55/15/15, overhead scoring +2%)
+
+| Cấu hình | Tăng tốc |
+|---|---|
+| Cả ba đòn bẩy | **3.83×** |
+| Chỉ compact box | 1.64× |
+| Chỉ giảm $N$ | 2.38× |
+| Chỉ Adam thưa | 1.12× |
+| Trần Amdahl | 6.7× |
+
+$1.64\times2.38\times1.12=4.37>3.83$: các đòn bẩy nhân nhau ở $bNK$ nhưng không nhân được ở $F$. Adam chỉ đóng góp 1.12× dù $R_{\text{adam}}=0.276$ vì Adam chỉ chiếm 15%. Giảm $N$ đóng góp nhiều nhất vì $N$ xuất hiện trong cả ba số hạng biến thiên — và cũng là tỉ số kém tin cậy nhất.
+
+## 8.6 — Overhead riêng của FastGS
+
+`compute_gaussian_score_fastgs` render thêm $10\times2=20$ ảnh mỗi lần densify. Với `densify_from_iter=500`, `densification_interval=500`, `densify_until_iter=15000`:
+
+$$
+n_{\text{densify}}=\frac{14500-1000}{500}+1=28,\qquad 28\times20=560\ \text{forward phụ}
+$$
+
+Quy đổi: cận trên $560/30000\approx+1.9\%$; sát thực tế hơn (1 vòng $\approx3$ forward) $\approx+0.6\%$. Tăng tuyến tính khi hạ `densification_interval` (mặc định 100 → 145 lần densify → $\approx+10\%$).
+
+## 8.7 — Những gì FastGS-lite KHÔNG đổi
+
+Toàn bộ toán render và tối ưu:
+
+$$
+G(x),\quad\Sigma=RSS^\top R^\top,\quad\Sigma'=JW\Sigma W^\top J^\top+0.3I,\quad M=\Sigma'^{-1},\quad
+C=\sum c_n\alpha_nT_n,\quad\text{Adam},\quad\mathcal L=(1-\lambda)\mathcal L_1+\lambda\mathcal L_{\text{D-SSIM}}
+$$
+
+Không dòng nào của sáu thay đổi nằm trong chuỗi render. Chúng chỉ quyết định **cái gì** đi vào chuỗi đó ($N$, $K$) và **khi nào** tham số được cập nhật.
+
+## 8.8 — Cảnh báo khi cấu hình
+
+| Điều chỉnh | Hệ quả cần biết |
+|---|---|
+| `--iterations < 20000` | mất `final_prune_fastgs` (chạy $15000<t<30000$); tiết kiệm rất ít vì 15k–30k vốn rẻ |
+| Rút ngắn `--iterations` | phải đồng bộ `--position_lr_max_steps`, `--densify_until_iter`, và hai ngưỡng cứng 15000/20000 trong `optimizer_step` |
+| `--highfeature_lr X` | lr thật vào Adam là $X/20$ |
+| `--mult 1.0` | về SnugBox, **không** về 3DGS gốc; `getRect` đã bị xoá |
+| `--dense` | không chọn theo nhãn indoor/outdoor — copy dòng của cảnh giống dataset nhất trong `train_base.sh` |
+| So sánh A/B với 3DGS | cùng máy, cùng dataset, cùng resolution, tối thiểu 20k vòng |
+
+## 13.2 Kiểm định số — Chương 8, Tổng hợp
+
+# Test số chương 8 — Tổng hợp: mô hình chi phí và ba đòn bẩy
+
+> Tính trên cảnh đồ chơi ở `00-scene.md` (4 Gaussian, camera 1, ảnh $48\times32$) cho phần hình học,
+> và trên lịch huấn luyện mặc định (`arguments/__init__.py`) cho phần đếm vòng lặp.
+> Script sinh số: `scripts/ch08_test.py` (chỉ `numpy`; import lại `demos/fastgs_cost_model.py` để đối chiếu).
+> Mọi số dưới đây là output thật của script, làm tròn 4 chữ số có nghĩa.
+>
+> Điều kiện chép từ code:
+> `scene/gaussian_model.py:190-209` (`optimizer_step`), `train.py:66` (`range(1, iterations+1)`),
+> `train.py:127,132` (`iteration < densify_until_iter` và `iteration > densify_from_iter and iteration % densification_interval == 0`),
+> `train.py:152` (`iteration % 3000 == 0 and iteration > 15_000 and iteration < 30_000`),
+> `train.py:160` (`if iteration < opt.iterations: optimizer_step`), `utils/fast_utils.py:13` (`num_cams = 10`, mỗi cam render 2 lần),
+> `gaussian_model.py:174` (`highfeature_lr / 20`), `submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/auxiliary.h:312-340`
+> ($t=\texttt{mult}\cdot2\ln(255\alpha)$, `rect_min = int(bbox_min/16)`, `rect_max = min(grid, int(bbox_max/16 + 1))`).
+
+## Sơ đồ khối: ba tỉ số nhân vào mô hình chi phí
+
+```mermaid
+flowchart LR
+  K["Projection (ch. 3)<br/>R_tile = 9/25 = 0.36 (ví dụ box.md)<br/>0.29 (quần thể demo) · 0.79 (cảnh đồ chơi)"] --> T["T_iter = aN + bNK + cN·𝟙[step] + F<br/>chia 15 / 55 / 15 / 15 (T_3dgs = 1)"]
+  N["ADC (ch. 7)<br/>R_gauss = 0.314 — GIẢ ĐỊNH<br/>N_tb 933k vs 293k"] --> T
+  A["Gradient Flow (ch. 6)<br/>R_adam = 16563 / 59998 = 0.276 — đếm chính xác"] --> T
+  T --> S["T_fast = 0.15·R_g + 0.55·R_g·R_t + 0.15·R_g·R_a + 0.15, ×1.02<br/>= 0.261 → tốc độ 1 / 0.261 = 3.83×"]
+  S --> ONE["từng đòn bẩy riêng: K 1.64× · N 2.38× · Adam 1.12×<br/>tích 4.39× vượt 3.83× vì F không co"]
+  S --> AM["trần Amdahl: 1 / F = 1 / 0.15 = 6.67×<br/>F = 10% → 4.60× · F = 25% → 2.87×"]
+  OV["overhead score: 28 lần densify × 20 render = 560 forward<br/>≈ +1.9% (cận trên) · interval 100 → 144 lần → +9.6%"] -.-> S
+```
+
+## Kết quả script có sẵn — `python demos/fastgs_cost_model.py`
+
+Output nguyên văn:
+
+```
+Quan the mo phong: 3000 splat, sigma' trung vi = 2.9 px, opacity trung binh = 0.66
+
+======================================================================
+PHEP DO 1 - So tile moi splat (hinh hoc, suy tu ma nguon)
+======================================================================
+  mult |   K_3dgs |    K_box |  K_fastgs |  R_tile
+----------------------------------------------------
+   1.0 |    21.91 |    13.65 |     10.00 |   0.457
+   0.7 |    21.91 |    10.42 |      7.88 |   0.360
+   0.5 |    21.91 |     8.18 |      6.36 |   0.290
+   0.3 |    21.91 |     5.81 |      4.71 |   0.215
+
+Tach hai nguon tiet kiem tai mult=0.5:
+  hop vuong 3-sigma (3DGS)        K =   21.91   1.000
+  compact box, chua loc ellipse   K =    8.18   0.373
+  + loc tile theo ellipse         K =    6.36   0.290
+
+PHU LUC 1a - K theo opacity (sigma'=8px dang huong, mult=0.5)
+  [tai lap bang Section 4.3(b) cua tai lieu]
+ opacity |      t |   ban kinh |  K_fastgs
+--------------------------------------------
+   0.999 |   5.54 |     2.35*s |     10.08
+   0.500 |   4.85 |     2.20*s |      9.02
+   0.100 |   3.24 |     1.80*s |      7.27
+   0.020 |   1.63 |     1.28*s |      5.14
+
+PHU LUC 1b - K theo do det (sigma_g=8px, o=1, mult=0.5)
+  [tai lap bang Section 4.5 cua tai lieu]
+  rho la THAM SO: sigma_max=8*rho, sigma_min=8/rho
+  => ti le truc THAT = rho^2 (cot thu hai)
+  rho | ti le truc |   K_3dgs |  K_fastgs |  R_tile
+------------------------------------------------------
+  1.0 |       1.0:1 |    16.00 |     10.08 |   0.630
+  1.5 |       2.2:1 |    30.25 |     10.58 |   0.350
+  2.0 |       4.0:1 |    49.00 |     11.84 |   0.242
+  3.0 |       9.0:1 |   100.00 |     14.56 |   0.146
+  5.0 |      25.0:1 |   256.00 |     20.38 |   0.080
+
+======================================================================
+PHEP DO 2 - So lan Adam step trong 30.000 vong (CHINH XAC tu code)
+======================================================================
+             |  optimizer |  shoptimizer |      tong
+----------------------------------------------------
+3DGS goc     |     29,999 |       29,999 |    59,998
+fastgs-lite  |     15,313 |        1,250 |    16,563
+ti so        |      0.510 |        0.042 |     0.276
+
+======================================================================
+PHEP DO 3 - So Gaussian trung binh (DINH TINH, spawn/prune gia dinh)
+======================================================================
+             |  N trung binh |      N cuoi
+------------------------------------------
+3DGS goc     |       933,036 |   1,371,694
+fastgs-lite  |       292,773 |     329,750
+ti so        |         0.314 |       0.240
+
+======================================================================
+GOP - chi phi 30.000 vong theo mo hinh
+======================================================================
+  R_tile  (mult=0.5, hinh hoc)   = 0.290
+  R_gauss (GIA DINH)             = 0.314
+  R_adam  (chinh xac)            = 0.276
+  overhead scoring (fastgs)      = +2.0% chi phi raster
+
+  Bat tung don bay mot, so voi 3DGS goc:
+                                   |  tang toc
+  ----------------------------------------------
+  ca ba don bay                    |     3.83x
+  chi compact box (mult=0.5)       |     1.64x
+  chi giam so Gaussian             |     2.38x
+  chi nhip Adam thua               |     1.12x
+
+  Tran Amdahl (N -> 0, K -> 0): 6.7x
+  -> phan chi phi khong scale theo N (loss/SSIM/IO) dat tran cung.
+
+  LUU Y: day la MO HINH, khong phai so do A/B tren GPU. R_gauss la
+  tham so gia dinh - no la thu duy nhat phai do that moi biet.
+  Xem DOCS/fastgs-acceleration-method.md Phan VI de biet cach chay A/B.
+```
+
+Từng con số ứng với công thức nào ở chương 8:
+
+| Dòng output | Công thức chương 8 | Ghi chú |
+|---|---|---|
+| `K_3dgs = 21.91` | 3.6: $r=\lceil3\sqrt{\lambda_{\max}}\rceil$, $K=(2r/16+1)^2$ (kì vọng theo vị trí tâm) | $K_{\text{REF}}$ dùng để hiệu chỉnh $b$ trong 8.2 |
+| `K_box = 8.18` | 3.6: $\text{half}=\sqrt{t\,\Sigma'_{11,22}}$, $K=(2\text{half}_x/16+1)(2\text{half}_y/16+1)$ | chỉ compact box |
+| `K_fastgs = 6.36`, `R_tile = 0.290` | 3.7 + 8.3: $R_{\text{tile}}=K_{\text{fast}}/K_{\text{3dgs}}$ | có lọc ellipse (AccuTile) |
+| Phụ lục 1a: `t = 5.54 / 4.85 / 3.24 / 1.63` | 3.6: $t=\texttt{mult}\cdot2\ln(255\alpha)$ | trùng bảng $t$ ở 3.6 |
+| Phụ lục 1b: `R_tile` giảm khi $\rho^2$ tăng | 3.6: hộp vuông lãng phí $\tfrac4\pi\rho$ | |
+| `15,313 / 1,250 / 16,563`, `0.276` | 6.4 + 8.3: $R_{\text{adam}}=16563/59998$ | đếm t = 1..29999 |
+| `N trung bình 933,036 / 292,773`, `0.314` | 8.3: $R_{\text{gauss}}=N_{\text{fast}}/N_{\text{3dgs}}$ | giả định spawn/prune; $N_{\text{REF}}=0.933$ triệu hiệu chỉnh $a,c$ |
+| `overhead scoring +2.0%` | 8.6: $n_{\text{densify}}\cdot20/30000$ | demo đếm $15000//500=30$ lần, không phải 28 (xem 8.6) |
+| `3.83x / 1.64x / 2.38x / 1.12x` | 8.2 + 8.5: $T_{\text{iter}}=aN+bNK+cN\cdot\mathbb 1+F$, split 15/55/15/15 | bảng 8.5 |
+| `6.7x` | 8.4: $S_{\max}=1/f=1/0.15$ | trần Amdahl |
+
+## 8.1 — Một vòng lặp huấn luyện làm gì
+
+Không có số riêng; bảng 8.1 chỉ gán mỗi khối vào một số hạng của 8.2: Projection $\to aN$, Rasterizer + backward $\to bNK$, Adam $\to cN\cdot\mathbb 1[\text{step}]$, Loss/SSIM/IO $\to F$, ADC $\to$ overhead (8.6).
+
+## 8.2 — Mô hình chi phí (chuẩn hoá)
+
+![Stacked bar mô hình chi phí T_iter](../Report/test/figures/ch08_cost_stack.png)
+
+*Hình: T_iter = aN + bNK + cN·𝟙[Adam] + F chia 15/55/15/15 cho 3DGS (=1.0) so với FastGS cả ba đòn bẩy và từng đòn bẩy riêng lẻ — tốc độ 3.83× / 1.64× / 2.38× / 1.12×.*
+
+
+$$
+T_{\text{iter}}=aN+bNK+cN\cdot\mathbb 1[\text{Adam}]+F,\qquad
+\frac{T^{\text{fast}}}{T^{\text{3dgs}}}=a'R_{\text{gauss}}+b'R_{\text{gauss}}R_{\text{tile}}(1+\text{ov})+c'R_{\text{gauss}}R_{\text{adam}}+f
+$$
+
+với $(a',b',c',f)=(0.15,\ 0.55,\ 0.15,\ 0.15)$ là tỉ lệ bốn số hạng ở điểm làm việc của 3DGS ($T^{\text{3dgs}}=1$). Cách hiệu chỉnh này đúng bằng `_weights()` của demo ($a=0.15/N_{\text{REF}}$, $b=0.55/(N_{\text{REF}}K_{\text{REF}})$, …) nên chỉ cần ba tỉ số.
+
+## 8.3 — Ba tỉ số
+
+### (a) $R_{\text{adam}}$ — đếm vòng lặp theo lịch 6.4
+
+![Số Adam step tích luỹ và ảnh hưởng của --iterations](../Report/test/figures/ch08_adam_count.png)
+
+*Hình: số step tích luỹ của optimizer/shoptimizer/3DGS theo t; subplot cho thấy rút ngắn --iterations làm R_adam tăng lên (ít step thưa hơn được hưởng) nhưng mất dần các lần final_prune.*
+
+
+Công thức (`gaussian_model.py:190-209`):
+
+$$
+\mathbb 1_{\text{main}}(t)=\begin{cases}1&t\le15000\\ [t\bmod32=0]&15000<t\le20000\\ [t\bmod64=0]&t>20000\end{cases},\qquad
+\mathbb 1_{\text{SH}}(t)=\begin{cases}[t\bmod16=0]&t\le15000\\ \mathbb 1_{\text{main}}(t)&t>15000\end{cases}
+$$
+
+Duyệt $t=1..29999$ (`train.py:160`: vòng 30000 không step):
+
+| | $t\le15000$ | $(15000,20000]$ | $(20000,29999]$ | tổng |
+|---|---|---|---|---|
+| `optimizer` | 15000 | 157 | 156 | **15313** |
+| `shoptimizer` | 937 | 157 | 156 | **1250** |
+| 3DGS (mỗi vòng) | | | | 29999 + 29999 = **59998** |
+
+Kiểm nhẩm: bội 32 trong $(15000,20000]$ $=625-468=157$; bội 64 trong $(20000,29999]$ $=468-312=156$; bội 16 trong $[1,15000]$ $=937$.
+
+$$
+R_{\text{adam}}=\frac{15313+1250}{59998}=\frac{16563}{59998}=\mathbf{0.2761}
+\qquad(R_{\text{main}}=0.5105,\ R_{\text{SH}}=0.04167)
+$$
+
+Đối chiếu `demos.adam_steps(fastgs=True)` = (15313, 1250) → **khớp**. Nếu đếm nhầm cả vòng 30000 (chia hết 64): FastGS 16563 (không đổi vì demo cũng bỏ), 3DGS 60000 → 0.27605 — lệch ở chữ số thứ 5, không phải cách code chạy.
+
+### (b) $R_{\text{tile}}$ — ba cách
+
+![Phân bố K trên quần thể mô phỏng](../Report/test/figures/ch08_rtile_demo.png)
+
+*Hình: K^3dgs, K^box, K^fastgs trên quần thể splat mô phỏng của demos/fastgs_cost_model.py; K_fastgs trung bình tăng theo mult, mult=1.0 vẫn nhỏ hơn 3DGS gốc (SnugBox).*
+
+
+**(i) Ví dụ chương 3.8**, $\Sigma'_{11}=117,~\Sigma'_{12}=54,~\Sigma'_{22}=36$, $\mu'=(120,88)$, $\alpha=1$, `mult` $=0.5$:
+
+| Bước | Công thức | Thay số | Kết quả |
+|---|---|---|---|
+| $\lambda_{\max,\min}$ | $76.5\pm\sqrt{40.5^2+54^2}$ | $76.5\pm67.5$ | $144,\ 9$ ($\rho=4$) |
+| $r$ | $\lceil3\sqrt{144}\rceil$ | | $36$ |
+| rect 3DGS | $\lfloor(\mu'-r)/16\rfloor,\ \lfloor(\mu'+r+15)/16\rfloor$ | $[5,3],\ [10,8]$ | $K^{\text{3dgs}}=5\times5=25$ |
+| $t$ | $0.5\cdot2\ln255$ | | $5.541$ |
+| half | $\sqrt{t\cdot117},\ \sqrt{t\cdot36}$ | | $25.46,\ 14.12$ |
+| rect compact | `int(bbox_min/16)`, `int(bbox_max/16+1)` | $[5,4],\ [10,7]$ | $K^{\text{box}}=5\times3=15$ |
+| conic $(A,B,C)$ | $\Sigma'^{-1}$ | | $(0.02778,\ -0.04167,\ 0.09028)=(1/36,-1/24,13/144)$ |
+| lọc ellipse | $\min_{\Delta\in T}\Delta^\top M\Delta\le t$ | mỗi hàng 3 tile | $K^{\text{fastgs}}=3+3+3=9$ |
+
+$$R_{\text{tile}}^{(3.8)}=9/25=\mathbf{0.3600}$$ — `demos.tiles_fastgs(...)` với cùng $(\lambda,\theta,\alpha,\text{px},\text{py})$ cũng trả về 9.
+
+**(ii) Quần thể mô phỏng** của demo (3000 splat, seed 0, gọi lại `sample_population` + `tile_stats(pop, 0.5)`):
+
+$K_{\text{3dgs}}=21.91$, $K_{\text{box}}=8.177$, $K_{\text{fastgs}}=6.327$ → $R_{\text{tile}}^{\text{pop}}=\mathbf{0.2888}$ (demo in 0.290 vì demo chạy `mult`=1.0, 0.7 trước và tiêu thêm số ngẫu nhiên px, py; lệch $<0.5\%$). Hai nguồn tiết kiệm: hộp theo trục $\times0.373$, lọc ellipse thêm $\times0.774$.
+
+**(iii) Cảnh đồ chơi**, camera 1 ($t_z=z+4$, $f_x=f_y=40$), $\alpha=0.1$, `mult` $=0.5$, lưới $3\times2$ tile.
+
+Xấp xỉ ghi rõ: $\Sigma'\approx(f_x/t_z)^2s^2+0.3$ trên đường chéo, **bỏ** phần ngoài chéo của $J$ (số hạng $-f_xt_x/t_z^2$); $K^{\text{fastgs}}$ lấy bằng hộp compact half $=\sqrt{t\Sigma'}$, **không** lọc ellipse (ellipse tròn nên lọc chỉ bỏ được tile góc, ở đây không có tile góc nào thừa). $s_i=\sqrt{\text{mean}\,d^2}$ tới 3 láng giềng (chương 1). $t=0.5\cdot2\ln(25.5)=3.239$.
+
+| $i$ | $s$ | $t_z$ | $\mu'$ | $\Sigma'_{11}$ | $r=\lceil3\sigma'\rceil$ | rect 3DGS (clamp) | $K^{\text{3dgs}}$ | half $=\sqrt{t\Sigma'}$ | rect FastGS (clamp) | $K^{\text{fast}}$ |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 0.8505 | 4.0 | (23.50, 15.50) | 72.63 | 26 | $[0,3)\times[0,2)$ | 6 | 15.34 | $[0,3)\times[0,2)$ | 6 |
+| 2 | 0.9434 | 4.5 | (27.94, 18.17) | 70.62 | 26 | $[0,3)\times[0,2)$ | 6 | 15.12 | $[0,3)\times[0,2)$ | 6 |
+| 3 | 1.115 | 5.0 | (20.30, 13.90) | 79.87 | 27 | $[0,3)\times[0,2)$ | 6 | 16.08 | $[0,3)\times[0,2)$ | 6 |
+| 4 | 0.8888 | 4.2 | (26.36, 10.74) | 71.96 | 26 | $[0,3)\times[0,2)$ | 6 | 15.27 | $[0,3)\times[0,2)$ | 6 |
+
+$$P^{\text{3dgs}}=24,\quad P^{\text{fastgs}}=24\quad\Rightarrow\quad R_{\text{tile}}^{\text{toy}}=\mathbf{1.000}$$
+
+Cảnh đồ chơi quá nhỏ: hộp 3DGS $2r\approx52$ px và hộp compact $2\cdot\text{half}\approx31$ px đều phủ hết ảnh $48\times32$, clamp vào lưới $3\times2$ nên hai hộp bằng nhau. Bỏ clamp (ảnh vô hạn): $P^{\text{3dgs}}=68$, $P^{\text{fastgs}}=33$ → $R_{\text{tile}}=0.4853$ — đây là số "hình học" thật của cảnh, nhưng kernel trả tiền theo tile bị clamp nên 1.000 mới là số đi vào chi phí của cảnh đồ chơi.
+
+### (c) $R_{\text{gauss}}$ — **giả định**
+
+![Ba tỉ số và tốc độ riêng lẻ vs tích](../Report/test/figures/ch08_levers.png)
+
+*Hình: R_tile, R_gauss, R_adam theo độ tin cậy (đo/đếm/giả định); tích ba tốc độ riêng lẻ (4.39×) lớn hơn tốc độ thật khi kết hợp cả ba (3.83×) vì F không co theo đòn bẩy nào.*
+
+
+Công thức đề bài $N_{\text{cuối}}=N_0[(1+r_{\text{spawn}})(1-r_{\text{prune}})]^n$, $N_0=4$:
+
+| | $g=(1+r_s)(1-r_p)$ | $n$ | $N_{\text{cuối}}$ |
+|---|---|---|---|
+| 3DGS ($r_s=0.20$, $r_p=0.05$) | $1.140$ | 145 | $4\cdot1.14^{145}=7.133\times10^8$ |
+| FastGS ($r_s=0.12$, $r_p=0.08$) | $1.030$ | 28 | $4\cdot1.0304^{28}=9.252$ |
+
+$R_{\text{gauss}}=1.297\times10^{-8}$ — **phi thực tế** ($1.14^{145}$ nổ tung; 3DGS thật dừng ở vài triệu Gaussian nhờ prune opacity/size và VRAM). Chỉ minh hoạ $R_{\text{gauss}}$ nhạy theo $n$ và $r$ theo hàm mũ, và là tỉ số duy nhất phải đo A/B mới biết.
+
+Bộ số của demo (đi vào bảng 8.5), $N_0=10^5$, interval 500, 29 lần densify ($t=500..14500$, demo dùng `it < 15000 and it % 500 == 0` — lệch 1 lần so với `train.py:132` là 28):
+
+| | tham số | $N_{\text{tb}}$ | $N_{\text{cuối}}$ | kiểm tay |
+|---|---|---|---|---|
+| 3DGS | spawn 0.10, prune 0.005 | 933 036 | 1 371 694 | $10^5(1.10\cdot0.995)^{29}=1\,371\,694$ |
+| FastGS | spawn 0.06, prune 0.010, final prune 5%×4 | 292 773 | 329 750 | $10^5(1.06\cdot0.99)^{29}\cdot0.95^4=329\,750$ |
+
+$$R_{\text{gauss}}=\frac{292773}{933036}=\mathbf{0.3138}\ (\text{theo }N_{\text{tb}}),\qquad 0.2404\ (\text{theo }N_{\text{cuối}})$$
+
+Mô hình chi phí dùng $N_{\text{tb}}$ vì chi phí tích luỹ theo mọi vòng.
+
+## 8.4 — Trần Amdahl
+
+![Trần Amdahl theo tỉ trọng F](../Report/test/figures/ch08_amdahl.png)
+
+*Hình: tốc độ cả ba đòn bẩy giảm khi F (phần không co được: loss, SSIM, IO) tăng, luôn dưới trần 1/F — tại F=15% tốc độ 3.83× nằm dưới trần 6.67×.*
+
+
+$$S_{\max}=\frac1f=\frac1{0.15}=\mathbf{6.667\times}$$
+
+## 8.5 — Kết quả mô hình (thay số)
+
+Với $(R_{\text{gauss}},R_{\text{tile}},R_{\text{adam}})=(0.3138,\ 0.2888,\ 0.2761)$, overhead scoring của demo $2.00\%$ trên số hạng $bNK$:
+
+| Cấu hình | $T^{\text{fast}}=0.15R_g+0.55R_gR_t(1+\text{ov})+0.15R_gR_a+0.15$ | $T$ | tốc độ $=1/T$ | bảng 8.5 |
+|---|---|---|---|---|
+| Cả ba | $0.15\cdot0.314+0.55\cdot0.314\cdot0.289\cdot1.02+0.15\cdot0.314\cdot0.276+0.15$ | 0.2609 | **3.833×** | 3.83 |
+| Chỉ $K$ | $0.15+0.55\cdot0.289+0.15+0.15$ | 0.6088 | **1.642×** | 1.64 |
+| Chỉ $N$ | $0.15\cdot0.314+0.55\cdot0.314\cdot1.02+0.15\cdot0.314+0.15$ | 0.4202 | **2.380×** | 2.38 |
+| Chỉ Adam | $0.15+0.55+0.15\cdot0.276+0.15$ | 0.8914 | **1.122×** | 1.12 |
+| Trần Amdahl | $F$ | 0.15 | 6.667× | 6.7 |
+
+Bốn số khớp bảng 8.5. Tích ba đòn bẩy riêng lẻ $1.642\times2.380\times1.122=\mathbf{4.385}>3.833$: nhân được ở $bNK$ nhưng không nhân được ở $F$ (chương 8.5 ghi 4.37 do làm tròn).
+
+Thay $R_{\text{tile}}$ bằng hai giá trị khác (không overhead):
+
+| $R_{\text{tile}}$ | cả ba | chỉ $K$ | chỉ $N$ | chỉ Adam | tích riêng lẻ |
+|---|---|---|---|---|---|
+| 0.360 (ví dụ 3.8) | 3.674× | 1.543× | 2.400× | 1.122× | 4.154× |
+| 1.000 (đồ chơi, clamp) | 2.613× | 1.000× | 2.400× | 1.122× | 2.692× |
+
+Bảng nhạy theo $F$ (giữ tỉ lệ $15:55:15$ cho ba phần biến thiên, $R$ như dòng đầu):
+
+| $F$ | split $(a',b',c',f)$ | $S_{\max}=1/F$ | cả ba | chỉ $K$ | chỉ $N$ | chỉ Adam |
+|---|---|---|---|---|---|---|
+| 0.10 | (0.159, 0.582, 0.159, 0.10) | 10.00 | 4.60× | 1.71× | 2.59× | 1.13× |
+| 0.15 | (0.150, 0.550, 0.150, 0.15) | 6.67 | 3.83× | 1.64× | 2.38× | 1.12× |
+| 0.25 | (0.132, 0.485, 0.132, 0.25) | 4.00 | 2.87× | 1.53× | 2.05× | 1.11× |
+
+Tốc độ tổng nhạy mạnh với $F$ (2.87–4.60×) — đây là số giả định thứ hai sau $R_{\text{gauss}}$.
+
+## 8.6 — Overhead riêng của FastGS (đếm bằng vòng lặp thật)
+
+![Overhead của compute_gaussian_score_fastgs](../Report/test/figures/ch08_overhead.png)
+
+*Hình: số lần densify và forward phụ tăng khi densification_interval giảm — interval mặc định 500 cho overhead ~1.9%, interval 100 đẩy lên ~9.6%.*
+
+
+Điều kiện `train.py:127,132`: `iteration < 15000 and iteration > 500 and iteration % interval == 0`.
+
+| interval | đếm vòng lặp | đầu, cuối | công thức $(t_{\text{cuối}}-t_{\text{đầu}})/\text{interval}+1$ | forward phụ $=n\cdot10\cdot2$ | /30000 (cận trên) | ÷3 (1 vòng ≈ 3 forward) |
+|---|---|---|---|---|---|---|
+| 500 | **28** | 1000, 14500 | $(14500-1000)/500+1=28$ | 560 | 1.87% | 0.62% |
+| 100 | **144** | 600, 14900 | $(14900-600)/100+1=144$ | 2880 | 9.60% | 3.20% |
+
+- Interval 500 khớp chương 8.6 (28, 560, 1.9%, 0.6%).
+- Interval 100: code cho **144**, không phải 145 như chương 8.6 ghi — vì `iteration > densify_from_iter` loại $t=500$; overhead 9.6% (chương ghi $\approx10\%$).
+- `demos.scoring_overhead()` $=15000//500\cdot20/30000=0.0200$ đếm **30** lần (tính cả $t=500$ và $t=15000$, cả hai đều không chạy trong code); đếm đúng là $560/30000=0.0187$. Chênh lệch chỉ đổi tốc độ "cả ba" ở chữ số thứ ba.
+- `final_prune_fastgs` (`train.py:152`): $t\in\{18000,21000,24000,27000\}$ → 4 lần, thêm 80 forward (0.27%), chương 8.6 không tính.
+
+## 8.7 — Những gì FastGS-lite không đổi
+
+Không có số; cả ba tỉ số trên chỉ thay đổi $N$, $K$, $\mathbb 1[\text{Adam}]$ — không có hệ số nào của $G(x)$, $\Sigma'$, $M$, blend, Adam, $\mathcal L$ xuất hiện trong script này.
+
+## 8.8 — Sổ tay cấu hình → con số bị ảnh hưởng
+
+| Thay đổi | Con số bị ảnh hưởng (đếm/tính lại) |
+|---|---|
+| `--iterations 15000` | duyệt $t=1..14999$: FastGS step $=14999+937=15936$, 3DGS $29998$ → $R_{\text{adam}}=0.5312$ (mất hết phần "rẻ"); `final_prune_fastgs` chạy **0** lần |
+| `--iterations 20000` | FastGS $15156+1093=16249$, 3DGS $39998$ → $R_{\text{adam}}=0.4062$; `final_prune` **1** lần (18000) |
+| `--iterations 30000` (mặc định) | $16563/59998=0.2761$; `final_prune` **4** lần (18000, 21000, 24000, 27000) |
+| `--highfeature_lr 0.005` (mặc định) | lr Adam của `f_rest` $=0.005/20=0.00025$ |
+| `--highfeature_lr 0.02` | $0.02/20=\mathbf{0.001}$ — không đổi số phép tính, không đổi $R_{\text{adam}}$ |
+| `--mult 0.5` | $t(\alpha=1)=5.541$, half $=2.354\sigma'$; $t(\alpha=0.1)=3.239$, half $=1.800\sigma'$ |
+| `--mult 1.0` | $t(\alpha=1)=\mathbf{11.08}$, half $=3.329\sigma'$; $t(\alpha=0.1)=6.477$, half $=2.545\sigma'$. $t\times2$, half $\times\sqrt2=1.4142$, diện tích $\times2$; $K_{\text{fastgs}}$ quần thể $6.33\to9.99$ (không về 3DGS 21.91 — SnugBox) |
+| `--densification_interval 100` | $n_{\text{densify}}=144$, 2880 forward phụ, 9.60% cận trên (3.2% quy 3 forward/vòng) |
+| `--densify_until_iter 20000` (interval 500) | $n_{\text{densify}}=38$; nhưng sau 15k optimizer chỉ step 1/32 nên densify tính trên gradient tích luỹ |
+| `--dense`, so sánh A/B | không có số trong mô hình; ảnh hưởng $R_{\text{gauss}}$ — phải đo |
+
+## Bảng tổng hợp ba tỉ số và tốc độ cuối
+
+| Tỉ số | Giá trị | Nguồn gốc | Tin cậy |
+|---|---|---|---|
+| $R_{\text{adam}}$ | **0.2761** $=16563/59998$ | đếm vòng lặp theo `optimizer_step` | **đếm được chính xác** |
+| $R_{\text{tile}}$ | **0.3600** (ví dụ 3.8) / **0.2888** (quần thể 3000 splat) / **1.000** (đồ chơi, clamp lưới $3\times2$; 0.4853 nếu không clamp) | hình học từ `auxiliary.h` | **đo được**, phụ thuộc phân bố splat |
+| $R_{\text{gauss}}$ | **0.3138** ($N_{\text{tb}}$), 0.2404 ($N_{\text{cuối}}$) | spawn/prune giả định của demo | **giả định** — chưa có A/B |
+| overhead scoring | 1.87% (28 densify) — demo dùng 2.0% (30) | đếm vòng lặp `train.py:132` | đếm được |
+| split $(a',b',c',f)$ | 15/55/15/15 | profiling thường thấy | **giả định** |
+
+| Tốc độ (split 15/55/15/15, ov 2%) | Giá trị |
+|---|---|
+| Cả ba đòn bẩy | **3.833×** |
+| Chỉ compact box | 1.642× |
+| Chỉ giảm $N$ | 2.380× |
+| Chỉ Adam thưa | 1.122× |
+| Tích ba số riêng lẻ | 4.385× |
+| Trần Amdahl $1/0.15$ | 6.667× |
+| Cả ba với $F=10\%$ / $25\%$ | 4.60× / 2.87× |
+
+Kết luận: chỉ $R_{\text{adam}}$ và số lần densify là con số chắc chắn từ code; $R_{\text{tile}}$ đo được nhưng dao động 0.29–0.36 theo cảnh (và bằng 1 khi ảnh nhỏ tới mức bị clamp); $R_{\text{gauss}}$ và tỉ lệ $F$ là hai giả định quyết định tốc độ cuối nằm ở đâu trong khoảng 2.9–4.6×.
+
+## Đầu vào của khối
+
+| Đại lượng | Từ chương | Giá trị dùng |
+|---|---|---|
+| lịch Adam | 6.4 | $1\to1/32\to1/64$, SH $1/16$ |
+| $t$, half, rect | 3.6–3.7 | `mult` 0.5, $\alpha$ = 1 (3.8) / 0.1 (đồ chơi) |
+| $s_i$, $\mu'_i$ | 1, 3 | cảnh đồ chơi, camera 1 |
+| lịch densify / final prune | 7 | `train.py:127,132,152` |
+
+## Đầu ra của khối
+
+$(R_{\text{adam}},R_{\text{tile}},R_{\text{gauss}})=(0.2761,\ 0.2888,\ 0.3138)$ → tốc độ mô hình $3.833\times$, trần $6.667\times$. Chương 8 là chương cuối; không có chương sau lấy dùng.
+
+## 13.3 Tài liệu gốc đầy đủ nhất: fastgs-acceleration-method.md
+
+*(Phần dưới đây là tài liệu chính, tự chứa, đầy đủ nhất của repo — Phần I–IX. Nhiều khái niệm đã được trình bày lại có hệ thống hơn ở mục 13.1/13.2 và các Chương 5–12; phần này giữ nguyên toàn văn để không mất chi tiết nào, đặc biệt là mô hình chi phí, phép đo fastgs-lite vs 3DGS và roadmap thực nghiệm.)*
+
 # Vì sao fastgs-lite nhanh hơn 3DGS — từ toán học 3DGS tới mô hình chi phí
 
 > Tài liệu **tự chứa**: bắt đầu từ toán học 3D Gaussian Splatting, dựng ra **mô hình chi phí một vòng lặp huấn luyện**, rồi chỉ đúng chỗ mà fastgs-lite can thiệp vào từng số hạng của mô hình đó. Không giả định người đọc đã biết gì ngoài đại số tuyến tính cơ bản.
@@ -2343,3 +2822,27 @@ LPIPS ở đây là VGG full-res. Con số $0.7643$ ở §6.8 là giá trị c�
 | [README.md](README.md) | Tổng quan repo và cách bắt đầu |
 
 Mã nguồn tương ứng: `utils/fast_utils.py`, `scene/gaussian_model.py:167–209` và `:468–540`, `train.py:126–158`, `gaussian_renderer/__init__.py`, `submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/auxiliary.h:175–345` và `forward.cu:229–271`.
+
+---
+
+## Bài tập (Exercise)
+
+**Bài tập 13.1 (khái niệm).** Giải thích vì sao ba tỉ số $R_{\text{tile}}$, $R_{\text{gauss}}$, $R_{\text{adam}}$ *nhân* vào nhau trong công thức $T^{\text{fast}}/T^{\text{3dgs}}=a'R_g+b'R_gR_t(1+\text{ov})+c'R_gR_a+f$ thay vì cộng, và vì sao số hạng $f$ (Loss/SSIM/IO) không mang tỉ số nào. Từ đó giải thích tại sao tích ba tốc độ riêng lẻ $1.642\times2.380\times1.122=4.385\times$ (bảng §8.5) lại lớn hơn tốc độ thật khi bật cả ba đòn bẩy cùng lúc ($3.833\times$).
+
+**Bài tập 13.2 (khái niệm).** So sánh $R_{\text{adam}}=0.2761$ (được ghi là "đếm chính xác") với $R_{\text{gauss}}=0.3138$ (được ghi là "**giả định**"). Dựa vào §8.3(a) và §8.3(c), nêu rõ vì sao $R_{\text{adam}}$ có thể tính đúng từ công thức lịch optimizer mà không cần chạy GPU, trong khi $R_{\text{gauss}}$ buộc phải là tham số giả định. Ví dụ $N_0[(1+r_s)(1-r_p)]^n$ với $N_0=4$ cho $R_{\text{gauss}}=1.297\times10^{-8}$ minh hoạ rủi ro gì của việc giả định sai $r_s, r_p$?
+
+**Bài tập 13.3 (tính toán).** Dùng bộ số của ví dụ chương 3.8 ($\Sigma'_{11}=117,\ \Sigma'_{12}=54,\ \Sigma'_{22}=36$, $\mu'=(120,88)$, $\alpha=1$, `mult`$=0.5$), hãy tự tính lại $\lambda_{\max},\lambda_{\min}$, sau đó suy ra $r=\lceil3\sqrt{\lambda_{\max}}\rceil$ và $K^{\text{3dgs}}$. Đối chiếu kết quả của bạn với bảng ở §8.3(b) ($\lambda=144,9$; $r=36$; $K^{\text{3dgs}}=25$).
+
+**Bài tập 13.4 (tính toán).** Với cùng ví dụ 13.3, thay `mult` bằng $1.0$ thay vì $0.5$ (tức $t=1.0\cdot2\ln255=11.08$ thay vì $5.541$). Hộp compact (`half`$=\sqrt{t\Sigma'_{11,22}}$) sẽ lớn hơn hay nhỏ hơn? Ước lượng $K^{\text{box}}$ mới theo cùng công cách làm ở §8.3(b) (rect compact $=\lfloor\text{bbox}/16\rfloor$) và cho biết liệu $R_{\text{tile}}$ có tăng hay giảm so với $0.36$.
+
+**Bài tập 13.5 (tính toán).** Bảng §8.3(c) cho $N_0=10^5$, interval $500$, $29$ lần densify, với FastGS: spawn $0.06$, prune $0.010$, cộng thêm final-prune $5\%\times4$ lần. Viết lại công thức $N_{\text{cuối}}=10^5(1.06\cdot0.99)^{29}\cdot0.95^4$ và kiểm tra bằng tính tay (hoặc máy tính) rằng kết quả xấp xỉ $329{,}750$ như bảng đã cho. Nếu final-prune tăng từ 4 lần lên 6 lần (cùng $5\%$ mỗi lần), $N_{\text{cuối}}$ mới là bao nhiêu, và $R_{\text{gauss}}$ theo $N_{\text{cuối}}$ thay đổi thế nào?
+
+**Bài tập 13.6 (tính toán).** Dùng bảng "nhạy theo $F$" ở cuối §8.5 (baseline $F=0.15\to3.83\times$, trần Amdahl $S_{\max}=1/F$). Nếu $F$ giảm còn $0.08$ (tối ưu hoá thêm phần Loss/SSIM/IO), hãy: (a) tính trần Amdahl $S_{\max}=1/F$ mới; (b) dùng cùng $(R_g,R_t,R_a)=(0.3138,0.2888,0.2761)$ và tỉ lệ $15:55:15$ giữ nguyên cho ba phần còn lại (chuẩn hoá lại theo $1-F$) để ước lượng tốc độ "cả ba đòn bẩy" mới, theo cùng cách tính ở bảng đó.
+
+**Bài tập 13.7 (trace code).** Đối chiếu công thức chỉ báo Adam ở §8.3(a) — $\mathbb 1_{\text{main}}(t)=1$ nếu $t\le15000$, $[t\bmod32=0]$ nếu $15000<t\le20000$, $[t\bmod64=0]$ nếu $t>20000$ — với cách hiện thực trong `scene/gaussian_model.py:190-209`. Vì sao vòng lặp phải dừng ở $t=29999$ chứ không phải $t=30000$ (tham chiếu `train.py:160`)? Nếu vô tình đếm luôn cả $t=30000$ (chia hết cho 64), $R_{\text{adam}}$ thay đổi bao nhiêu (so với $0.2761\to0.27605$ đã nêu trong chương)?
+
+**Bài tập 13.8 (trace code + khái niệm).** Bảng §9.6 liệt kê từng số hạng chi phí ($aN$, $bNK$, $cN$, $F$) cùng kernel tương ứng (`preprocessCUDA`, `renderCUDA`/`PerGaussianRenderCUDA`, PyTorch Adam, `conv2d`) và cột "fastgs can thiệp?". Giải thích vì sao $F$ được đánh dấu "❌ **không thể**" trong khi $bNK$ được đánh dấu "✅" ở tất cả các bước con (a)-(e). Nêu cụ thể FastGS can thiệp vào bước nào của $bNK$ (tham chiếu `InclusiveSum`, `duplicateToTilesTouched`, `cub::DeviceRadixSort`, `renderCUDA`) và giải thích mối liên hệ với việc giảm $K$ ở Phần IV của chương.
+
+---
+
+[← Chương 12](12-adaptive-density-control.md) | [Mục lục](00-muc-luc.md) | [Chương 14 →](14-trien-khai-colab-nhat-ky-train.md)

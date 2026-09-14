@@ -26,7 +26,16 @@ sys.path.insert(0, HERE)
 with contextlib.redirect_stdout(io.StringIO()):
     import ch07_test as T   # chạy toàn bộ test, seed 0
 
-plt.rcParams.update({"font.family": "DejaVu Sans", "axes.grid": True, "grid.alpha": 0.3})
+plt.rcParams.update({
+    "font.family": "DejaVu Sans", "font.size": 11,
+    "axes.grid": True, "grid.alpha": 0.25, "grid.linewidth": 0.6,
+    "axes.linewidth": 1.1, "axes.titleweight": "bold", "axes.labelsize": 10.5,
+    "axes.spines.top": False, "axes.spines.right": False,
+    "legend.framealpha": 0.9, "legend.edgecolor": "0.75",
+    "xtick.labelsize": 9, "ytick.labelsize": 9,
+    "figure.facecolor": "white", "axes.facecolor": "white",
+    "savefig.dpi": 450,
+})
 GCOL = ["#d62728", "#2ca02c", "#1f77b4", "#7f7f7f"]
 GNAME = [r"$G_1$", r"$G_2$", r"$G_3$", r"$G_4$"]
 N, V = T.N, T.V_CAMS
@@ -34,7 +43,7 @@ N, V = T.N, T.V_CAMS
 
 def save(fig, name):
     path = os.path.join(FIG, f"ch07_{name}.png")
-    fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
+    fig.savefig(path, dpi=450, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print("saved", os.path.normpath(path))
 

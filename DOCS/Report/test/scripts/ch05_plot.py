@@ -24,10 +24,17 @@ from ch05_test import (points, colors, cam_centers, init_scales, render, gaussia
 FIG_DIR = os.path.join(HERE, "..", "figures")
 os.makedirs(FIG_DIR, exist_ok=True)
 
-plt.rcParams.update({'font.family': 'DejaVu Sans', 'axes.grid': True, 'grid.alpha': 0.3,
-                     'figure.facecolor': 'white', 'axes.facecolor': 'white',
-                     'savefig.facecolor': 'white'})
-SAVE = dict(dpi=150, bbox_inches='tight')
+plt.rcParams.update({
+    'font.family': 'DejaVu Sans', 'font.size': 11,
+    'axes.grid': True, 'grid.alpha': 0.25, 'grid.linewidth': 0.6,
+    'axes.linewidth': 1.1, 'axes.titleweight': 'bold', 'axes.labelsize': 10.5,
+    'axes.spines.top': False, 'axes.spines.right': False,
+    'legend.framealpha': 0.9, 'legend.edgecolor': '0.75',
+    'xtick.labelsize': 9, 'ytick.labelsize': 9,
+    'figure.facecolor': 'white', 'axes.facecolor': 'white',
+    'savefig.facecolor': 'white', 'savefig.dpi': 450,
+})
+SAVE = dict(dpi=450, bbox_inches='tight')
 
 C_REND, C_GT, C_L1, C_SSIM, C_LOSS, C_PSNR = '#1f77b4', '#d62728', '#1f77b4', '#ff7f0e', '#2ca02c', '#9467bd'
 
