@@ -45,6 +45,10 @@ $$
 \mu'_i=\Bigl(\tfrac{(p^{\text{proj}}_x+1)W-1}{2},\ \tfrac{(p^{\text{proj}}_y+1)H-1}{2}\Bigr)\quad[\text{pixel}]
 $$
 
+![Pinhole projection](assets/ch3_pinhole_projection.png)
+
+*Trục x, y, z là toạ độ camera/world (z là chiều sâu $t_z$). Camera tại gốc toạ độ; điểm đỏ $\mu_i$ là tâm Gaussian 3D; mặt phẳng xanh là "mặt phẳng ảnh"; điểm xanh $\mu'_i$ là giao điểm tia chiếu với mặt phẳng đó — sau quy đổi pixel chính là tâm splat 2D.*
+
 ## 3.4 — Bước 2: chiếu covariance (EWA splatting)
 
 **Clamp trước khi tuyến tính hoá** — chi tiết không có trong paper:
@@ -67,6 +71,10 @@ $$
 \quad\xrightarrow{\ \text{khối }2\times2\ }\quad
 \boxed{\ \Sigma'_i=\begin{pmatrix}\Sigma'_{11}+0.3&\Sigma'_{12}\\ \Sigma'_{12}&\Sigma'_{22}+0.3\end{pmatrix}\ }
 $$
+
+![EWA splatting: 3D ellipsoid chiếu xuống 2D ellipse](assets/ch3_ewa_projection.png)
+
+*Trái: mặt cắt ellipse của $\Sigma_i$ 3D, trục x/y world space. Phải: ellipse $\Sigma'_i$ sau khi chiếu 2D, trục u/v pixel — đã "phồng" thêm bởi low-pass $0.3I$ nên không bao giờ suy biến thành đường thẳng dù nhìn nghiêng.*
 
 Hằng $0.3$ là **low-pass filter**: ép mọi splat rộng ít nhất ~1 pixel, tránh aliasing và gradient bằng 0 cho Gaussian nhỏ hơn pixel. Hệ quả toán học: $\det\Sigma'\ge0.09>0$, phép nghịch đảo ở bước sau luôn hợp lệ.
 
@@ -103,6 +111,10 @@ $$
 \frac{S_{\text{vuông}}}{S_{\text{ellipse}}}=\frac{36\sigma_{\max}^2}{9\pi\sigma_{\max}\sigma_{\min}}=\frac4\pi\rho
 $$
 
+![Tỉ lệ diện tích hộp vuông/ellipse theo độ dẹt ρ](assets/ch3_area_ratio.png)
+
+*Trục x là độ dẹt $\rho=\sigma_{max}/\sigma_{min}$, trục y là tỉ lệ diện tích. Đường thẳng tăng tuyến tính: Gaussian càng dẹt (bề mặt nhìn nghiêng) thì phần diện tích thừa mà hộp vuông phải rasterize so với ellipse thật càng lớn.*
+
 ($\rho=4$ → lãng phí $5.09\times$.) Hộp $3\sigma$ cũng **không nhìn đến opacity**: splat mờ trả giá như splat đục.
 
 ### FastGS-lite: compact box theo tiêu chí "còn nhìn thấy ở 8-bit"
@@ -130,6 +142,10 @@ $$
 $$
 \text{Box}_i=[\mu'_x-\text{half}_x,\ \mu'_x+\text{half}_x]\times[\mu'_y-\text{half}_y,\ \mu'_y+\text{half}_y]
 $$
+
+![Compact box vs hộp 3σ vs ellipse, trên lưới tile](assets/ch3_compact_box.png)
+
+*Trục u, v là pixel, lưới mảnh là biên tile 16×16. Hình vuông nét chấm xám là hộp $3\sigma$ của 3DGS gốc (không phụ thuộc $\alpha$); hình chữ nhật tím là compact box của FastGS (co theo $\alpha$ và mult); đường cong đỏ là biên ellipse thật $\Delta^\top M\Delta=t$. Hộp vuông lãng phí diện tích nhiều hơn hẳn so với ellipse thật, nhất là khi ellipse dẹt.*
 
 Ba khác biệt bản chất:
 

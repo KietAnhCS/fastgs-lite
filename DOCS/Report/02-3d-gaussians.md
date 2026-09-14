@@ -27,6 +27,10 @@ $$
 \boxed{\ \Sigma_i=R_iS_iS_i^\top R_i^\top=(R_iS_i)(R_iS_i)^\top\ }
 $$
 
+![Ellipsoid covariance 3D](assets/ch2_covariance_ellipsoid.png)
+
+*Ellipsoid trong world space (trục x, y, z). Ba đoạn màu là ba trục chính — hướng do $R_i$ quyết định, độ dài do $s_{i,1},s_{i,2},s_{i,3}$ quyết định. Gaussian không tròn đều mà là khối "trứng" dẹt/dài tuỳ tỉ lệ scale.*
+
 Vì sao phân rã thay vì học thẳng 6 phần tử của $\Sigma$: $\Sigma$ phải bán xác định dương; tối ưu trực tiếp rất dễ vi phạm. Dạng $MM^\top$ với $M=R_iS_i$ **luôn** PSD theo cấu trúc, bất kể cập nhật thế nào.
 
 Chi tiết code: chuẩn hoá quaternion nằm ở tầng Python (`rotation_activation`), kernel nhận `rot` và dùng thẳng. Gradient của phép chuẩn hoá do autograd lo.
@@ -37,6 +41,10 @@ $$
 G_i(x)=\exp\!\Bigl(-\tfrac12(x-\mu_i)^\top\Sigma_i^{-1}(x-\mu_i)\Bigr),\qquad x\in\mathbb R^3
 $$
 
+![Gaussian bump G(x)](assets/ch2_gaussian_bump.png)
+
+*Mặt cong 3D, trục x, y là độ lệch $(x-\mu_x, y-\mu_y)$ so với tâm, trục z là mật độ $G(x)$. Hình "quả chuông": đỉnh cao 1 tại tâm, giảm dần ra biên; vì $\Sigma$ không đẳng hướng nên đường đồng mức là ellipse chứ không phải hình tròn.*
+
 Cực đại $=1$ tại tâm, giảm theo khoảng cách Mahalanobis. Khi thực sự tính alpha tại pixel (chương 4), $\Sigma$ ở đây phải hiểu là $\Sigma'$ đã chiếu 2D (chương 3), không phải $\Sigma$ 3D.
 
 ## 2.4 — Màu: Spherical Harmonics phụ thuộc hướng nhìn
@@ -46,6 +54,10 @@ Với $\vec d_i=(\mu_i-\text{campos})/\lVert\mu_i-\text{campos}\rVert=(x,y,z)$:
 $$
 c_i(\vec d)=\max\!\Bigl(0,\ 0.5+\sum_{l=0}^{D(t)}\sum_{m=-l}^{l}k_{i,lm}\,Y_{lm}(\vec d)\Bigr)
 $$
+
+![Màu SH trên mặt cầu hướng nhìn](assets/ch2_sh_sphere.png)
+
+*Mặt cầu đơn vị trong không gian hướng — trục x, y, z là ba thành phần của vector hướng nhìn $\vec d$ với $\lVert\vec d\rVert=1$. Màu tại mỗi điểm là màu Gaussian phát ra khi camera đứng theo đúng hướng đó nhìn vào tâm — hai phía đối diện có thể ra màu khác nhau, đó là "màu phụ thuộc góc nhìn".*
 
 Khai triển đúng như `computeColorFromSH`:
 
@@ -64,6 +76,10 @@ $$
 D(t)=\min\bigl(3,\ \lfloor t/1000\rfloor\bigr)
 \quad\Rightarrow\quad \text{số hệ số/kênh}=(D+1)^2:\ 1\to4\to9\to16
 $$
+
+![Lịch tăng bậc SH](assets/ch2_sh_degree_schedule.png)
+
+*Đồ thị bậc thang: trục x là vòng lặp $t$, trục y là bậc SH $D(t)\in\{0,1,2,3\}$. Hàm bậc thang tăng dần, nhảy đúng tại $t=1000,2000,3000$ rồi giữ nguyên — không phải đường liên tục.*
 
 Hệ quả cho mô hình chi phí: hệ số $a$ trong $aN$ (chương 8) tăng dần trong 3000 vòng đầu rồi mới ổn định.
 

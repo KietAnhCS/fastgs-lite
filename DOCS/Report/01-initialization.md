@@ -23,6 +23,10 @@ $$
 \qquad d^2_{\text{knn3}}(p_i)=\frac13\sum_{j\in\text{3-NN}(i)}\lVert p_i-p_j\rVert^2
 $$
 
+![Init scale từ khoảng cách 3-NN](assets/ch1_scale_init.png)
+
+*Trục x, y là toạ độ world space. Các chấm đen là điểm SfM lân cận; điểm đỏ là $p_i$. Ba đoạn nối đỏ là khoảng cách tới 3 láng giềng gần nhất; vòng tròn nét đứt xanh có bán kính bằng RMS của ba khoảng cách đó — chính là kích thước đẳng hướng ban đầu (cùng bán kính theo mọi hướng x/y/z) của Gaussian mới sinh ra tại $p_i$.*
+
 $$
 \tilde q_i=(1,0,0,0),\qquad \tilde\alpha_i=\sigma^{-1}(0.1)=\log\frac{0.1}{0.9}
 $$
@@ -31,6 +35,10 @@ $$
 k_{i,00}=\text{RGB2SH}(c_i)=\frac{c_i-0.5}{C_0},\qquad C_0=\frac{1}{2\sqrt\pi}\approx0.28209,
 \qquad k_{i,lm}=0\ \ (l\ge1)
 $$
+
+![Ánh xạ tuyến tính RGB2SH](assets/ch1_rgb2sh.png)
+
+*Trục x là giá trị một kênh màu RGB gốc (miền [0,1]); trục y là hệ số SH bậc 0 $k_{00}$. Đây là đường thẳng qua điểm (0.5, 0) độ dốc $1/C_0\approx3.545$ — ánh xạ affine, không phi tuyến: màu trung tính 0.5 ánh xạ về 0.*
 
 Ba điều đáng nhớ:
 
@@ -47,6 +55,10 @@ $$
 \qquad
 \boxed{\ \text{extent}=1.1\cdot\max_v\lVert c_v-\bar c\rVert_2\ }
 $$
+
+![Extent từ vị trí camera](assets/ch1_extent.png)
+
+*Trục x, y là toạ độ world space nhìn từ trên xuống. Tam giác xanh là vị trí camera; ngôi sao đỏ là tâm trung bình $\bar c$; vòng tròn nét đứt tím bán kính đúng bằng extent — bao trọn toàn bộ camera cộng biên an toàn 10%, dùng làm "thước đo" tỉ lệ cho cả cảnh.*
 
 Hằng $1.1$ là biên an toàn 10%. `extent` được dùng làm:
 

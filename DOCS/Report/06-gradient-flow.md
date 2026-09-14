@@ -59,6 +59,10 @@ $$
 \Bigl\lVert\sum_xg_x\Bigr\rVert\le\sum_x\lVert g_x\rVert
 $$
 
+![Gradient tại biên vật thể](assets/ch6_edge_gradient.png)
+
+*Trục là toạ độ pixel u, v. Đường thẳng đứng đen là biên vật thể; mũi tên đỏ là $\partial\mathcal L/\partial\mu'$ tại các Gaussian hai bên biên — nửa trái đẩy trái, nửa phải đẩy phải. Cộng có dấu qua toàn ảnh gần như triệt tiêu; cộng trị tuyệt đối (độ dài mũi tên) thì không, nên $g^{abs}$ giữ được tín hiệu "cần split" ở biên.*
+
 Đây là lý do `screenspace_points` có 4 cột thay vì 3.
 
 ## 6.2 — Backward qua Projection về 59 tham số
@@ -91,6 +95,10 @@ $$
 \theta\leftarrow\theta-\eta_\theta\frac{\hat m}{\sqrt{\hat v}+\epsilon},\qquad\epsilon=10^{-15}
 $$
 
+![Quỹ đạo Adam trên mặt loss đồ chơi](assets/ch6_adam_trajectory.png)
+
+*Trục x, y là hai chiều của tham số đồ chơi $\theta_1,\theta_2$. Đường viền xám là các mức đường đồng mức của hàm loss; đường đỏ là quỹ đạo $\theta$ qua từng bước Adam, từ chấm xanh $\theta_0$ hội tụ về sao đen — quỹ đạo uốn cong theo trục dốc hơn, đặc trưng của chuẩn hoá theo $\sqrt{\hat v}$.*
+
 ### Hai optimizer, sáu nhóm learning rate
 
 | Nhóm | Optimizer | $\eta$ mặc định | Không gian |
@@ -110,6 +118,10 @@ $$
 \eta_{xyz}(t)=\text{extent}\cdot\exp\Bigl((1-\tfrac tT)\ln\eta_{\text{init}}+\tfrac tT\ln\eta_{\text{final}}\Bigr),\qquad T=\texttt{position\_lr\_max\_steps}=30000
 $$
 
+![Suy giảm learning rate vị trí](assets/ch6_lr_decay.png)
+
+*Trục x là vòng lặp $t$ (0→30000), trục y là $\eta_{xyz}(t)$ vẽ theo thang log. Đường cong gần như tuyến tính trên thang log — đúng bản chất nội suy log-linear — giảm khoảng 100× từ đầu tới cuối.*
+
 ### Lịch step thưa dần (`optimizer_step`)
 
 $$
@@ -124,6 +136,10 @@ $$
 \mathbb 1_{\text{main}}(t)&t>15000
 \end{cases}
 $$
+
+![Lịch step thưa dần: main vs SH](assets/ch6_step_schedule.png)
+
+*Trên: trục x là $t$, trục y là số bước step luỹ kế — đường xanh (main) gãy khúc thoải dần tại $t=15000,20000$; đường đỏ (SH) tăng chậm hơn rồi nhập cùng lịch main sau 15000. Dưới: mỗi vạch là một thời điểm step thực sự trong 0–20000 — hàng SH thưa hơn hẳn hàng main, đúng tỉ lệ 1/16 so với 1/1.*
 
 Đếm chính xác trên 30 000 vòng (vòng cuối không step vì `if iteration < opt.iterations`):
 

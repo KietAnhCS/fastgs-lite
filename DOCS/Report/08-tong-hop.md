@@ -21,6 +21,10 @@ $$
 \boxed{\ T_{\text{iter}}=\underbrace{a\,N}_{\text{preprocess}}+\underbrace{b\,NK}_{\text{dup+sort+blend+backward}}+\underbrace{c\,N\cdot\mathbb 1[\text{Adam step}]}_{\text{optimizer}}+\underbrace{F}_{\text{loss, SSIM, IO}}\ }
 $$
 
+![Mô hình chi phí T_iter theo N](assets/ch8_cost_model.png)
+
+*Trục x là $N$ (số Gaussian), trục y là $T_{\text{iter}}$. Biểu đồ stacked area: 4 vùng màu ứng 4 số hạng — 3 vùng đầu tăng theo $N$ (tuyến tính hoặc gần tuyến tính), vùng $F$ là dải phẳng không đổi theo $N$ (trần Amdahl).*
+
 Ba đại lượng có thể can thiệp: $N$, $K$, $\mathbb 1[\text{Adam}]$. $F$ thì không.
 
 ## 8.3 — Ba đòn bẩy của FastGS-lite ↔ ba khối của sơ đồ
@@ -37,6 +41,10 @@ $$
 b\,N_{\text{fast}}K_{\text{fast}}=b\,N_{\text{3dgs}}K_{\text{3dgs}}\cdot R_{\text{gauss}}R_{\text{tile}}
 $$
 
+![Ba đòn bẩy nhân nhau — waterfall tăng tốc](assets/ch8_levers_waterfall.png)
+
+*Trục x là cấu hình (thêm dần từng đòn bẩy), trục y là tăng tốc (×). Cột cuối "cả ba" đo được 3.83× thấp hơn tích các cột riêng lẻ (4.37×) — hai đòn bẩy nhân nhau ở số hạng $bNK$ nhưng không nhân được ở số hạng $F$ không co giãn.*
+
 Hai đòn bẩy **nhân** nhau, không cộng.
 
 ## 8.4 — Trần Amdahl
@@ -44,6 +52,10 @@ Hai đòn bẩy **nhân** nhau, không cộng.
 $$
 S_{\max}=\frac{T^{\text{3dgs}}_{\text{iter}}}{F}=\frac1f,\qquad f=\frac{F}{T^{\text{3dgs}}_{\text{iter}}}
 $$
+
+![Trần Amdahl S_max = 1/f](assets/ch8_amdahl.png)
+
+*Trục x là $f$ (tỉ lệ chi phí không co giãn), trục y là speedup trần $S_{\max}$. Hyperbol giảm dần; điểm đánh dấu $f=0.15\to6.7\times$ — không cơ chế nào tăng tốc vượt quá đường cong này.*
 
 Nếu loss + SSIM + IO chiếm 15% thì không cơ chế nào vượt $6.7\times$. Đây là lý do các con số tăng tốc thực tế của họ 3DGS nhanh nằm ở $2$–$5\times$.
 

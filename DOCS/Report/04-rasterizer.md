@@ -48,6 +48,10 @@ G_n(x)=e^{\text{power}_n(x)},\qquad
 \boxed{\ \alpha_n(x)=\min\bigl(0.99,\ \alpha_n\,G_n(x)\bigr)\ }
 $$
 
+![Bản đồ alpha quanh tâm splat](assets/ch4_alpha_field.png)
+
+*Trục $\Delta_u,\Delta_v$ là độ lệch pixel so với tâm $\mu'$ (hệ toạ độ cục bộ, không phải toạ độ ảnh tuyệt đối). Màu là giá trị $\alpha_n(x)$: sáng nhất ở tâm, tắt dần ra ngoài theo hình ellipse nghiêng ($B\ne0$). Viền xanh là ngưỡng $1/255$ — ngoài đó kernel bỏ qua splat.*
+
 Ba cửa loại, đúng thứ tự code:
 
 | Điều kiện | Hành động | Ý nghĩa |
@@ -67,6 +71,11 @@ $$
 $$
 \boxed{\ C(x)=\sum_{n\in\mathcal G_T}c_n\,\alpha_n(x)\,T_n\;+\;T_{\text{final}}\cdot C_{\text{bg}}\ }
 $$
+
+![Cột chồng minh hoạ C(x)](assets/ch4_alpha_blend_stack.png)
+![Transmittance Tₙ giảm dần](assets/ch4_transmittance_decay.png)
+
+*Hình trái: một cột duy nhất chia lớp theo ví dụ 3 Gaussian đỏ/lục/lam ở dưới — mỗi khối màu là một số hạng $c_n\alpha_nT_n$ xếp chồng theo thứ tự depth, cộng phần nền $T_{final}C_{bg}$ trên cùng. Hình phải: trục x là thứ tự Gaussian $n$ theo độ sâu, trục y là $T_n$ — luôn giảm đơn điệu vì $T_{n+1}=T_n(1-\alpha_n)\le T_n$.*
 
 Ví dụ: ba Gaussian $(\text{đỏ},0.5),(\text{lục},0.4),(\text{lam},0.6)$, nền trắng:
 

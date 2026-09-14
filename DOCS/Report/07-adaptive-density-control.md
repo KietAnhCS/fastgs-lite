@@ -69,6 +69,10 @@ $$
 \boxed{\ \text{Pruning}_i=\text{minmax}_i\Bigl(\sum_{v=1}^{V}\text{counts}^{(v)}_i\cdot E^{(v)}_{\text{photo}}\Bigr)\ }
 $$
 
+![Importance và Pruning cho 5 Gaussian mẫu](assets/ch7_importance_pruning.png)
+
+*Hai biểu đồ cột cho G1..G5. Trục x là tên Gaussian; trái là $\text{Importance}_i$ với ngưỡng đỏ tại 5 (chỉ G3 vượt); phải là $\text{Pruning}_i\in[0,1]$ với ngưỡng đen tại 0.9 (G3 chạm đúng 1.0) — Importance cao (đáng nhân bản) và Pruning cao (đáng xoá) không mâu thuẫn: đặt cược ở giai đoạn đầu, thanh lý nếu không cứu được ở giai đoạn cuối.*
+
 min–max ở đây chạy **qua $N$ Gaussian** (khác ② chạy qua pixel). $\text{Pruning}_i$ cao nghĩa là **xoá**, không phải giữ.
 
 ### Ví dụ (từ `3.md`)
@@ -103,6 +107,10 @@ $$
 \boxed{\ \text{split}_i=\bigl[\lVert\bar g^{\text{abs}}_i\rVert\ge\tau^{\text{abs}}_{\text{grad}}\bigr]\wedge\bigl[\max s_i>\delta\,\text{extent}\bigr]\wedge\bigl[\text{Importance}_i>5\bigr]\ }
 $$
 
+![Vùng thoả điều kiện AND của clone](assets/ch7_clone_region.png)
+
+*Trục x là $\lVert\bar g_i\rVert$ (chuẩn gradient tích luỹ), trục y là $\max s_i$ (scale lớn nhất). Vùng xanh lá là nơi hai điều kiện đầu của clone cùng thoả — góc dưới-phải (gradient đủ lớn, scale còn nhỏ). Điều kiện thứ ba (Importance>5) là một chiều độc lập không vẽ được trên mặt phẳng này, chỉ lọc thêm.*
+
 | Ký hiệu | Giá trị | CLI |
 |---|---|---|
 | $\tau_{\text{grad}}$ | $2\times10^{-4}$ | `--grad_thresh` |
@@ -121,11 +129,19 @@ $$
 \tilde s^{(j)}=\log\frac{s_i}{0.8\cdot2}=\log\frac{s_i}{1.6}
 $$
 
+![Lấy mẫu Gaussian con khi split](assets/ch7_split_sampling.png)
+
+*Trục x, y là world space. Ellipse nét đứt là $1\sigma$ của Gaussian gốc; các điểm xanh nhạt là mẫu $\epsilon^{(j)}$ xoay theo $R(q_i)$; hai điểm đỏ là 2 Gaussian con $\mu^{(j)}$ thực tế sau split.*
+
 **Vì sao phép AND là đóng góp chính:** 3DGS densify mọi Gaussian có gradient lớn. Gaussian ở vùng đã hội tụ (gradient còn dư nhưng render đã đúng) hay ở artefact chỉ thấy từ 1–2 góc đều có Importance thấp → không nhân bản. Vì densify lặp ~28–145 lần, tác động lên $N$ là luỹ thừa:
 
 $$
 N_{\text{cuối}}\approx N_0\bigl[(1+r_{\text{spawn}})(1-r_{\text{prune}})\bigr]^{n_{\text{densify}}}
 $$
+
+![Tăng trưởng N theo số lần densify](assets/ch7_n_growth.png)
+
+*Trục x là số lần densify $n_{\text{densify}}$, trục y là $N$. Ba đường ứng với ba cặp $(r_{spawn}, r_{prune})$ — tăng/giảm luỹ thừa (đường cong lồi/lõm trên trục tuyến tính), không phải tuyến tính, vì hệ số nhân lặp lại 28–145 lần.*
 
 ## 7.4 — Prune: lấy mẫu có trọng số (không xoá thẳng)
 

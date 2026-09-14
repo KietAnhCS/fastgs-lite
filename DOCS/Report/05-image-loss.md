@@ -9,6 +9,10 @@ $$
 \boxed{\ \mathcal L=(1-\lambda)\,\mathcal L_1+\lambda\,\mathcal L_{\text{D-SSIM}}\ }
 $$
 
+![Loss theo λ](assets/ch5_loss_mix.png)
+
+*Trục x là $\lambda\in[0,1]$, trục y là $\mathcal L(\lambda)$ — đoạn thẳng nội suy tuyến tính giữa $\mathcal L_1$ (tại $\lambda=0$) và $\mathcal L_{D\text{-}SSIM}$ (tại $\lambda=1$). Hai vạch đứng đánh dấu $\lambda=0.2$ (mặc định) và $0.25$ (preset).*
+
 $$
 \mathcal L_1=\frac{1}{3HW}\sum_{x,\text{ch}}\bigl|I_{\text{rend}}(x)-I_{\text{gt}}(x)\bigr|,
 \qquad
@@ -25,6 +29,10 @@ SSIM dùng cửa sổ Gaussian $11\times11$, $\sigma=1.5$, $C_1=0.01^2$, $C_2=0.
 $$
 \text{SSIM}=\frac{(2\mu_1\mu_2+C_1)(2\sigma_{12}+C_2)}{(\mu_1^2+\mu_2^2+C_1)(\sigma_1^2+\sigma_2^2+C_2)}
 $$
+
+![Cửa sổ Gaussian 11×11, σ=1.5 trong SSIM](assets/ch5_ssim_window.png)
+
+*Trục x, y là độ lệch pixel (u, v) từ tâm cửa sổ 11×11, màu là trọng số Gaussian — đỉnh sáng nhất ở tâm, giảm đối xứng ra biên; đường đồng mức là các hình tròn đồng tâm vì σ bằng nhau theo cả hai trục.*
 
 Hai implementation cho cùng công thức: `fused_ssim` (kernel CUDA, dùng trong vòng lặp train) và `utils/loss_utils.ssim` (PyTorch thuần, dùng khi chấm báo cáo). Cả hai dùng zero-padding `same`.
 
@@ -47,6 +55,10 @@ $$
 \text{MSE}=\frac{1}{3HW}\sum_{x,\text{ch}}\bigl(I_{\text{rend}}-I_{\text{gt}}\bigr)^2
 $$
 
+![PSNR theo MSE](assets/ch5_psnr.png)
+
+*Trục x là MSE (thang log), trục y là PSNR (dB). Đường cong gần như tuyến tính trên thang log-tuyến vì $\text{PSNR}=-10\log_{10}(\text{MSE})$ — dốc âm không đổi, minh hoạ vì sao PSNR "nổ" rất nhanh khi MSE tiệm cận 0.*
+
 $$
 \text{LPIPS}=\sum_{l}\frac{1}{H_lW_l}\sum_{h,w}\bigl\lVert w_l\odot(\hat\phi_l^{\text{rend}}-\hat\phi_l^{\text{gt}})_{hw}\bigr\rVert_2^2
 $$
@@ -58,6 +70,10 @@ với $\hat\phi_l$ là đặc trưng lớp $l$ của mạng (AlexNet/VGG) đã c
 $$
 \boxed{\ \text{Score}=0.4\,(1-\text{LPIPS})+0.3\,\text{SSIM}+0.3\,\operatorname{clamp}\Bigl(\frac{\text{PSNR}}{30},0,1\Bigr)\ }
 $$
+
+![Phân rã Score thành 3 thành phần](assets/ch5_score_decomp.png)
+
+*Bốn cột: ba thành phần $0.4(1-\text{LPIPS})$, $0.3\cdot\text{SSIM}$, $0.3\cdot\text{clamp}(\text{PSNR}/30)$ và cột Score tổng; trục y là giá trị đóng góp (thang 0–1). Ví dụ dùng LPIPS=0.15, SSIM=0.82, PSNR=27dB.*
 
 ### Hai lỗi đã sửa trong repo
 
