@@ -27,6 +27,7 @@ Công thức toán (LaTeX), bảng, code block, sơ đồ Mermaid và ảnh minh
 | 13 | [Tổng hợp Mô hình Chi phí & Phương pháp Tăng tốc FastGS](13-tong-hop-chi-phi-fastgs.md) | Mô hình chi phí $T_{\text{iter}}$, ba đòn bẩy nhân nhau, toàn văn `fastgs-acceleration-method.md` (Phần I–IX) |
 | 14 | [Triển khai Thực tế: Colab T4 & Nhật ký Huấn luyện](14-trien-khai-colab-nhat-ky-train.md) | Preset A trên T4, chống tràn RAM, roadmap CUDA, nhật ký các phiên train thật |
 | 15 | [Phụ lục: Kiểm định số chéo, Dữ liệu & Tài nguyên](15-phu-luc-kiem-dinh-tai-nguyen.md) | Tổng hợp 8 bài test số, `history.csv`/`leaderboard.csv`, công cụ `test.html`, danh mục script |
+| 16 | [Bài toán lớn: Từ COLMAP đến `.ply` render 3D](16-bai-toan-lon-de-bai.md) | Một đề bài duy nhất gộp chương 6–13 (input COLMAP thật) + [lời giải 8 phần, ~30 000 dòng](16-loi-giai/00-muc-luc-loi-giai.md), tính tay đến file `.ply` render được |
 
 ## Nguồn tài liệu gốc
 

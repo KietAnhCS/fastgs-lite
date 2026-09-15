@@ -201,17 +201,59 @@ Mũi tên xanh kết thúc ở **3D Gaussians**: $\theta_i\leftarrow\theta_i-\De
 
 ```mermaid
 flowchart TD
-  L["∂𝓛/∂C(x) từ L1 (chương 5)"] --> A["∂C/∂α_n = c_n T_n − (C_tot − C_≤n)/(1−α_n) − T_final·C_bg/(1−α_n)<br/>pixel (23,15), 4 Gaussian: khớp sai phân hữu hạn ≤ 1.8e−9"]
-  A --> G["∂G/∂Δ = −G·(AΔu + BΔv, CΔv + BΔu)<br/>∂𝓛/∂A, ∂𝓛/∂C: khớp FD ≤ 3e−7<br/>∂𝓛/∂B: code lưu ½ rồi nhân 2 ở computeCov2D backward"]
-  G --> MU["∂𝓛/∂μ' × (W/2, H/2) → 4 cột (screenspace_points)<br/>cộng dồn 1536 pixel của camera 1"]
-  MU --> S["cột 0–1 có dấu<br/>G1: g = (4.37e−4, −2.06e−4), ‖g‖ = 4.83e−4"]
-  MU --> AB["cột 2–3 trị tuyệt đối<br/>G1: g_abs = (3.17e−2, 1.92e−2), ‖g_abs‖ = 3.71e−2<br/>gấp 77× — nửa trái/phải footprint triệt tiêu nhau"]
-  S --> ACC["3 camera = 3 iteration: accum += ‖g‖, denom += 1<br/>ḡ = 6.43e−3 ≥ τ_grad = 2e−4 ✓<br/>ḡ_abs = 3.04e−2 ≥ τ_abs = 1.2e−3 ✓ (cả 4 Gaussian)"]
-  AB --> ACC
-  ACC --> ADC["→ ADC (chương 7)"]
-  MU --> ADAM["Adam: m̂ / (√v̂ + ε) = 1.000 với g lặp lại<br/>→ Δθ = η bất kể độ lớn g<br/>xyz 2.7e−4 · f_dc 2.5e−3 · opacity 2.5e−2<br/>scaling 5e−3 · rotation 1e−3 · f_rest 0.005/20 = 2.5e−4"]
-  ADAM --> SCH["lịch step (t = 1 … 29999)<br/>optimizer 15000 + 157 + 156 = 15313<br/>shoptimizer 937 + 157 + 156 = 1250<br/>tổng 16563 / 59998 = 0.276"]
-  SCH --> GE["g_eff: cộng 64 gradient rồi 1 step → Δθ = 1.0·η<br/>64 step nhỏ → 63.6·η (khác 63.6×)"]
+  L["`**∂𝓛/∂C(x)**
+  từ L1 (chương 5)`"]
+
+  A["`**Alpha blending backward**
+  ∂C/∂αₙ = cₙTₙ − (C_tot − C_≤ₙ)/(1−αₙ) − T_final·C_bg/(1−αₙ)
+  *pixel (23,15), 4 Gaussian*
+  khớp sai phân hữu hạn ≤ **1.8e−9**`"]
+
+  G["`**Gaussian 2D backward**
+  ∂G/∂Δ = −G·(AΔu + BΔv, CΔv + BΔu)
+  ∂𝓛/∂A, ∂𝓛/∂C: khớp FD ≤ **3e−7**
+  ∂𝓛/∂B: code lưu ½ rồi ×2 ở computeCov2D backward`"]
+
+  MU["`**Screen-space gradient**
+  ∂𝓛/∂μ' × (W/2, H/2) → 4 cột
+  cộng dồn **1536 pixel** của camera 1`"]
+
+  S["`**Cột 0–1 (có dấu)**
+  G1: g = (4.37e−4, −2.06e−4)
+  ‖g‖ = **4.83e−4**`"]
+
+  AB["`**Cột 2–3 (trị tuyệt đối)**
+  G1: g_abs = (3.17e−2, 1.92e−2)
+  ‖g_abs‖ = **3.71e−2**
+  gấp **77×** — nửa trái/phải footprint triệt tiêu nhau`"]
+
+  ACC["`**Gộp 3 camera = 3 iteration**
+  accum += ‖g‖, denom += 1
+  ḡ = 6.43e−3 ≥ τ_grad = 2e−4 ✓
+  ḡ_abs = 3.04e−2 ≥ τ_abs = 1.2e−3 ✓ (cả 4 Gaussian)`"]
+
+  ADC["`→ **ADC** (chương 7)`"]
+
+  ADAM["`**Adam update**
+  m̂ / (√v̂ + ε) = 1.000 với g lặp lại
+  ⇒ Δθ = η bất kể độ lớn g
+  xyz 2.7e−4 · f_dc 2.5e−3 · opacity 2.5e−2
+  scaling 5e−3 · rotation 1e−3 · f_rest 0.005/20 = 2.5e−4`"]
+
+  SCH["`**Lịch step** (t = 1 … 29999)
+  optimizer 15000+157+156 = 15313
+  shoptimizer 937+157+156 = 1250
+  tổng 16563 / 59998 = **0.276**`"]
+
+  GE["`**g_eff**
+  cộng 64 gradient rồi 1 step ⇒ Δθ = 1.0·η
+  64 step nhỏ ⇒ 63.6·η (khác 63.6×)`"]
+
+  L --> A --> G --> MU
+  MU --> S --> ACC
+  MU --> AB --> ACC
+  ACC --> ADC
+  MU --> ADAM --> SCH --> GE
 ```
 
 ## 6.0 — Đầu vào (từ chương 1–4)
