@@ -525,5 +525,182 @@ Kèm: $\eta_{xyz}(t)$ bảng 6.4(b), `extent` $=1.690$, và bước Adam $\lvert
 **Bài tập 11.7.** So sánh sáu nhóm learning rate ở bảng mục 6.4: `xyz`, `f_dc`, `opacity`, `scaling`, `rotation` dùng `optimizer`, còn `f_rest` dùng `shoptimizer` riêng với lr $=\texttt{highfeature\_lr}/20=0.00025$. Dựa vào mục "Tách lr SH ≠ đòn bẩy tốc độ", giải thích vì sao bản thân giá trị lr nhỏ hơn **không** làm giảm chi phí tính toán, trong khi nhịp step thưa ($1/16$ trong giai đoạn $t\le15000$) mới là thứ giảm chi phí. Kết hợp cả hai yếu tố (lr nhỏ hơn 10× và số bước ít hơn 16×), hãy giải thích hiện tượng "vệt specular hội tụ chậm" được nhắc ở cuối mục 6.4.
 
 ---
+# Công thức Adam đầy đủ cho 6 nhóm tham số (viết rõ, chú thích từng ký hiệu)
 
+## Trước tiên: giải nghĩa từng ký hiệu dùng trong công thức
+
+| Ký hiệu | Đọc là | Ý nghĩa |
+|---|---|---|
+| $\theta$ | "theta" | tham số đang được học (vị trí, màu, opacity...) |
+| $g$ | "gờ" | gradient (đạo hàm của loss theo $\theta$) — hướng và độ lớn "lỗi" cần sửa |
+| $m$ | "mờ" | trung bình động của gradient (giữ **hướng** gradient qua thời gian) |
+| $v$ | "vê" | trung bình động của **bình phương** gradient (giữ **độ lớn** gradient qua thời gian) |
+| $\hat m$ | "m mũ" (m có dấu mũ, đọc là "m hat") | $m$ đã được hiệu chỉnh độ lệch (bias-corrected) |
+| $\hat v$ | "v mũ" (v hat) | $v$ đã được hiệu chỉnh độ lệch |
+| $\beta_1$ | "bê-ta 1" | hệ số làm mượt cho $m$, thường = 0.9 |
+| $\beta_2$ | "bê-ta 2" | hệ số làm mượt cho $v$, thường = 0.999 |
+| $\eta$ | "ê-ta" | learning rate (tốc độ học — bước đi mỗi lần cập nhật) |
+| $\epsilon$ | "ép-si-lon" | số rất nhỏ cộng vào mẫu số để tránh chia cho 0 |
+| $k$ | — | số thứ tự lần **thực sự cập nhật** (không phải số thứ tự iteration $t$) |
+| $t$ | — | số thứ tự iteration (vòng lặp huấn luyện) |
+
+**Lưu ý về ký hiệu mũ**: khi tôi viết `x^y` hoặc dùng cách viết phân số, đó luôn là **x mũ y** (x lũy thừa y), ví dụ `beta_1^k` nghĩa là "bê-ta 1 mũ k". Tôi sẽ viết rõ bằng chữ song song để khỏi nhầm.
+
+---
+
+## Công thức Adam gốc (áp dụng chung cho cả 6 nhóm, chỉ khác tốc độ học $\eta$)
+
+Tại mỗi lần cập nhật thứ $k$:
+
+**Bước 1 — cập nhật trung bình động của gradient (giữ hướng):**
+$$m_k = \beta_1 \times m_{k-1} + (1-\beta_1) \times g_k$$
+
+**Bước 2 — cập nhật trung bình động của bình phương gradient (giữ độ lớn):**
+$$v_k = \beta_2 \times v_{k-1} + (1-\beta_2) \times g_k^2 \quad \text{(}g_k^2\text{ nghĩa là }g_k\text{ nhân với chính nó)}$$
+
+**Bước 3 — hiệu chỉnh độ lệch (bias correction)** — vì lúc đầu $m_0=v_0=0$ nên $m,v$ bị lệch về phía 0, cần chia lại:
+$$\hat m_k = \frac{m_k}{1-\beta_1^{\,k}} \qquad (\beta_1^{\,k}\text{ đọc là "bê-ta 1 mũ k"})$$
+$$\hat v_k = \frac{v_k}{1-\beta_2^{\,k}} \qquad (\beta_2^{\,k}\text{ đọc là "bê-ta 2 mũ k"})$$
+
+**Bước 4 — cập nhật tham số:**
+$$\theta \leftarrow \theta - \eta \times \frac{\hat m_k}{\sqrt{\hat v_k} + \epsilon}$$
+
+trong đó $\sqrt{\hat v_k}$ nghĩa là **căn bậc hai của $\hat v_k$**.
+
+**Giá trị hằng số dùng trong FastGS**: $\beta_1 = 0.9$, $\beta_2 = 0.999$, $\epsilon = 10^{-15}$ (tức $0.000000000000001$ — cực nhỏ, chỉ để tránh lỗi chia cho 0, khác với giá trị mặc định $10^{-8}$ mà PyTorch hay dùng).
+
+**Vì sao $k$ khác $t$?** $t$ là số thứ tự của mọi vòng lặp huấn luyện (chạy từ 1 đến 30000). Nhưng FastGS không phải vòng nào cũng gọi Adam cập nhật — có những giai đoạn chỉ cập nhật mỗi 32 hoặc 64 vòng một lần. Nên $k$ (số lần **thực sự** cập nhật) nhỏ hơn nhiều so với $t$, đặc biệt ở giai đoạn cuối. Gradient dùng ở lần cập nhật thứ $k$ là **tổng cộng dồn** của mọi vòng lặp kể từ lần cập nhật trước đó tới giờ:
+$$g_k = \nabla_\theta\mathcal L^{(t_{k-1}+1)} + \nabla_\theta\mathcal L^{(t_{k-1}+2)} + \dots + \nabla_\theta\mathcal L^{(t_k)}$$
+(tức cộng dồn đạo hàm của loss theo $\theta$ ở tất cả các vòng chưa cập nhật, từ vòng sau lần cập nhật trước cho tới vòng cập nhật hiện tại).
+
+---
+
+## 1. Nhóm `xyz` — vị trí 3D của Gaussian, ký hiệu $\mu$ ("muy")
+
+$$m_k = 0.9 \times m_{k-1} + 0.1 \times g_k$$
+$$v_k = 0.999 \times v_{k-1} + 0.001 \times g_k^2$$
+
+**Tốc độ học có giảm dần theo thời gian** (không phải hằng số), công thức:
+$$\eta_{xyz}(t) = \text{extent} \times \exp\Bigl[\ \bigl(1-\tfrac{t}{T}\bigr)\times\ln(1.6\times10^{-4}) \ + \ \tfrac{t}{T}\times\ln(1.6\times10^{-6})\ \Bigr]$$
+
+Trong đó:
+- $\exp[...]$ nghĩa là **e mũ [...]** (e = số Euler ≈ 2.71828)
+- $\ln(...)$ nghĩa là logarit tự nhiên
+- $\text{extent}$ = kích thước tổng thể của cảnh (một hằng số tính từ vị trí camera)
+- $T = 30000$ (tổng số vòng lặp dự kiến huấn luyện)
+- Khi $t=0$: $\eta_{xyz} = \text{extent}\times1.6\times10^{-4}$ (lớn nhất)
+- Khi $t=T=30000$: $\eta_{xyz} = \text{extent}\times1.6\times10^{-6}$ (nhỏ nhất, giảm 100 lần so với ban đầu)
+
+Cập nhật tham số:
+$$\mu \leftarrow \mu - \eta_{xyz}(t) \times \frac{\hat m_k}{\sqrt{\hat v_k} + 10^{-15}}$$
+
+- Chạy trong không gian toạ độ thực (world space), không qua hàm biến đổi nào
+- Chỉ cập nhật khi tới lượt "main" (nhóm optimizer chính)
+
+---
+
+## 2. Nhóm `f_dc` — hệ số màu cơ bản (SH bậc 0)
+
+$$m_k = 0.9 \times m_{k-1} + 0.1 \times g_k$$
+$$v_k = 0.999 \times v_{k-1} + 0.001 \times g_k^2$$
+
+Tốc độ học là **hằng số**, không đổi theo thời gian:
+$$\eta_{f_{dc}} = \texttt{lowfeature\_lr} = 0.0025$$
+
+Cập nhật:
+$$f_{dc} \leftarrow f_{dc} - 0.0025 \times \frac{\hat m_k}{\sqrt{\hat v_k} + 10^{-15}}$$
+
+- Chạy trực tiếp trên hệ số Spherical Harmonics (SH) bậc 0 — đây là màu cơ bản của Gaussian, không phụ thuộc góc nhìn
+- Chỉ cập nhật khi tới lượt "main"
+
+---
+
+## 3. Nhóm `opacity` — độ trong suốt/đục, ký hiệu $\alpha$ ("an-pha")
+
+$$m_k = 0.9 \times m_{k-1} + 0.1 \times g_k$$
+$$v_k = 0.999 \times v_{k-1} + 0.001 \times g_k^2$$
+
+Tốc độ học là hằng số:
+$$\eta_\alpha = 0.025$$
+
+**Điểm đặc biệt**: opacity không được lưu trực tiếp mà lưu ở dạng "logit" (ký hiệu $\tilde\alpha$, đọc là "an-pha ngã", nghĩa là an-pha ở không gian chưa qua hàm sigmoid). Cập nhật:
+$$\tilde\alpha \leftarrow \tilde\alpha - 0.025 \times \frac{\hat m_k}{\sqrt{\hat v_k} + 10^{-15}}$$
+
+Sau đó, khi cần dùng opacity thật để render ảnh, ta chuyển đổi bằng **hàm sigmoid**:
+$$\alpha = \sigma(\tilde\alpha) = \frac{1}{1 + e^{-\tilde\alpha}} \qquad (e^{-\tilde\alpha}\text{ nghĩa là }e\text{ mũ âm }\tilde\alpha)$$
+
+Hàm sigmoid này ép giá trị $\alpha$ luôn nằm trong khoảng $(0,1)$ dù $\tilde\alpha$ có thể là số bất kỳ.
+
+**Ghi chú thêm**: tham số này bị "ép" định kỳ ở phần Adaptive Density Control (chương khác):
+- Sau mỗi lần thêm/bớt Gaussian (densify): $\tilde\alpha \leftarrow \sigma^{-1}\bigl(\min(\alpha, 0.8)\bigr)$ — nghĩa là nếu $\alpha$ vượt quá 0.8 thì bị cắt về đúng 0.8, rồi chuyển ngược lại thành $\tilde\alpha$ bằng hàm nghịch đảo sigmoid $\sigma^{-1}$ (đọc là "sigma nghịch đảo" hoặc "sigma mũ âm 1")
+- Mỗi 3000 vòng: $\tilde\alpha \leftarrow \sigma^{-1}\bigl(\min(\alpha, 0.01)\bigr)$ — ép mạnh hơn, gần như về 0
+- Cả hai lần ép này đều **xoá sạch bộ nhớ Adam** cho riêng nhóm opacity, tức reset $m=0, v=0$ nhưng **giữ nguyên** số đếm $k$ (nên hệ số hiệu chỉnh $\frac{1}{1-\beta^k}$ không bị đưa về giá trị của lần đầu tiên)
+
+---
+
+## 4. Nhóm `scaling` — kích thước Gaussian, ký hiệu $s$
+
+$$m_k = 0.9 \times m_{k-1} + 0.1 \times g_k$$
+$$v_k = 0.999 \times v_{k-1} + 0.001 \times g_k^2$$
+
+Tốc độ học là hằng số:
+$$\eta_s = 0.005$$
+
+Tương tự opacity, scale không lưu trực tiếp mà lưu ở dạng logarit, ký hiệu $\tilde s$ ("s ngã"):
+$$\tilde s \leftarrow \tilde s - 0.005 \times \frac{\hat m_k}{\sqrt{\hat v_k} + 10^{-15}}$$
+
+Khi cần scale thật để render, chuyển đổi bằng **hàm mũ e**:
+$$s = e^{\tilde s} \qquad (\text{tức } e \text{ mũ } \tilde s)$$
+
+Cách lưu này đảm bảo $s$ luôn dương (vì $e$ mũ số nào cũng dương), dù $\tilde s$ có thể âm hay dương tuỳ ý.
+
+---
+
+## 5. Nhóm `rotation` — quay của Gaussian, ký hiệu $q$ (quaternion — số biểu diễn phép quay 3D bằng 4 thành phần)
+
+$$m_k = 0.9 \times m_{k-1} + 0.1 \times g_k$$
+$$v_k = 0.999 \times v_{k-1} + 0.001 \times g_k^2$$
+
+Tốc độ học là hằng số:
+$$\eta_q = 0.001$$
+
+Cập nhật trực tiếp trên quaternion **thô** (chưa chuẩn hoá về độ dài 1):
+$$q \leftarrow q - 0.001 \times \frac{\hat m_k}{\sqrt{\hat v_k} + 10^{-15}}$$
+
+Khi cần quaternion thật dùng để render, chia cho độ dài của chính nó để đưa về quaternion đơn vị:
+$$\hat q = \frac{q}{\lVert q\rVert} \qquad (\lVert q\rVert\text{ là độ dài — căn bậc hai tổng bình phương 4 thành phần của } q)$$
+
+Bước chuẩn hoá này và gradient chảy ngược qua nó được PyTorch tự động tính (autograd), không cần viết công thức đạo hàm tay.
+
+---
+
+## 6. Nhóm `f_rest` — hệ số màu bậc cao (SH bậc 1 đến 3, mô tả cách màu đổi theo góc nhìn) — dùng bộ tối ưu **RIÊNG**
+
+$$m_k = 0.9 \times m_{k-1} + 0.1 \times g_k$$
+$$v_k = 0.999 \times v_{k-1} + 0.001 \times g_k^2$$
+
+Tốc độ học tính từ tham số dòng lệnh `--highfeature_lr` (mặc định 0.005), **chia cho 20**:
+$$\eta_{f_{rest}} = \frac{\texttt{highfeature\_lr}}{20} = \frac{0.005}{20} = 0.00025$$
+
+Cập nhật:
+$$f_{rest} \leftarrow f_{rest} - 0.00025 \times \frac{\hat m_k}{\sqrt{\hat v_k} + 10^{-15}}$$
+
+**Điểm khác biệt lớn nhất so với 5 nhóm trên**: nhóm này dùng một đối tượng Adam **hoàn toàn tách biệt** (gọi là `shoptimizer`, viết tắt của "SH optimizer"), có bộ đếm $k$ riêng (gọi là $k_{\text{SH}}$ để phân biệt với $k_{\text{main}}$ của 5 nhóm kia), và có **lịch gọi cập nhật khác hẳn**:
+- Khi $t \le 15000$: chỉ cập nhật nếu $t$ chia hết cho 16 (tức 1 trong 16 vòng mới cập nhật 1 lần — thưa hơn nhóm main rất nhiều)
+- Khi $t > 15000$: nhập chung lịch với nhóm main (mỗi 32 vòng, rồi mỗi 64 vòng)
+
+---
+
+## Bảng tổng hợp cuối cùng
+
+| Nhóm | Ký hiệu tham số | Tốc độ học $\eta$ | Không gian lưu trữ | Hàm chuyển đổi khi render | Optimizer | Lịch cập nhật |
+|---|---|---|---|---|---|---|
+| `xyz` | $\mu$ | giảm dần: $\text{extent}\times1.6\text{e-}4 \to \text{extent}\times1.6\text{e-}6$ | toạ độ thực | không có (dùng trực tiếp) | `optimizer` | main |
+| `f_dc` | $f_{dc}$ | $0.0025$ (không đổi) | hệ số SH bậc 0 | không có | `optimizer` | main |
+| `opacity` | $\tilde\alpha$ | $0.025$ (không đổi) | logit | $\alpha=\sigma(\tilde\alpha)=1/(1+e^{-\tilde\alpha})$ | `optimizer` | main |
+| `scaling` | $\tilde s$ | $0.005$ (không đổi) | logarit | $s = e^{\tilde s}$ | `optimizer` | main |
+| `rotation` | $q$ | $0.001$ (không đổi) | quaternion thô | $\hat q = q/\lVert q\rVert$ | `optimizer` | main |
+| `f_rest` | $f_{rest}$ | $0.005/20=0.00025$ | hệ số SH bậc 1–3 | không có | `shoptimizer` (riêng) | thưa, SH riêng |
+
+**Ghi nhớ then chốt**: 5 nhóm đầu tiên (`xyz, f_dc, opacity, scaling, rotation`) tuy có tốc độ học $\eta$ và ý nghĩa vật lý khác nhau, nhưng đều nằm chung trong **một** đối tượng Adam của PyTorch — mỗi nhóm là một "param group" riêng bên trong, có bộ nhớ $(m,v,k)$ độc lập cho từng phần tử số, nhưng tất cả cùng được gọi `.step()` (thực hiện cập nhật) tại **cùng một thời điểm** theo lịch của nhóm "main". Riêng `f_rest` (màu bậc cao) tách hẳn ra một đối tượng Adam thứ hai (`shoptimizer`), có lịch gọi `.step()` khác — đây chính là "mẹo" kỹ thuật để FastGS có thể làm mỗi nhóm tham số cập nhật với nhịp độ khác nhau mà không cần viết lại thuật toán Adam từ đầu.
 [← Chương 10](10-anh-den-loss-metrics.md) | [Mục lục](00-muc-luc.md) | [Chương 12 →](12-adaptive-density-control.md)
