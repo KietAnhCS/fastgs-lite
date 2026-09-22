@@ -84,5 +84,3 @@ $$\boxed{\frac{\partial L}{\partial A}=-\tfrac12G\Delta u^2\,\frac{\partial L}{\
 $$\frac{\partial L}{\partial C}\to \frac{\partial L}{\partial c_n},\ \frac{\partial L}{\partial\alpha_n(x)} \to \frac{\partial L}{\partial o_n},\frac{\partial L}{\partial G_n}\to\frac{\partial L}{\partial \Delta u},\frac{\partial L}{\partial \Delta v}\to \frac{\partial L}{\partial \mu_u'},\frac{\partial L}{\partial \mu_v'},\frac{\partial L}{\partial A},\frac{\partial L}{\partial B},\frac{\partial L}{\partial C_{\text{conic}}}$$
 
 rồi $A,B,C$ tiếp tục lan về scale/rotation của Gaussian 3D qua $\Sigma=RSS^\top R^\top$ (bước tiếp theo nếu bạn cần).
-
-Bạn muốn mình đi tiếp bước $A,B,C \to \Sigma' \to \Sigma_{3D} \to (R,S)$ (scale, quaternion) không, hay dừng ở đây là đủ cho phần bạn đang cần?
