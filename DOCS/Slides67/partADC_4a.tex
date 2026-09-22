@@ -1,0 +1,183 @@
+% ============================================================
+% Phần 4a — Adaptive Density Control: Gradient truyền thống,
+% tích luỹ, và ranh giới quyết định clone/split (FastGS-lite)
+% Nguồn số liệu: DOCS/BOOK/adc_figures/part4_figures.py
+% ============================================================
+
+% --- 4_1_gradient-cancellation.png ---
+\begin{frame}{Triệt tiêu Gradient (Gradient Cancellation)}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+  \item \textbf{Tầng 1 (trong 1 ảnh):} gradient vị trí theo trục $u$ đổi dấu hai bên biên vật thể $\Rightarrow$ cộng có dấu có thể gần 0; cần cột trị tuyệt đối để giữ tín hiệu.
+  \item \textbf{Tầng 2 (giữa các view):} mỗi view $v$ cho một vector gradient vị trí $g^{(v)} \in \mathbb{R}^2$ hướng khác nhau.
+  \item Ví dụ 4 view, góc $(20^\circ, 110^\circ, 200^\circ, 290^\circ)$, độ lớn $(1.0, 0.9, 1.1, 0.95)$:
+  \[
+    \Big\| \sum_{v} g^{(v)} \Big\| \approx 0.11 \quad \text{(gần 0 — SAI nếu cộng vector)}
+  \]
+  \item Code \texttt{add\_densification\_stats} lấy $\|g^{(v)}\|$ \textbf{TRƯỚC} rồi mới cộng qua các iteration:
+  \[
+    \texttt{accum} = \sum_v \|g^{(v)}\| = 3.95, \quad
+    \bar g = \frac{\texttt{accum}}{\texttt{denom}} = \frac{3.95}{4} = 0.9875
+  \]
+  \item Kết luận: chuẩn hoá bằng norm-trước-rồi-cộng tránh triệt tiêu, còn cộng vector trực tiếp gần như xoá sạch tín hiệu densify.
+\end{itemize}
+\end{column}
+\begin{column}{0.46\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{4_1_gradient-cancellation.png}
+\captionof{figure}{\footnotesize Hai tầng triệt tiêu: trong ảnh (cần abs) và giữa view (cần norm trước khi cộng).}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 4_2_accum-denom-curve.png ---
+\begin{frame}{Đường cong tích luỹ: accum, denom, $\bar g$}
+\begin{columns}[T]
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Trong 1 chu kỳ \texttt{densification\_interval} $T=100$ vòng lặp, mỗi Gaussian tích luỹ:
+  \[
+    \texttt{accum}_t = \sum_{t'\le t, \text{visible}} \|g_{t'}\|, \qquad
+    \texttt{denom}_t = \#\{t' \le t : \text{visible}\}
+  \]
+  \[
+    \bar g_t = \frac{\texttt{accum}_t}{\texttt{denom}_t}
+  \]
+  \item Ba Gaussian mô phỏng: A (luôn hữu hình, $g \sim \mathcal{N}(3\times10^{-4}, 8\times10^{-5})$), B (hữu hình 40\% view, $g \sim \mathcal{N}(6\times10^{-4}, 1.5\times10^{-4})$), C (đã hội tụ, $g \sim \mathcal{N}(5\times10^{-5}, 2\times10^{-5})$).
+  \item Ngưỡng $\tau_{\text{grad}} = 2\times10^{-4}$ (\texttt{--grad\_thresh}).
+  \item B có \texttt{denom} nhỏ hơn A nhưng $\bar g$ vẫn cao hơn ngưỡng, vì chia theo \textbf{số lần THẤY} chứ không phải theo tổng số iteration.
+  \item C có $\bar g \approx 5\times10^{-5} < \tau_{\text{grad}}$: không densify — tín hiệu tin cậy phụ thuộc \texttt{denom}, không chỉ \texttt{accum}.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{4_2_accum-denom-curve.png}
+\captionof{figure}{\footnotesize accum tăng tuyến tính, denom chỉ đếm khi radii\textgreater0, $\bar g$ là trung bình theo lần thấy.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 4_3_and-plane-5gaussians.png ---
+\begin{frame}{Mặt phẳng AND: gradient truyền thống $\times$ Importance}
+\footnotesize
+\begin{columns}[T]
+\begin{column}{0.55\linewidth}
+\begin{itemize}
+  \item 5 Gaussian ví dụ (Phần 3): $\bar g = (0.00025, 0.00008, 0.00031, 0.00011, 0.00042)$, $\bar g_{\text{abs}} = (0.00040, 0.00030, 0.00055, 0.00150, 0.00070)$, Importance $= (0, 0, 6, 3, 1)$.
+  \item Ngưỡng: $\tau_{\text{grad}} = 2\times10^{-4}$, $\tau_{\text{abs}} = 1.2\times10^{-3}$, ngưỡng Importance $= 5$.
+  \item \textbf{Nhánh clone} (kích thước nhỏ, G1, G2, G3, G5):
+  \begin{itemize}
+    \footnotesize
+    \item G3: $\bar g = 3.1\times10^{-4} \ge \tau_{\text{grad}}$ \textbf{AND} Imp $= 6 > 5$ $\Rightarrow$ \textbf{CLONE}.
+    \item G1: $\bar g = 2.5\times10^{-4} \ge \tau_{\text{grad}}$ nhưng Imp $= 0 \le 5$ $\Rightarrow$ 3DGS gốc sẽ clone, FastGS \textbf{chặn}.
+    \item G5: $\bar g = 4.2\times10^{-4} \ge \tau_{\text{grad}}$ nhưng Imp $= 1 \le 5$ $\Rightarrow$ \textbf{chặn}.
+    \item G2: $\bar g = 0.8\times10^{-4} < \tau_{\text{grad}}$ $\Rightarrow$ không đạt điều kiện gradient.
+  \end{itemize}
+  \item \textbf{Nhánh split} (kích thước lớn, G4): $\bar g_{\text{abs}} = 1.5\times10^{-3} \ge \tau_{\text{abs}}$ nhưng Imp $= 3 \le 5$ $\Rightarrow$ \textbf{chặn}.
+  \item Kết quả AND: chỉ G3 được densify (clone); G1, G5, G4 bị chặn dù gradient 3DGS gốc đạt ngưỡng.
+\end{itemize}
+\end{column}
+\begin{column}{0.42\linewidth}
+\centering
+\includegraphics[width=\linewidth]{4_3_and-plane-5gaussians.png}
+\captionof{figure}{\footnotesize Phép AND của FastGS-lite trên 5 Gaussian: chỉ G3 vượt cả hai điều kiện.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 4_4_clone-region-500.png ---
+\begin{frame}{Vùng ứng viên clone trên quy mô 500 Gaussian}
+\begin{columns}[T]
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Mô phỏng $N = 500$ Gaussian, scene extent $= 1.69025$, ngưỡng kích thước $\delta \cdot \text{extent} = 0.001 \times 1.69025 = 0.00169$ (\texttt{--dense}).
+  \item Điều kiện: \texttt{small} $= (\max s_i \le \delta\cdot\text{extent})$, \texttt{grad\_ok} $= (\bar g_i \ge \tau_{\text{grad}})$, \texttt{abs\_ok} $= (\bar g_{\text{abs},i} \ge \tau_{\text{abs}})$, \texttt{imp\_ok} $= (\text{Imp}_i > 5)$.
+  \[
+    \texttt{clone}_{\text{3DGS}} = \texttt{small} \wedge \texttt{grad\_ok}, \quad
+    \texttt{clone}_{\text{FastGS}} = \texttt{clone}_{\text{3DGS}} \wedge \texttt{imp\_ok}
+  \]
+  \item Trên mặt phẳng $(\bar g, \max s_i)$ (trục log): vùng dưới ngưỡng kích thước và bên phải $\tau_{\text{grad}}$ là ứng viên clone của 3DGS gốc.
+  \item Với Importance $\sim \mathcal{U}\{0,\dots,11\}$: phép AND chỉ giữ lại khoảng \textbf{một nửa} số ứng viên gradient — phần còn lại bị đánh dấu "3DGS densify, FastGS chặn" (Imp $\le 5$).
+  \item Phân bố không gian: ứng viên clone tập trung ở vùng $\bar g$ lớn và $\max s_i$ nhỏ, tách biệt rõ với vùng split ($\max s_i$ lớn).
+\end{itemize}
+\end{column}
+\begin{column}{0.48\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{4_4_clone-region-500.png}
+\captionof{figure}{\footnotesize Mặt phẳng $(\bar g, \max s)$: phép AND cắt bớt số Gaussian được densify so với chỉ dùng gradient.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 4_5_scene-extent.png ---
+\begin{frame}{Scene Extent: chuẩn hoá ngưỡng kích thước theo camera}
+\begin{columns}[T]
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+  \item \texttt{getNerfppNorm}: tâm camera trung bình $\bar c = \frac{1}{V}\sum_v c_v$, bán kính lớn nhất $\text{diag} = \max_v \|c_v - \bar c\|$, và
+  \[
+    \text{extent} = 1.1 \times \text{diag}
+  \]
+  \item Cảnh đồ chơi (3 camera): $c_1=(0,0,-4)$, $c_2=(1.5,0,-4)$, $c_3=(-1.5,0.5,-4)$ $\Rightarrow \bar c \approx (0, 0.1667, -4)$, $\text{diag} \approx 1.5366$, $\text{extent} \approx 1.6903$.
+  \item Extent chỉ phụ thuộc \textbf{vị trí camera}, không phụ thuộc điểm SfM hay vị trí Gaussian.
+  \item Ba mức kích thước tham chiếu: $\delta\cdot\text{extent} = 0.00169$ (ngưỡng clone/split), $0.1\cdot\text{extent} \approx 0.169$ (ngưỡng prune "quá to"), và $\min/\max s_i$ thực tế của 4 Gaussian $\in [0.8505, 1.1150]$.
+  \item Vì $0.00169 \ll 0.85\text{--}1.12$, cả 4 Gaussian của cảnh đồ chơi rơi vào nhánh split trong ví dụ này.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{4_5_scene-extent.png}
+\captionof{figure}{\footnotesize Scene extent = $1.1 \times$ khoảng cách xa nhất từ camera đến tâm trung bình.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 4_6_decision-diagram.png ---
+\begin{frame}{Sơ đồ quyết định densify đầy đủ}
+\begin{columns}[T]
+\begin{column}{0.48\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Áp dụng cho mỗi Gaussian $i$, mỗi 100 (hoặc 500) vòng lặp, khi $500 < t < 15000$.
+  \item \textbf{Bước 1 — kích thước chọn nhánh:}
+  \[
+    \max s_i \le \delta \cdot \text{extent} \;?
+  \]
+  \item \textbf{Nhánh NHỎ (under-reconstruction):} nếu $\bar g_i \ge \tau_{\text{grad}} = 2\times10^{-4}$ \textbf{và} $\text{Imp}_i > 5$ $\Rightarrow$ \textbf{CLONE} ($\theta_{\text{new}} = \theta_i$, $1 \to 2$, giữ bản gốc).
+  \item \textbf{Nhánh TO (over-reconstruction):} nếu $\bar g_{\text{abs},i} \ge \tau_{\text{abs}} = 1.2\times10^{-3}$ \textbf{và} $\text{Imp}_i > 5$ $\Rightarrow$ \textbf{SPLIT} (2 con, $\mu + R\cdot\varepsilon$, $s/1.6$, xoá gốc, $1 \to 2$).
+  \item Nếu điều kiện Importance không thoả: 3DGS gốc vẫn densify (chỉ cần gradient đạt), FastGS-lite thì không.
+  \item Nguồn: \texttt{densify\_and\_prune\_fastgs}, \texttt{gaussian\_model.py:449-462}.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=\linewidth]{4_6_decision-diagram.png}
+\captionof{figure}{\footnotesize 3 điều kiện nối bằng AND: kích thước chọn nhánh, gradient chọn có/không, Importance lọc thêm.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 4_7_under-vs-over.png ---
+\begin{frame}{Under- vs. Over-reconstruction}
+\begin{columns}[T]
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Cùng một tín hiệu "gradient vị trí lớn" nhưng là hai bệnh khác nhau, phân biệt bằng \textbf{kích thước} Gaussian.
+  \item \textbf{Under-reconstruction:} vùng cần phủ (GT) rộng ($s = 1.4$) nhưng 1 Gaussian quá nhỏ ($s = 0.45$) chưa phủ hết $\Rightarrow$ gradient kéo nó giãn ra $\Rightarrow$ \textbf{CLONE} thêm bản để phủ; sau tối ưu: 2 bản tách ra ở $\pm 0.55$.
+  \item \textbf{Over-reconstruction:} 2 chi tiết nhỏ, hẹp ($s = 0.3$, tại $x = -0.8$ và $x = 0.8$) nhưng 1 Gaussian quá to ($s = 1.2$) che lấp cả hai $\Rightarrow$ gradient hai nửa ngược chiều nhau (giá trị \texttt{abs} lớn dù tổng có dấu nhỏ) $\Rightarrow$ \textbf{SPLIT} thành 2 con nhỏ hơn khớp đúng 2 chi tiết.
+  \item Đây chính là lý do sơ đồ quyết định (Slide trước) dùng kích thước để chọn nhánh clone/split, còn gradient (có dấu / trị tuyệt đối) để xác nhận có densify hay không.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{4_7_under-vs-over.png}
+\captionof{figure}{\footnotesize (a) Gaussian nhỏ hơn vùng cần phủ $\to$ clone. (b) Gaussian to hơn chi tiết $\to$ split.}
+\end{column}
+\end{columns}
+\end{frame}

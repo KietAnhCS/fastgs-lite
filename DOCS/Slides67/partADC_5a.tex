@@ -1,0 +1,159 @@
+% --- 5_1_trong-so-N10.png ---
+\begin{frame}{Từ điểm importance sang trọng số xoá: ví dụ $N=10$}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Kịch bản giả định $N=10$ Gaussian với điểm Pruning\_i cho trước:
+    \[
+    P = [0{,}0.05,0{,}2,0{,}4,0{,}6,0{,}8,0{,}9,0{,}95,0{,}99,1{,}0]
+    \]
+    \item Tập ứng viên $C=\{3,6,8,9,10\}$ (chỉ số 1-based), ngân sách xoá
+    \[
+    \text{budget} = \lfloor 0{,}5\cdot |C| \rfloor = \lfloor 0{,}5 \cdot 5 \rfloor = 2
+    \]
+    \item Trọng số bị xoá tỉ lệ nghịch với $(1-P_i)$:
+    \[
+    w_i = \frac{1}{10^{-6} + (1-P_i)}
+    \]
+    \item Chuẩn hoá: $p_i = w_i / \sum_j w_j$.
+    \item $w_i$ \textbf{phân kỳ} khi $P_i \to 1$: Gaussian số 10 ($P_{10}=1{,}0$) chiếm tới $99{,}99\%$ xác suất bị rút ở lượt đầu tiên -- gần như chắc chắn bị xoá.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\linewidth}
+\centering
+\includegraphics[width=0.98\linewidth]{5_1_trong-so-N10.png}
+\captionof{figure}{\footnotesize $P_i$, trọng số $w_i$ (log) và xác suất $p_i$ (log) của 10 Gaussian; đỏ = thuộc tập ứng viên $C$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 5_2_mo-phong-2000-lan.png ---
+\begin{frame}{Kiểm chứng bằng mô phỏng: 2000 lần lấy mẫu multinomial}
+\footnotesize
+\begin{itemize}
+    \item Lấy mẫu \texttt{multinomial\_no\_replacement}$(w,\text{budget}{=}2)$ lặp lại $T=2000$ lần (không hoàn lại, giống \texttt{torch.multinomial}).
+    \item Xác suất lý thuyết $P(i \in S)$ với budget $=2$ tính chính xác bằng công thức bao gồm cả cặp:
+    \[
+    P(i \in S) = p_i + \sum_{j \neq i} p_j \cdot \frac{w_i}{W - w_j}, \qquad p_i = \frac{w_i}{W}, \; W=\sum_k w_k
+    \]
+    \item Tần suất thực nghiệm $i \in S$ qua 2000 lần khớp sát với $P(i\in S)$ lý thuyết -- xác nhận cơ chế lấy mẫu đúng như thiết kế.
+    \item Tần suất \emph{thực sự bị xoá} = $S \cap C$: một Gaussian có thể được rút vào $S$ nhưng không thuộc $C$ nên không bị xoá (ví dụ G7 hay được rút nhưng không nằm trong tập ứng viên).
+    \item Số Gaussian bị xoá thực tế trung bình $\approx$ giá trị hiển thị trên biểu đồ (thấp hơn budget=2 vì $S\cap C$ có thể nhỏ hơn $S$).
+\end{itemize}
+\centering
+\includegraphics[width=0.62\linewidth]{5_2_mo-phong-2000-lan.png}
+\captionof{figure}{\footnotesize Trái: $P(i\in S)$ lý thuyết vs tần suất thực nghiệm. Giữa: xác suất/tần suất bị xoá $S\cap C$. Phải: phân bố số Gaussian bị xoá thực tế mỗi lượt.}
+\end{frame}
+
+% --- 5_3_topk-vs-multinomial.png ---
+\begin{frame}{Top-k cứng vs.\ Multinomial: hai chiến lược pruning}
+\begin{columns}[T]
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Mô phỏng $N=300$ Gaussian, điểm số $P_i$ chuẩn hoá min--max từ \texttt{Beta}$(2{,}2{,}5)$; tập ứng viên $C$ chọn ngẫu nhiên $40\%$ quần thể (độc lập với $P_i$), budget $=\lfloor 0{,}5|C|\rfloor$.
+    \item \textbf{Top-k cứng (deterministic):} sắp xếp $C$ giảm dần theo $P_i$, xoá đúng \texttt{budget} phần tử điểm thấp nhất.
+    \begin{itemize}
+        \item[+] Dễ đoán, luôn xoá đúng số lượng.
+        \item[--] Cắt sạch theo một ngưỡng cứng -- có thể xoá nhầm cả một cụm liền kề có điểm số tương tự nhau.
+    \end{itemize}
+    \item \textbf{Multinomial (stochastic):} rút mẫu không hoàn lại theo $w_i \propto 1/(10^{-6}+1-P_i)$ trên toàn $N$, giao với $C$.
+    \begin{itemize}
+        \item[+] Đa dạng hơn, tránh xoá đồng loạt một vùng.
+        \item[--] Có nhiễu: số lượng xoá thực tế thường \emph{ít hơn} budget vì $S\cap C$ nhỏ hơn $S$.
+    \end{itemize}
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{5_3_topk-vs-multinomial.png}
+\captionof{figure}{\footnotesize (a) top-k cứng cắt theo một đường ngưỡng; (b) multinomial xoá ít hơn budget, có ngẫu nhiên; (c) phân bố điểm còn lại; (d) xác suất bị xoá tăng mạnh khi $P_i\to 1$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 5_4_tranh-xoa-ca-cum.png ---
+\begin{frame}{Vì sao lấy mẫu ngẫu nhiên tránh xoá sạch một cụm}
+\footnotesize
+\begin{itemize}
+    \item Kịch bản: $N=300$ điểm 2D, một \textbf{cụm ``nóng''} gần tâm $(7{,}5,7{,}5)$ bán kính $1{,}6$ có $P_i$ đồng đều cao $\in[0{,}86;0{,}95]$; phần còn lại $P_i\in[0{,}55;0{,}92]$.
+    \item Budget xoá $=15\%\cdot N = 45$ Gaussian, tất cả đều là ứng viên ($C = $ toàn bộ quần thể).
+    \item \textbf{Top-k cứng:} vì mọi điểm trong cụm đều có $P_i$ cao và tương tự nhau, thuật toán xoá gần như \emph{toàn bộ} cụm cùng lúc $\Rightarrow$ tạo một \textbf{lỗ hổng hình học} tại vị trí đó.
+    \item \textbf{Multinomial:} do tính ngẫu nhiên trong lấy mẫu theo trọng số, chỉ một phần cụm bị xoá ở mỗi lượt, phần còn lại của cụm vẫn được giữ lại để tái đánh giá ở lượt sau $\Rightarrow$ tránh mất mát hình học đột ngột.
+    \item Đây là lý do chính khiến pruning dùng lấy mẫu xác suất thay vì cắt ngưỡng cứng tuyệt đối.
+\end{itemize}
+\centering
+\includegraphics[width=0.68\linewidth]{5_4_tranh-xoa-ca-cum.png}
+\captionof{figure}{\footnotesize Trái: bản đồ $P_i$ theo vị trí (vòng đỏ = cụm điểm cao). Giữa/phải: các điểm bị xoá bởi top-k cứng (xoá gần hết cụm) vs multinomial (rải rác hơn).}
+\end{frame}
+
+% --- 5_5_sigmoid-inverse.png ---
+\begin{frame}{Sigmoid nghịch đảo (logit) để reset opacity}
+\footnotesize
+\begin{itemize}
+    \item Tham số thực sự được tối ưu không phải $\alpha\in(0,1)$ mà là \texttt{\_opacity} (logit), với
+    \[
+    \alpha = \sigma(\text{logit}) = \frac{1}{1+e^{-\text{logit}}}, \qquad
+    \text{logit} = \sigma^{-1}(\alpha) = \log\frac{\alpha}{1-\alpha}
+    \]
+    \item Khi cần ép/reset opacity về một giá trị nhỏ $\alpha_{\text{target}}$, ta phải gán lại \emph{logit}:
+    \[
+    \text{logit}_{\text{new}} = \sigma^{-1}(\min(\alpha,\alpha_{\text{target}}))
+    \]
+    vì gán trực tiếp lên $\alpha$ sẽ phá vỡ ràng buộc $(0,1)$ và làm sai gradient.
+    \item Các mốc quan trọng: prune $\alpha=0{,}005$; reset $\alpha=0{,}01$; final prune $\alpha=0{,}1$; clamp $\alpha=0{,}8$.
+    \item Bước $0{,}9\to 0{,}8$: logit $2{,}197 \to 1{,}386$ (bước nhỏ). Bước $0{,}9\to 0{,}01$: logit $2{,}197 \to -4{,}595$ (bước rất xa) $\Rightarrow$ reset là một cú "giật lùi" mạnh trong không gian logit.
+\end{itemize}
+\centering
+\includegraphics[width=0.68\linewidth]{5_5_sigmoid-inverse.png}
+\captionof{figure}{\footnotesize Trái: hàm sigmoid với các mốc opacity đánh dấu trên trục logit. Phải: hàm nghịch đảo $\sigma^{-1}(\alpha)$ trên thang log của $\alpha$.}
+\end{frame}
+
+% --- 5_6_opacity-theo-iteration.png ---
+\begin{frame}{Quỹ đạo opacity qua thời gian: tăng rồi bị reset định kỳ}
+\footnotesize
+\begin{itemize}
+    \item Mô phỏng minh hoạ 4 Gaussian với "sức kéo" gradient khác nhau lên logit mỗi vòng: hữu ích ($k{=}+0{,}006$), trung bình ($k{=}+0{,}002$), vô dụng ($k{=}-0{,}001$), hồi sinh muộn ($k{=}0$ rồi $+0{,}004$ sau $t{=}7000$).
+    \item Mỗi 100 vòng (trong khoảng $500<t<15000$), logit bị clamp: $\text{logit}\leftarrow\min(\text{logit}, \sigma^{-1}(0{,}8))$ -- ngăn opacity vượt $0{,}8$ ngay sau densify.
+    \item Mỗi \texttt{opacity\_reset\_interval} $=3000$ vòng: $\text{logit}\leftarrow\min(\text{logit}, \sigma^{-1}(0{,}01))$ -- kéo \emph{toàn bộ} opacity về gần $0$, bất kể trước đó cao bao nhiêu.
+    \item Sau reset, Gaussian hữu ích tự "leo" trở lại nhanh (gradient dương mạnh); Gaussian vô dụng rơi xuống dưới ngưỡng prune $\alpha=0{,}005$ và bị xoá ở lần prune multinomial kế tiếp.
+    \item Cơ chế này cho các Gaussian "được nghi ngờ" một cơ hội chứng minh lại giá trị, thay vì xoá vĩnh viễn ngay lập tức.
+\end{itemize}
+\centering
+\includegraphics[width=0.72\linewidth]{5_6_opacity-theo-iteration.png}
+\captionof{figure}{\footnotesize Quỹ đạo $\alpha_i(t)$ (log) của 4 Gaussian điển hình; các đường đứt nét đánh dấu mốc reset mỗi 3000 vòng, ngưỡng clamp 0,8 và ngưỡng prune 0,005.}
+\end{frame}
+
+% --- 5_7_histogram-truoc-sau-reset.png ---
+\begin{frame}{Histogram phân bố opacity: trước và sau một lần reset}
+\footnotesize
+\begin{itemize}
+    \item Mô phỏng $N=20000$ Gaussian: $60\%$ "hữu ích" có $\alpha_0\sim\text{Beta}(6,2)$ (thiên về giá trị cao), $40\%$ "lơ lửng" có $\alpha_0\sim\text{Beta}(1{,}5,4)$ (thiên về giá trị thấp).
+    \item \textbf{Trước reset:} phân bố $\alpha_0$ đa dạng, trải rộng trên toàn khoảng $(0,1)$.
+    \item \textbf{Ngay sau reset:} áp dụng $\text{logit}_1 = \min(\text{logit}_0, \sigma^{-1}(0{,}01))$ cho \emph{mọi} Gaussian $\Rightarrow$ toàn bộ phân bố dồn về sát $\alpha\approx 0{,}01$, gần như đồng nhất, mất hết sự đa dạng trước đó.
+    \item \textbf{$\sim$500 vòng sau (minh hoạ):} nhóm hữu ích leo lại nhanh (gain trung bình $+3{,}5$ logit), nhóm vô dụng leo chậm hoặc đứng yên (gain trung bình $-0{,}3$ logit) $\Rightarrow$ phân bố tách lại thành hai nhóm.
+    \item Tỉ lệ $\alpha<0{,}005$ (dưới ngưỡng prune) được ghi trực tiếp trên từng histogram để so sánh ba giai đoạn.
+\end{itemize}
+\centering
+\includegraphics[width=0.85\linewidth]{5_7_histogram-truoc-sau-reset.png}
+\captionof{figure}{\footnotesize Histogram $\alpha$ (thang log) trước reset, ngay sau reset, và $\sim$500 vòng sau reset; đường đứt = ngưỡng prune 0,005 và 0,01.}
+\end{frame}
+
+% --- 5_8_adam-sau-reset.png ---
+\begin{frame}{Trạng thái Adam sau reset: có nên xoá luôn moment?}
+\footnotesize
+\begin{itemize}
+    \item Adam cập nhật theo $m_t=\beta_1 m_{t-1}+(1-\beta_1)g$, $v_t=\beta_2 v_{t-1}+(1-\beta_2)g^2$, với bias-correction $\hat m_t = m_t/(1-\beta_1^t)$, $\hat v_t=v_t/(1-\beta_2^t)$, bước cập nhật $=\text{lr}\cdot \hat m_t/(\sqrt{\hat v_t}+\epsilon)$.
+    \item Code thật (\texttt{replace\_tensor\_to\_optimizer}) khi reset opacity: đặt lại $(m,v)=(0,0)$ cho nhóm opacity, nhưng \textbf{không reset bộ đếm bước $t$ (step) của Adam} -- step vẫn tiếp tục từ giá trị cũ (vd. $t{=}6000$).
+    \item Hệ quả: với $t$ lớn, $\beta_1^t\approx\beta_2^t\approx 0$ nên bias-correction gần như \emph{không còn hiệu lực đúng nghĩa} (được thiết kế cho $t$ nhỏ) $\Rightarrow$ bước cập nhật đầu tiên sau reset lớn bất thường, xấp xỉ
+    \[
+    \frac{\hat m_1}{\sqrt{\hat v_1}} \approx \frac{(1-\beta_1)g}{\sqrt{(1-\beta_2)g^2}} = \frac{0{,}1}{\sqrt{0{,}001}} \approx 3{,}16 \times \text{lr}
+    \]
+    \item So với Adam khởi tạo hoàn toàn mới (step$=0$, bias-correction đúng), phiên bản "giữ step" tạo một cú nhảy tham số lớn hơn nhiều ngay sau reset, rồi hội tụ dần về $1\times$lr ở trạng thái ổn định.
+    \item Nếu không reset cả state Adam: optimizer "nhớ" quán tính cũ từ trước reset, có thể khiến opacity hồi phục lệch hướng hoặc chậm hơn dự kiến so với một khởi động sạch.
+\end{itemize}
+\centering
+\includegraphics[width=0.6\linewidth]{5_8_adam-sau-reset.png}
+\captionof{figure}{\footnotesize So sánh độ lớn bước cập nhật (chuẩn hoá theo lr) của Adam "giữ step cũ, reset $(m,v){=}(0,0)$" (code thật) vs Adam khởi tạo hoàn toàn mới.}
+\end{frame}

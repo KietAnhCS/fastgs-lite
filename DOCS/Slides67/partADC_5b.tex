@@ -1,0 +1,156 @@
+% partADC_5b.tex --- ADC-5b: Final Prune, so sanh N(t), tong ket ADC
+% Khong doc lap: khong co documentclass/usepackage/begin{document}
+
+% --- 5_9_timeline-final-prune.png ---
+\begin{frame}{Lịch chạy riêng của \texttt{final\_prune\_fastgs}}
+\begin{itemize}
+    \item Toàn bộ lịch trình huấn luyện $30\,000$ vòng chia làm hai vùng theo mốc \texttt{densify\_until\_iter} $= 15000$.
+    \item \textbf{Vùng $t < 15000$}: densify + prune multinomial chạy mỗi $100$ vòng ($500 < t < 15000$, tổng cộng $145$ lần); \texttt{reset\_opacity} chạy khi $t \bmod 3000 = 0$ và $t < 15000$ ($5$ lần: $3000,\dots,15000$).
+    \item \textbf{Vùng bảo vệ của final prune}: điều kiện chạy là
+    \[
+        15000 < \text{iteration} < 30000 \quad \text{và} \quad \text{iteration} \bmod 3000 = 0.
+    \]
+    \item Với điều kiện này, \texttt{final\_prune\_fastgs} chỉ thực sự chạy đúng \textbf{4 lần}: $t = 18000, 21000, 24000, 27000$.
+    \item Mốc $t = 30000$ \textbf{không} chạy vì bất đẳng thức là chặt (\texttt{<}), không phải $\leq$; đây là lần huấn luyện cuối nên N giữ nguyên.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.75\linewidth]{5_9_timeline-final-prune.png}
+\captionof{figure}{\footnotesize Lịch chạy của ba cơ chế ADC trên toàn bộ $30\,000$ vòng: densify/prune multinomial (xanh dương), reset opacity (cam), final prune (đỏ, 4 lần thực sự chạy tại 18k/21k/24k/27k).}
+\end{center}
+\end{frame}
+
+% --- 5_10_vung-OR-final-prune.png ---
+\begin{frame}{Điều kiện xoá cuối: phép OR, không phải AND}
+\begin{columns}
+\begin{column}{0.5\textwidth}
+\footnotesize
+\begin{itemize}
+    \item Final prune xoá Gaussian $i$ nếu thoả \textbf{ít nhất một} trong hai tiêu chí:
+    \[
+        \text{xoá}_i = [\alpha_i < 0.1] \ \text{OR}\ [s_{p,i} > 0.9]
+    \]
+    với $\alpha_i = \text{sigmoid}(\text{opacity}_i)$, $s_{p,i} = \text{Pruning}_i$ (điểm số từ \texttt{compute\_gaussian\_score\_fastgs}).
+    \item Đây là phép \textbf{OR}: chỉ cần opacity quá thấp \emph{hoặc} điểm số prune quá cao là bị loại — khác hẳn tập ứng viên $C$ ở prune giữa chừng, vốn kết hợp AND chặt với ngưỡng bán kính/scale.
+    \item Ví dụ 5 Gaussian minh hoạ (từ chương 3): với $(\alpha, s_p)$ tương ứng, G3 bị xoá vì $s_p = 1.000 > 0.9$, G4 bị xoá vì $\alpha = 0.07 < 0.1$; G1, G2, G5 sống sót.
+    \item Final prune \textbf{không lấy mẫu ngẫu nhiên} (không multinomial) — xoá thẳng toàn bộ tập thoả điều kiện, gọi trực tiếp \texttt{prune\_points} $\to$ \texttt{\_prune\_optimizer}.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\textwidth}
+\centering
+\includegraphics[width=\linewidth]{5_10_vung-OR-final-prune.png}
+\captionof{figure}{\footnotesize Vùng OR trên mặt phẳng $(\alpha_i, s_{p,i})$: dải đỏ $\alpha<0.1$, dải cam $s_p>0.9$. G3 và G4 rơi vào vùng bị xoá, G1/G2/G5 sống sót.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 5_11_N-bac-thang-15k-30k.png ---
+\begin{frame}{$N(t)$ dạng bậc thang trong giai đoạn $15000$--$30000$}
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+\scriptsize
+\begin{itemize}
+    \item Sau $t{=}15000$, densify không còn chạy $\Rightarrow$ $N$ chỉ giữ nguyên hoặc \textbf{giảm}.
+    \item $N(t)$ dạng \textbf{bậc thang}: đoạn phẳng xen giữa các bước giảm tại $t{\in}\{18000,21000,24000,27000\}$ (final prune).
+    \item Minh hoạ: $-12\%,-8\%,-5\%,-3\%$ từ $N_0{=}420{,}000$.
+    \item Tại $t{=}30000$: không giảm nữa, đồ thị đi ngang — tách 2 chế độ: "tăng-giảm xen kẽ" trước $15000$, "chỉ giảm bậc thang" sau.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{5_11_N-bac-thang-15k-30k.png}
+\captionof{figure}{\footnotesize $N(t)$ bậc thang trong $[15000,30000]$; đường đứt đỏ = final prune.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 5_12_radar-so-sanh.png ---
+\begin{frame}{So sánh đa chiều: 3DGS vs FastGS-lite}
+\footnotesize
+\begin{itemize}
+    \item Radar định tính (thang $0$--$3$, tự đặt) trên $6$ tiêu chí: số điều kiện densify, số điều kiện prune, mức ngẫu nhiên trong prune, có tỉa cuối hay không, chi phí render phụ mỗi lần densify, khả năng kiểm soát $N$.
+    \item 3DGS gốc: điểm thấp ở hầu hết trục (densify $=2$, prune $=1$, ngẫu nhiên $=0$, tỉa cuối $=0$, chi phí render phụ $=0$, kiểm soát $N=1$).
+    \item FastGS-lite: đạt điểm tối đa ($=3$) ở cả $6$ trục — nhiều tiêu chí hơn, có ngẫu nhiên hoá multinomial, có tỉa cuối, nhưng đổi lại chi phí render phụ để tính importance/pruning score.
+    \item Số liệu tham chiếu (chương 13, minh hoạ): $N$ trung bình $3$DGS $\approx 933$ nghìn so với FastGS-lite $\approx 293$ nghìn; $R_{\text{gauss}}$ (tỉ lệ Gaussian giữ lại) $= 1.0$ với 3DGS so với $0.314$ với FastGS-lite (giả định); chi phí render phụ mỗi lần densify: $0$ với 3DGS, $\approx 20$ với FastGS-lite.
+    \item Kết luận định tính: FastGS-lite đánh đổi chi phí tính điểm số để đạt $N$ nhỏ hơn đáng kể và kiểm soát chặt hơn.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.7\linewidth]{5_12_radar-so-sanh.png}
+\captionof{figure}{\footnotesize Trái: radar định tính 6 tiêu chí. Phải: số liệu tham chiếu $N$ trung bình, $R_{\text{gauss}}$, chi phí render phụ (chuẩn hoá theo giá trị lớn hơn).}
+\end{center}
+\end{frame}
+
+% --- 5_13_N-t-3dgs-vs-fastgs.png ---
+\begin{frame}{$N(t)$: 3DGS gốc so với FastGS-lite trên cùng trục thời gian}
+\begin{columns}
+\begin{column}{0.55\textwidth}
+\footnotesize
+\begin{itemize}
+    \item Mô hình minh hoạ: cùng $N_0 = 100\,000$, cùng lịch chạy ($500 < t < 15000$, mỗi $100$ vòng), nhưng khác hệ số $(r_{\text{spawn}}, r_{\text{prune}}, r_{\text{reset}})$:
+    \[
+        N_{t} = N_{t-1}\,(1+r_{\text{spawn}})(1-r_{\text{prune}})
+    \]
+    áp dụng mỗi $100$ vòng, cộng thêm hệ số giảm tại mỗi lần reset opacity ($t \bmod 3000=0,\ t<15000$).
+    \item 3DGS (minh hoạ): $r_{\text{spawn}}=0.0227$, $r_{\text{prune}}=0.003$, giảm reset $4\%$, \textbf{không} có final prune $\Rightarrow$ TB $\approx 933$k Gaussian.
+    \item FastGS-lite (minh hoạ): $r_{\text{spawn}}=0.0155$, $r_{\text{prune}}=0.004$, giảm reset $4\%$, \textbf{có} final prune tại $18000/21000/24000/27000$ với tỉ lệ $12\%/8\%/5\%/3\%$ $\Rightarrow$ TB $\approx 293$k Gaussian.
+    \item FastGS-lite hội tụ về $N$ nhỏ hơn rõ rệt nhờ tốc độ spawn thấp hơn \emph{và} có thêm giai đoạn tỉa cuối mà 3DGS không có.
+\end{itemize}
+\end{column}
+\begin{column}{0.45\textwidth}
+\centering
+\includegraphics[width=\linewidth]{5_13_N-t-3dgs-vs-fastgs.png}
+\captionof{figure}{\footnotesize $N(t)$ minh hoạ định tính: 3DGS (xám) tăng liên tục đến TB $\approx 0.93$M; FastGS-lite (xanh) có bậc thang giảm sau $15000$, TB $\approx 0.29$M.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 5_14_optimizer-cat-ghep.png ---
+\begin{frame}{Cắt/ghép trạng thái Adam khi $N$ thay đổi}
+\tiny
+\begin{itemize}
+    \item Adam lưu $(m,v){=}(\text{exp\_avg},\text{exp\_avg\_sq})$ mỗi hàng (Gaussian). $N$ đổi $\Rightarrow$ tensor này phải cắt/ghép đồng bộ.
+    \item \textbf{Thêm (clone/split)}: nối hàng mới, con nhận $(m,v){=}(0,0)$, nhưng \texttt{step} Adam dùng chung $\Rightarrow$ bias-correction ${\approx}1$ ngay dù step đã lớn.
+    \item \textbf{Xoá (prune)}: giữ hàng theo mặt nạ, loại đúng $(m,v)$ của Gaussian bị xoá, không xáo trộn thứ tự còn lại.
+    \item \textbf{Ép opacity}: chỉ nhóm opacity bị thay $(m,v){\leftarrow}(0,0)$; các nhóm khác (xyz/SH/scale/rotation) giữ nguyên. Áp dụng sau densify và tại mỗi lần reset.
+    \item \texttt{step} của Adam \textbf{không} bị reset trong mọi trường hợp.
+\end{itemize}
+\centering
+\includegraphics[width=0.55\linewidth]{5_14_optimizer-cat-ghep.png}
+\captionof{figure}{\footnotesize (a) split rồi prune: nối rồi cắt theo mask. (b) replace opacity: chỉ nhóm opacity mất $(m,v)$.}
+\end{frame}
+
+% --- 5_15_so-do-khoi-ADC.png ---
+\begin{frame}{Sơ đồ khối tổng thể của Adaptive Density Control}
+\tiny
+\begin{itemize}
+    \item Vòng lặp khép kín: tích luỹ thống kê $\to$ tính điểm số $\to$ densify (AND) $\to$ prune multinomial $\to$ ép opacity $\to$ reset opacity $\to$ final prune (OR) $\to$ cập nhật tensor.
+    \item \textbf{Mỗi vòng $t{<}15000$}: \texttt{add\_densification\_stats} cập nhật \texttt{max\_radii2D}, \texttt{accum}, \texttt{denom}.
+    \item \textbf{Mỗi 100 vòng}: score trên $V{=}10$ view $\to$ Importance, Pruning; \textbf{DENSIFY (AND)}: clone khi $|g|{\geq}2{\times}10^{-4}$, split khi $|g_{\text{abs}}|{\geq}1.2{\times}10^{-3}$, cả hai cần Imp${>}5$.
+    \item \textbf{PRUNE MULTINOMIAL}: $C{=}\{\alpha{<}0.005 \mid r_{2D}{>}20 \mid \max s{>}0.1{\cdot}\text{extent}\}$, $w{=}1/(10^{-6}{+}1{-}\text{Pruning})$, xoá $S{\sim}\text{multinomial}(w)$.
+    \item \textbf{RESET} mỗi 3000 vòng: $\text{logit}{\leftarrow}\text{inv\_sigmoid}(\min(\alpha,0.01))$; \textbf{FINAL PRUNE} ($15000{<}t{<}30000$): xoá$=[\alpha{<}0.1]$ OR $[\text{Pruning}{>}0.9]$.
+    \item Sau mỗi lần gọi: các tensor thống kê reset về 0; \texttt{step} Adam không reset.
+\end{itemize}
+\centering
+\includegraphics[width=0.42\linewidth]{5_15_so-do-khoi-ADC.png}
+\captionof{figure}{\footnotesize Sơ đồ khối toàn bộ ADC.}
+\end{frame}
+
+% --- 5_16_thu-tu-that-code.png ---
+\begin{frame}{Thứ tự thực thi thật trong code (khác thứ tự lý thuyết)}
+\begin{columns}
+\begin{column}{0.5\textwidth}
+\footnotesize
+\begin{itemize}
+    \item Thứ tự thật trong \texttt{densify\_and\_prune\_fastgs}: \textbf{clone $\to$ split $\to$ prune multinomial} (trên quần thể \emph{mới}, trọng số vẫn theo \emph{chỉ số cũ}) $\to$ ép opacity $0.8$.
+    \item Ví dụ kiểm định: cảnh $4$ Gaussian, $t>3000$, cả $4$ đều split $\to N=8$ con; \texttt{max\_radii2D} của con $=0$ nhưng $\max s$ của con $=s/1.6 > 0.169$ nên cả $8$ đều vào tập ứng viên $C$ ($|C|=8$, budget $=4$).
+    \item \texttt{padded\_importance[:4]} $=$ trọng số cũ của $4$ Gaussian gốc; $4$ vị trí còn lại (con thứ hai) là $0$ $\Rightarrow$ \texttt{multinomial(w, 4)} bắt buộc rút đúng $\{0,1,2,3\}$.
+    \item Kết quả: xoá $= C\cap S = \{$G1c1, G2c1, G3c1, G4c1$\}$ $\Rightarrow N=4$ (thay vì công thức lý thuyết chương $7.8$ dự đoán $4+0+4-2=6$).
+    \item Trong huấn luyện thật, tỉ lệ Gaussian bị split mỗi lần chỉ vài phần trăm nên độ lệch giữa lý thuyết và thực thi là nhỏ, nhưng cơ chế "trọng số cũ gán theo chỉ số" vẫn tồn tại và cần lưu ý khi debug.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\textwidth}
+\centering
+\includegraphics[width=\linewidth]{5_16_thu-tu-that-code.png}
+\captionof{figure}{\footnotesize Trái: trọng số \texttt{padded\_importance} sau split — $4$ con đầu nhận trọng số cũ (đỏ), $4$ con sau bằng $0$ (xám). Phải: diễn giải từng bước dẫn đến $N=4$ thay vì $6$ theo công thức lý thuyết.}
+\end{column}
+\end{columns}
+\end{frame}

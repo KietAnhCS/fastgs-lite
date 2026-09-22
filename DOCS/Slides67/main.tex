@@ -1,0 +1,116 @@
+% !TeX program = xelatex
+% Compile với XeLaTeX (Overleaf: Menu > Compiler > XeLaTeX)
+\documentclass[aspectratio=169,9pt]{beamer}
+
+\usepackage{fontspec}
+\setmainfont{Noto Serif}
+\setsansfont{Noto Sans}
+\usepackage{polyglossia}
+\setmainlanguage{vietnamese}
+
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes,fit}
+\usepackage{caption}
+\captionsetup{font=scriptsize,labelfont=bf}
+\usepackage{etoolbox}
+\AtBeginEnvironment{itemize}{\setlength{\itemsep}{1pt}\setlength{\parskip}{0pt}\setlength{\topsep}{1pt}}
+\AtBeginEnvironment{enumerate}{\setlength{\itemsep}{1pt}\setlength{\parskip}{0pt}\setlength{\topsep}{1pt}}
+\setlength{\abovedisplayskip}{4pt}
+\setlength{\belowdisplayskip}{4pt}
+\setlength{\abovedisplayshortskip}{2pt}
+\setlength{\belowdisplayshortskip}{2pt}
+
+\usetheme{Madrid}
+\usecolortheme{seahorse}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+\setbeamerfont{footnote}{size=\tiny}
+\setbeamerfont{section in toc}{size=\tiny}
+\setbeamerfont{subsection in toc}{size=\tiny}
+
+\title[FastGS-lite: 3DGS \& Tăng tốc]{Quy trình Render 3D Gaussian Splatting\\và Cải tiến FastGS (FastGS-lite)}
+\subtitle{Từ toán học nền tảng đến Adaptive Density Control chuyên sâu}
+\author{Digital Twin GS}
+\date{\today}
+
+\graphicspath{{figures/}}
+
+\begin{document}
+
+\begin{frame}
+\titlepage
+\end{frame}
+
+\begin{frame}{Mục lục}
+\tiny
+\tableofcontents
+\end{frame}
+
+% ===================== PHẦN 1 =====================
+\section{Nền tảng: 3D Gaussian là gì}
+\input{part1}
+
+% ===================== PHẦN SH =====================
+\section{Nền tảng toán học đầy đủ: Spherical Harmonics}
+\input{partSH_A}
+\input{partSH_B}
+
+% ===================== PHẦN 2 =====================
+\section{Chiếu phối cảnh \& Rasterizer khả vi}
+\input{part2}
+
+% ===================== PHẦN 3 =====================
+\section{Loss, Gradient \& Optimizer}
+\input{part3}
+
+% ===================== PHẦN 4 (ADC tổng quan) =====================
+\section{Adaptive Density Control — Tổng quan}
+\input{part4}
+
+% ===================== ADC CHUYÊN SÂU =====================
+\section{ADC chuyên sâu — P1: Sai số ảnh \& tín hiệu pixel}
+\input{partADC_1a}
+\input{partADC_1b}
+
+\section{ADC chuyên sâu — P2: Footprint \& Importance đa view}
+\input{partADC_2a}
+\input{partADC_2b}
+
+\section{ADC chuyên sâu — P3: Công thức Score \& Pruning}
+\input{partADC_3a}
+\input{partADC_3b}
+
+\section{ADC chuyên sâu — P4: Gradient Cancellation \& Quyết định Clone/Split}
+\input{partADC_4a}
+\input{partADC_4b}
+
+\section{ADC chuyên sâu — P5: Trọng số, Multinomial Resample \& Opacity Reset}
+\input{partADC_5a}
+\input{partADC_5b}
+
+\section{ADC chuyên sâu — P6: Toy Model 2D (Có ADC vs Không ADC)}
+\input{partADC_6}
+
+\section{ADC chuyên sâu — P7: So sánh cuối 3DGS vs FastGS}
+\input{partADC_7}
+
+\section{ADC chuyên sâu — Cơ chế theo dòng thời gian}
+\input{partADC_TLa}
+\input{partADC_TLb}
+
+% ===================== PHẦN 5 =====================
+\section{Ba đòn bẩy tăng tốc FastGS \& Mô hình chi phí}
+\input{part5}
+
+% ===================== PHẦN 6 =====================
+\section{FastGS-lite: Kết quả thực nghiệm trên Colab T4}
+\input{part6}
+
+% ===================== PHẦN 7 =====================
+\section{Quan sát \& Kết luận}
+\input{part7}
+
+\end{document}

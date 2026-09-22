@@ -1,0 +1,184 @@
+% ============================================================
+% Phan ADC-TLa: Adaptive Density Control - nhom minh hoa "co che theo
+% dong thoi gian" tu notebook adc\_3dgs (doc lap voi nhom adc\_figures)
+% 9 frame, dung dung 9 anh fig\_01..fig\_09 trong adc\_3dgs/figures
+% ============================================================
+
+% --- fig_01_timeline.png ---
+\begin{frame}{ADC nhìn theo dòng thời gian: lịch chạy đầy đủ}
+\scriptsize
+\begin{itemize}
+    \item Vòng đời huấn luyện: $T{=}30000$ vòng, 4 giai đoạn chồng lấp.
+    \item \textbf{(a) Tích luỹ gradient}: mọi vòng $t{<}15000$.
+    \item \textbf{(b) Densify+prune}: khi $t{>}500$ và $t\bmod 100{=}0$ $\Rightarrow$ 144 mốc ($t{=}600,700,\dots,14900$).
+    \item \textbf{(c) Reset opacity}: $t\bmod 3000{=}0$, $t{<}15000$ $\Rightarrow$ 4 mốc $\{3000,6000,9000,12000\}$.
+    \item \textbf{(d) N đóng băng}: $t{\geq}15000$, chỉ tối ưu $\theta{=}(\mu,s,q,\alpha,\text{SH})$.
+\end{itemize}
+\centering
+\includegraphics[width=0.6\linewidth]{fig_01_timeline.png}
+\captionof{figure}{\footnotesize Lịch chạy ADC 30000 vòng.}
+\end{frame}
+
+% --- fig_02_accum_denom.png ---
+\begin{frame}{Tích luỹ gradient: accum, denom và $\bar g$}
+\begin{columns}
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Mỗi Gaussian $i$ giữ 2 bộ đếm cộng dồn giữa 2 lần densify (chu kỳ 100 vòng):
+    \[
+    \mathrm{accum}_i(t) = \sum_{t' \le t} \mathbb{1}_i(t')\,\Big\|\sum_x \tfrac{\partial L}{\partial \mu'_i}\Big\|
+    \]
+    \[
+    \mathrm{denom}_i(t) = \sum_{t' \le t} \mathbb{1}_i(t')
+    \]
+    \item $\mathbb{1}_i(t)$: Gaussian $i$ có được chiếu vào khung hình tại vòng $t$ hay không (bị che $\Rightarrow$ không cộng).
+    \item Gradient trung bình: $\bar g_i = \mathrm{accum}_i/\mathrm{denom}_i$.
+    \item Ví dụ mô phỏng 100 vòng: bị che liên tục 12 vòng ($t{=}40..52$) $\Rightarrow$ cả accum và denom đi ngang.
+    \item Tại $t=100$: $\bar g_i \approx 3$–$4\times 10^{-4} \ge \tau_{grad}=2\times10^{-4}$ $\Rightarrow$ ứng viên densify.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=\linewidth]{fig_02_accum_denom.png}
+\captionof{figure}{\footnotesize (a) chuỗi $\mathbb{1}_i(t)$ và gradient mỗi vòng; (b) accum/denom cộng dồn; (c) $\bar g_i(t)$ so với $\tau_{grad}$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- fig_03_grad_cancel.png ---
+\begin{frame}{Hiện tượng triệt tiêu gradient (gradient cancellation)}
+\footnotesize
+\begin{itemize}
+    \item Inria chỉ tích luỹ \textbf{chuẩn của tổng có dấu} $\big\|\sum_x \partial L/\partial \mu'_i\big\|$, KHÔNG dùng tổng các chuẩn $\sum_x \|\partial L/\partial \mu'_i|_x\|$.
+    \item Với $L=\tfrac12\sum_x (I(x)-I_{gt}(x))^2$ và $I(x)=\alpha e^{-\|x-\mu\|^2/2\sigma^2}$: $\dfrac{\partial L}{\partial \mu} = \sum_x \big(I(x)-I_{gt}(x)\big)\dfrac{I(x)}{\sigma^2}(x-\mu)$.
+    \item Trường hợp (a) \emph{lệch vị trí}: các vector $g_x$ cùng thiên hướng $\Rightarrow$ tổng có dấu lớn, gần bằng tổng chuẩn.
+    \item Trường hợp (b) \emph{đúng vị trí nhưng sai kích thước} (Gaussian to hơn GT, đồng tâm): các $g_x$ đối xứng quanh tâm, triệt tiêu lẫn nhau $\Rightarrow$ $\|\sum_x g_x\|$ rất nhỏ so với $\sum_x\|g_x\|$ (tỉ số chỉ cỡ $10^{-1}$–$10^{-2}$ trong ví dụ minh hoạ).
+    \item Hệ quả: $\bar g_i$ nhỏ $\Rightarrow$ \textbf{không được densify} dù ảnh dựng vẫn sai — điểm mù đã biết của tiêu chí gradient cổ điển 3DGS.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.72\linewidth]{fig_03_grad_cancel.png}
+\captionof{figure}{\footnotesize (a) lệch vị trí: gradient cộng dồn mạnh; (b) sai kích thước, đối xứng: gradient triệt tiêu; (c) so sánh tổng có dấu vs không dấu.}
+\end{center}
+\end{frame}
+
+% --- fig_04_gbar_history.png ---
+\begin{frame}{Lịch sử $\bar g_i(t)$ của một Gaussian qua nhiều vòng}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\scriptsize
+\begin{itemize}
+    \item Mô phỏng $T{=}15000$ vòng, 5 loại Gaussian: viền vật thể, gần viền, nền phẳng, thỉnh thoảng bị che, mới sinh (clone tại $t{=}3000$).
+    \item $\mathrm{accum}_i,\mathrm{denom}_i$ bị xoá về 0 mỗi mốc densify ($t\bmod 100{=}0$) $\Rightarrow$ $\bar g_i(t)$ dạng răng cưa.
+    \item Viền vật thể: $\bar g_i \sim \exp(-t/5500)$, có xung tăng sau reset opacity ($t{=}3000,6000,9000,12000$).
+    \item ``Bị che'' ($p_{vis}{=}0.3$): denom nhỏ $\Rightarrow$ dao động mạnh, có thể vượt $\tau_{grad}{=}2{\times}10^{-4}$ giả tạo.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{fig_04_gbar_history.png}
+\captionof{figure}{\footnotesize $\bar g_i(t)$ của 5 Gaussian, răng cưa do reset thống kê mỗi 100 vòng.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- fig_05_decision_plane.png ---
+\begin{frame}{Mặt phẳng quyết định: giữ nguyên / clone / split}
+\begin{columns}
+\begin{column}{0.55\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Công thức quyết định (dùng $\tau_{grad}=2\times10^{-4}$, $\delta=\texttt{percent\_dense}=0.01$):
+    \[
+    \text{clone}_i = [\|\bar g_i\| \ge \tau_{grad}] \wedge [\max(s_i) \le \delta\cdot\text{extent}]
+    \]
+    \[
+    \text{split}_i = [\|\bar g_i\| \ge \tau_{grad}] \wedge [\max(s_i) > \delta\cdot\text{extent}]
+    \]
+    \item Trục ngang: $\|\bar g_i\|$ (log); trục dọc: $\max(s_i)/\text{extent}$ (log).
+    \item Ngưỡng prune riêng theo kích thước: $\max(s_i) > 0.1\cdot\text{extent}$ (gạch chéo phía trên).
+    \item Điểm ví dụ: E nằm đúng biên $\ge,\le$ $\Rightarrow$ clone; F vượt cả $\tau_{grad}$ lẫn ngưỡng prune $\Rightarrow$ split rồi bị prune ngay bước sau.
+\end{itemize}
+\end{column}
+\begin{column}{0.45\linewidth}
+\centering
+\includegraphics[width=\linewidth]{fig_05_decision_plane.png}
+\captionof{figure}{\footnotesize 3 vùng: giữ nguyên / clone / split, cùng 6 điểm ví dụ A--F và vùng bị prune theo kích thước.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- fig_06_scene_extent.png ---
+\begin{frame}{Đo phạm vi cảnh (scene extent) và chuẩn hoá ngưỡng}
+\footnotesize
+\begin{itemize}
+    \item Inria tính \texttt{cameras\_extent} = $1.1 \times d_{max}$, với $d_{max}$ là khoảng cách xa nhất từ một camera tới \emph{tâm} của tập camera: $\text{extent} = 1.1 \max_k \|c_k - \bar c\|$.
+    \item Đây là chuẩn hoá theo \emph{không gian}, không phải theo pixel — cùng một $\delta=0.01$ nhưng ngưỡng tuyệt đối $\delta\cdot\text{extent}$ thay đổi theo kích thước thật của cảnh.
+    \item Ba mức ngưỡng theo tỉ lệ cố định $1:10:100$: $0.01\cdot\text{extent}$ (ranh giới clone/split), $0.1\cdot\text{extent}$ (ranh giới prune theo kích thước), và extent (kích thước toàn cảnh).
+    \item Minh hoạ: 2 Gaussian ví dụ vẽ đúng theo 2 ngưỡng $\delta\cdot\text{extent}$ và $\texttt{PRUNE\_SCALE}\cdot\text{extent}=0.1\cdot\text{extent}$ để thấy chênh lệch kích thước tuyệt đối.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.68\linewidth]{fig_06_scene_extent.png}
+\captionof{figure}{\footnotesize Trái: camera quanh point cloud, bán kính extent $=1.1\,d_{max}$; phải: thước tỉ lệ $0.01$–$0.1$–$1\times$ extent.}
+\end{center}
+\end{frame}
+
+% --- fig_07_threshold_sweep.png ---
+\begin{frame}{Quét ngưỡng: đánh đổi thêm nhiều vs thêm ít}
+\footnotesize
+\begin{itemize}
+    \item Mô phỏng $N=10000$ Gaussian, $\|\bar g_i\|$ log-normal (trung vị $\approx 4\times10^{-5}$), $\max(s_i)/\text{extent}$ log-normal (trung vị $\approx 0.004$).
+    \item Với $\tau_{grad}=2\times10^{-4}$ mặc định: chỉ một phần nhỏ Gaussian vượt ngưỡng và được đưa vào densify (phần đuôi dài của phân phối).
+    \item Quét $\tau_{grad}$ trong $[5\times10^{-5}, 10^{-3}]$: ngưỡng càng nhỏ, tỉ lệ \% Gaussian được densify tăng mạnh (đường cong dốc quanh vùng mặc định) — đây là đánh đổi cốt lõi: ngưỡng thấp $\Rightarrow$ thêm nhiều Gaussian (tốn bộ nhớ/tính toán), ngưỡng cao $\Rightarrow$ bỏ sót chi tiết.
+    \item Quét $\delta$ trong $[0.002, 0.05]$ (giữ $\tau_{grad}$ cố định): $\delta$ lớn hơn $\Rightarrow$ tỉ lệ clone tăng, tỉ lệ split giảm (đường \%clone và \%split cắt nhau đối xứng quanh $\delta=0.01$ mặc định).
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.85\linewidth]{fig_07_threshold_sweep.png}
+\captionof{figure}{\footnotesize (a) phân bố $\|\bar g_i\|$; (b) \% densify theo $\tau_{grad}$; (c) \% clone/split theo $\delta$.}
+\end{center}
+\end{frame}
+
+% --- fig_08_clone_before_after.png ---
+\begin{frame}{Clone: sao chép nguyên trạng để tăng chi tiết}
+\begin{columns}
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Điều kiện: $\|\bar g_i\| \ge \tau_{grad}$ \textbf{và} $\max(s_i) \le \delta\cdot\text{extent}$ — Gaussian nhỏ nhưng đang dưới tái tạo (under-reconstruction).
+    \item Ví dụ script: $\mu_i=(0.100,0.050)$, $s_i=(0.006,0.003)$, góc $q_i=30^\circ$, $\alpha_i=0.6$.
+    \item Phép clone: $\theta_{new} = \theta_i$ — sao chép \emph{y nguyên} mọi trường ($\mu, s, q, \alpha$, hệ số SH), không đổi scale, giữ nguyên bản gốc.
+    \item Hai Gaussian con trùng hoàn toàn vị trí ngay sau clone; chỉ tách ra nhờ gradient khác nhau ở các vòng tối ưu tiếp theo.
+    \item Kế toán: $N: 1 \to 2$ (mỗi lần clone làm $N$ tăng đúng 1).
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=\linewidth]{fig_08_clone_before_after.png}
+\captionof{figure}{\footnotesize Trước clone ($N{=}1$) và sau clone ($N{=}2$, hai Gaussian trùng $\theta$) trên một cạnh chi tiết của vật thể.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- fig_09_split_geometry.png ---
+\begin{frame}{Split: hình học phân tách Gaussian quá to}
+\begin{columns}
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Điều kiện: $\|\bar g_i\| \ge \tau_{grad}$ \textbf{và} $\max(s_i) > \delta\cdot\text{extent}$ — Gaussian quá to đang gánh một vùng có nhiều chi tiết.
+    \item Sinh 2 mẫu cục bộ $e^{(j)} \sim \mathcal{N}(0,\operatorname{diag}(s_i^2))$, $j=1,2$, rồi xoay về hệ toạ độ thế giới:
+    \[
+    \mu^{(j)} = \mu_i + R(q_i)\,e^{(j)}, \qquad s^{(j)} = s_i / 1.6,\quad q^{(j)}=q_i
+    \]
+    \item Ví dụ script: $s_i=(0.06,0.02)$, $q_i=40^\circ$ $\Rightarrow$ $s^{(j)}=(0.0375,0.0125)$; hệ số chia $\texttt{SPLIT\_FACTOR}=1.6$ (diện tích mỗi con còn $1/1.6^2\approx0.39$ lần gốc).
+    \item Gaussian gốc $\theta_i$ bị \textbf{xoá} sau split; $\alpha^{(j)}=\alpha_i$, SH$^{(j)}=$SH$_i$ giữ nguyên.
+    \item Kế toán: $+2$ con, $-1$ gốc $\Rightarrow$ ròng $N: 1 \to 2$ (+1) mỗi Gaussian bị tách.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=\linewidth]{fig_09_split_geometry.png}
+\captionof{figure}{\footnotesize Trái: mẫu $e^{(j)}$ trong hệ local; giữa: $\mu^{(j)}=\mu_i+R(q_i)e^{(j)}$ trong hệ world với 2 con nhỏ hơn 1.6 lần; phải: công thức và số liệu ví dụ.}
+\end{column}
+\end{columns}
+\end{frame}

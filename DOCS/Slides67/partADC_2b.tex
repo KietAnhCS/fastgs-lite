@@ -1,0 +1,127 @@
+% partADC_2b.tex --- Phan ADC-2b: Adaptive Density Control (chuyen sau)
+% Khong co \documentclass / \usepackage / \begin{document} -- duoc \input tu main.tex
+
+% --- 2_7_monte-carlo-V.png ---
+\begin{frame}{Ước lượng Monte Carlo cho Importance khi $V$ nhỏ}
+\begin{columns}[T]
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Trong huấn luyện thật, ta chỉ lấy mẫu $V \ll V_{\text{all}}$ view (VD $V=1,3,10,30$) thay vì duyệt hết $V_{\text{all}}=200$ view.
+  \item Với mỗi $V$, chọn ngẫu nhiên $V$ view (không lặp) trong $3000$ lần thử, tính
+  $$\widehat{\text{Imp}}_i = \left\lfloor \frac{1}{V}\sum_{v\in\text{mẫu}} \text{counts}_i^{(v)} \right\rfloor$$
+  \item Ba loại Gaussian mô phỏng: (A) lỗi nhất quán ($p_{\text{vis}}=0.9$, Poisson$(8)$), (B) artefact 1 góc ($p_{\text{vis}}=0.05$, Poisson$(60)$), (C) biên giới ($p_{\text{vis}}=0.6$, Poisson$(9)$).
+  \item Khi $V\!\uparrow$: trung bình ước lượng hội tụ về giá trị "toàn bộ" (đường chấm, $V{=}200$); độ lệch chuẩn giảm xấp xỉ $\propto 1/V$.
+  \item Loại B (artefact hiếm gặp) có phương sai ước lượng lớn nhất — dễ bị bỏ sót hoặc đánh giá sai khi $V$ nhỏ.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{2_7_monte-carlo-V.png}
+\captionof{figure}{\footnotesize Importance ước lượng (mean $\pm$ std) và $P(\text{Importance}>5)$ theo số view lấy mẫu $V$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 2_8_3dgs-vs-fastgs.png ---
+\begin{frame}{3DGS gốc và FastGS-lite: hai tín hiệu densify khác nhau}
+\begin{columns}[T]
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+  \item \textbf{3DGS gốc}: chỉ dùng gradient tích luỹ trung bình $\|g_i\| \ge \tau$, với $\tau = 2\times 10^{-4}$ (ngưỡng densify chuẩn).
+  \item \textbf{FastGS-lite}: thêm điều kiện \emph{AND} với Importance đa view giao mặt nạ lỗi:
+  $$\|g_i\| \ge \tau \;\land\; \text{Importance}_i > 5$$
+  \item Trên quần thể mô phỏng $n=400$ Gaussian ($V=10$ view): 3DGS densify toàn bộ Gaussian có gradient vượt ngưỡng, kể cả khi Importance thấp (điểm đỏ, dấu $\times$).
+  \item FastGS-lite loại bỏ đúng những Gaussian có gradient cao nhưng \emph{không} liên quan đến lỗi ảnh hiện tại (Importance $\le 5$) — giảm số ứng viên densify mỗi vòng.
+  \item Kết quả: số Gaussian được densify giảm mạnh so với 3DGS gốc trong cùng quần thể — tác động luỹ thừa lên tốc độ tăng $N$ qua nhiều vòng lặp.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{2_8_3dgs-vs-fastgs.png}
+\captionof{figure}{\footnotesize Trái: phép AND lọc thêm theo Importance. Phải: số Gaussian được densify, 3DGS gốc so với FastGS-lite.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 2_9_so-do-tensor.png ---
+\begin{frame}{Sơ đồ tensor: luồng dữ liệu bước 4--5}
+\footnotesize
+Nguồn: \texttt{utils/fast\_utils.py: compute\_gaussian\_score\_fastgs} và \texttt{forward.cu:406-408}.
+\begin{itemize}
+  \item \texttt{render\_fastgs(cam\_v)} $\to$ ảnh render \texttt{[3,H,W]}.
+  \item \texttt{get\_loss}: $e_v = \text{mean}_{ch}|r-g|$ \texttt{[H,W]}, minmax-chuẩn hoá $\to \hat e_v$ \texttt{[H,W]}.
+  \item \texttt{metric\_map} $= (\hat e_v > 0.1)$.int() \texttt{[H,W]} $\in \{0,1\}$ -- mặt nạ pixel lỗi.
+  \item Kernel CUDA duyệt từng (pixel, Gaussian): điều kiện \texttt{power<=0}, \texttt{alpha>=1/255}, \texttt{T>=1e-4}; nếu \texttt{metric\_map[pix]==1} thì \texttt{atomicAdd(metricCount[id], 1)} $\to$ \texttt{metricCount} \texttt{[N]} int32.
+  \item Cộng dồn qua $V=\texttt{len(camlist)}=10$ view: \texttt{full\_metric\_counts += counts\textasciicircum(v)} \texttt{[N]} int.
+  \item \texttt{importance\_score = torch.div(full\_metric\_counts, V, rounding\_mode='floor')} \texttt{[N]} int.
+  \item (Phần sau) \texttt{full\_metric\_score += E\_photo\textasciicircum(v)} $\cdot$ \texttt{counts\textasciicircum(v)} $\to$ \texttt{pruning\_score} = minmax$_N(\cdot)$ \texttt{[N]} float -- dùng ở bước 6--7.
+\end{itemize}
+\centering
+\includegraphics[width=0.75\linewidth]{2_9_so-do-tensor.png}
+\captionof{figure}{\footnotesize Shape tensor qua từng phép toán: $N$ Gaussian $\times$ $H{\times}W$ pixel $\times$ $V$ view.}
+\end{frame}
+
+% --- 2_10_floor-va-nguong.png ---
+\begin{frame}{Hiệu ứng \texttt{floor()} và ngưỡng chặt "$>5$"}
+\begin{columns}[T]
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Với $V=10$: $\text{Importance}_i = \left\lfloor \dfrac{\sum_v \text{counts}_i^{(v)}}{V} \right\rfloor$, so sánh chặt \emph{lớn hơn} $5$.
+  \item Do làm tròn xuống, cần $\sum_v \text{counts}_i^{(v)} \ge 60$ ($=6V$) mới vượt ngưỡng — trung bình \emph{ít nhất} $6$ pixel lỗi/view.
+  \item Vùng "nguy hiểm": tổng trong $[50,60)$ $\Rightarrow$ trung bình $\in [5,6)$ $\Rightarrow$ \texttt{floor}$=5$ $\Rightarrow$ \textbf{không} qua ngưỡng, dù rất gần.
+  \item Nếu Gaussian chỉ hữu hình ở $k$ trong $10$ view và bị tô $c$ pixel lỗi mỗi lần hữu hình, cần $c \ge 60/k$ — Gaussian hữu hình ở ít view bị "dìm" xuống dù lỗi cục bộ nặng.
+  \item Đây là cơ chế ép tính \emph{nhất quán đa góc nhìn}: lỗi thoáng qua ở 1--2 view không đủ kích hoạt densify.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{2_10_floor-va-nguong.png}
+\captionof{figure}{\footnotesize Trái: floor(sum/V) so với sum/V liên tục. Phải: Importance theo số view hữu hình $k$, với các mức lỗi/view $c=6,10,20,60$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 2_11_canh-do-choi-48x32.png ---
+\begin{frame}{Ví dụ kiểm định số trên cảnh đồ chơi $48\times 32$}
+\begin{columns}[T]
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Ảnh $48\times 32 = 1536$ pixel, $3$ view, $4$ Gaussian (G1--G4); vì gần như toàn ảnh đều sai nên \texttt{counts} $\approx |\Omega|$.
+  \item Số pixel lỗi mỗi view: $|m_v| = 1409,\ 1077,\ 1042$ (view 1,2,3).
+  \item \texttt{counts}/$|\Omega|$ luôn $\ge 0.9$ — hầu hết footprint của mỗi Gaussian nằm trong vùng lỗi.
+  \item Tổng \texttt{counts} qua $3$ view của mỗi Gaussian lớn hơn nhiều so với $|m_v|$ của một view đơn lẻ (một pixel lỗi "tố cáo" nhiều Gaussian cùng lúc).
+  \item Importance kết quả cho G1--G4 lần lượt xấp xỉ $1044,\ 1017,\ 1066,\ 974$ — vượt xa ngưỡng $5$ vì cảnh đồ chơi cố tình làm sai toàn bộ khung hình.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{2_11_canh-do-choi-48x32.png}
+\captionof{figure}{\footnotesize Trái: counts (màu) trên nền $|\Omega|$ (xám). Giữa: tỉ lệ counts/$|\Omega|$. Phải: tổng counts so với $|m_v|$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 2_12_to-vs-nho.png ---
+\begin{frame}{Gaussian TO và NHỎ: cùng mặt nạ lỗi, Importance khác nhau}
+\begin{columns}[T]
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Ba Gaussian cùng đặt trên một mặt nạ lỗi (dải chéo + nhiễu ngẫu nhiên): $s=0.7$ (nhỏ), $s=3$ (vừa), $s=6$ (to), với $\Sigma = s^2 I$.
+  \item \texttt{counts} = số pixel trong footprint $\cap$ mặt nạ lỗi tăng theo diện tích footprint, xấp xỉ $\propto s^2$.
+  \item Gaussian to có footprint lớn hơn nên dễ "chạm" nhiều pixel lỗi hơn $\Rightarrow$ Importance cao hơn một cách \emph{tự nhiên}, kể cả khi tỉ lệ lỗi cục bộ (\texttt{counts}/$|\Omega|$) không cao hơn Gaussian nhỏ.
+  \item Code KHÔNG chuẩn hoá theo diện tích (không dùng counts/$|\Omega|$) — nghĩa là kích thước Gaussian ảnh hưởng trực tiếp đến quyết định densify.
+  \item Hệ quả cho chính sách densify (Phần 4): Gaussian TO khi vượt ngưỡng nên được \textbf{split} (chia nhỏ), Gaussian NHỎ nên được \textbf{clone} (nhân bản) — vì bản chất "quan trọng" của chúng khác nhau về quy mô không gian ảnh hưởng.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{2_12_to-vs-nho.png}
+\captionof{figure}{\footnotesize Footprint 3 Gaussian kích thước khác nhau trên cùng mặt nạ lỗi; counts tăng $\sim s^2$.}
+\end{column}
+\end{columns}
+\end{frame}

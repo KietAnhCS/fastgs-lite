@@ -1,0 +1,190 @@
+% --- Slide 1 ---
+\begin{frame}
+\titlepage
+\end{frame}
+
+% --- Slide 2 ---
+\begin{frame}{Nội dung trình bày}
+\begin{enumerate}
+    \item Nền tảng: 3D Gaussian là gì
+    \item Chiếu phối cảnh \& Rasterizer khả vi
+    \item Loss, Metric, Gradient \& Optimizer
+    \item Adaptive Density Control (Clone/Split/Prune)
+    \item Ba đòn bẩy tăng tốc của FastGS
+    \item FastGS-lite trên Colab T4: pipeline \& kết quả
+    \item Quan sát, giới hạn \& kết luận
+\end{enumerate}
+\end{frame}
+
+% --- Slide 3 ---
+\begin{frame}{Động lực: vì sao cần một biểu diễn cảnh mới?}
+\begin{itemize}
+    \item NeRF (Neural Radiance Fields): biểu diễn \textbf{implicit} bằng MLP, chất lượng cao nhưng render rất chậm (giây/khung hình).
+    \item 3D Gaussian Splatting (3DGS): biểu diễn \textbf{explicit} bằng hàng trăm nghìn ``quả cầu'' Gaussian mờ trong không gian.
+    \item Render bằng \textbf{rasterization khả vi} (differentiable rasterizer) thay vì ray-marching qua mạng nơ-ron.
+    \item Kết quả: tốc độ render đạt hàng chục--hàng trăm FPS, gần thời gian thực.
+\end{itemize}
+\vspace{0.3cm}
+\small
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Tiêu chí} & \textbf{NeRF} & \textbf{3D Gaussian Splatting} \\
+\midrule
+Biểu diễn & Implicit (MLP) & Explicit (tập Gaussian) \\
+Render & Ray-marching, chậm & Rasterization, nhanh \\
+Tốc độ & $\sim$giây/khung hình & Hàng chục--hàng trăm FPS \\
+Huấn luyện & Backprop qua MLP & Backprop qua tham số Gaussian \\
+\bottomrule
+\end{tabular}
+\end{frame}
+
+% --- Slide 4 ---
+\begin{frame}{Dự án Digital Twin GS / FastGS-lite}
+\begin{itemize}
+    \item Đây là bản \textbf{fork rút gọn} của FastGS, giữ nguyên thuật toán gốc.
+    \item Mục tiêu: chạy vừa trên \textbf{1 GPU Colab T4 miễn phí} ($\sim$15GB VRAM) + 12.7GB RAM hệ thống.
+    \item Phần cứng gốc của FastGS: GPU RTX 4090 (24GB VRAM).
+\end{itemize}
+\vspace{0.3cm}
+\small
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Tiêu chí} & \textbf{Upstream FastGS} & \textbf{fastgs-lite} \\
+\midrule
+Phần cứng mục tiêu & RTX 4090, 24GB VRAM & Colab T4, $\sim$15GB VRAM \\
+CUDA extension & Submodule ngoài & Vendor sẵn trong repo \\
+Entry point & train.py & train.py + notebook có log \\
+\bottomrule
+\end{tabular}
+\end{frame}
+
+% --- Slide 5 ---
+\begin{frame}{3D Gaussian là gì?}
+\begin{columns}
+\begin{column}{0.55\textwidth}
+\footnotesize
+Hàm mật độ Gaussian 3D:
+\[
+G(x) = \exp\left( -\frac{1}{2} (x-\mu)^T \Sigma^{-1} (x-\mu) \right)
+\]
+Mỗi Gaussian có 4 nhóm tham số học được:
+\begin{itemize}
+    \item Vị trí $\mu \in \mathbb{R}^3$
+    \item Hiệp phương sai $\Sigma$ (hình dạng, hướng)
+    \item Độ mờ (opacity) $\alpha$
+    \item Màu qua hệ số Spherical Harmonics
+\end{itemize}
+\end{column}
+\begin{column}{0.45\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{ch2_gaussian_bump.png}
+\captionof{figure}{\footnotesize Quả chuông mật độ Gaussian 3D}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- Slide 6 ---
+\begin{frame}{Tham số hoá hiệp phương sai}
+\begin{columns}
+\begin{column}{0.55\textwidth}
+\footnotesize
+\begin{itemize}
+    \item Không học trực tiếp $\Sigma$ để đảm bảo tính \textbf{positive semi-definite} trong lúc tối ưu.
+    \item Thay vào đó học scale $s \in \mathbb{R}^3$ và quaternion xoay $q \in \mathbb{R}^4$:
+    \[
+    \Sigma = R S S^T R^T
+    \]
+    với $S = \mathrm{diag}(s)$, $R = R(q)$.
+    \item Khởi tạo scale ban đầu dựa trên khoảng cách tới các điểm lân cận từ COLMAP.
+\end{itemize}
+\end{column}
+\begin{column}{0.45\textwidth}
+\centering
+\includegraphics[width=0.78\linewidth]{ch1_scale_init.png}
+\captionof{figure}{\footnotesize Khởi tạo scale từ khoảng cách lân cận}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- Slide 7 ---
+\begin{frame}{Ellipsoid hiệp phương sai}
+\begin{columns}
+\begin{column}{0.55\textwidth}
+\footnotesize
+\begin{itemize}
+    \item $\Sigma$ tương đương một \textbf{ellipsoid 3D} biểu diễn vùng ảnh hưởng của Gaussian.
+    \item Trục ellipsoid = eigenvector của $\Sigma$.
+    \item Độ dài trục = eigenvalue của $\Sigma$.
+    \item Ellipsoid càng dẹt/kéo dài $\Rightarrow$ Gaussian càng bất đẳng hướng.
+\end{itemize}
+\end{column}
+\begin{column}{0.45\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{ch2_covariance_ellipsoid.png}
+\captionof{figure}{\footnotesize Ellipsoid ứng với $\Sigma$}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- Slide 8 ---
+\begin{frame}{Màu sắc qua Spherical Harmonics (SH)}
+\begin{columns}
+\begin{column}{0.55\textwidth}
+\footnotesize
+\begin{itemize}
+    \item Mỗi Gaussian không lưu 1 màu RGB cố định, mà lưu hệ số \textbf{SH}.
+    \item Biểu diễn màu \textbf{phụ thuộc góc nhìn} (view-dependent), đặc tả hiệu ứng phản xạ/specular.
+    \item Hệ số SH bậc 0 (DC) khởi tạo trực tiếp từ màu RGB quan sát được:
+    \[
+    f_{dc} = \mathrm{RGB2SH}(\text{color})
+    \]
+\end{itemize}
+\end{column}
+\begin{column}{0.45\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{ch1_rgb2sh.png}
+\captionof{figure}{\footnotesize Chuyển đổi RGB $\to$ hệ số SH bậc 0}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- Slide 9 ---
+\begin{frame}{Cơ sở SH và lịch tăng bậc}
+\footnotesize
+\begin{columns}
+\begin{column}{0.5\textwidth}
+\centering
+\includegraphics[width=0.9\linewidth]{ch2_sh_sphere.png}
+\captionof{figure}{\footnotesize Các hàm cơ sở SH bậc thấp trên mặt cầu}
+\end{column}
+\begin{column}{0.5\textwidth}
+\centering
+\includegraphics[width=0.9\linewidth]{ch2_sh_degree_schedule.png}
+\captionof{figure}{\footnotesize Lịch tăng dần bậc SH khi huấn luyện}
+\end{column}
+\end{columns}
+\vspace{0.2cm}
+\small
+Mỗi vài nghìn iteration tăng thêm 1 bậc SH, tối đa bậc 3 (16 hệ số/kênh màu).
+\end{frame}
+
+% --- Slide 10 ---
+\begin{frame}{Khởi tạo từ SfM/COLMAP}
+\begin{columns}
+\begin{column}{0.55\textwidth}
+\footnotesize
+\begin{itemize}
+    \item Gaussian ban đầu được khởi tạo tại các điểm \textbf{point-cloud thưa} do COLMAP tái tạo (Structure-from-Motion).
+    \item \textbf{Scene extent}: đường chéo bounding box của các camera trong cảnh.
+    \item Scene extent dùng làm tham chiếu cho ngưỡng phân tách Gaussian (\texttt{-{}-dense}) ở Adaptive Density Control (phần sau).
+\end{itemize}
+\end{column}
+\begin{column}{0.45\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{ch1_extent.png}
+\captionof{figure}{\footnotesize Scene extent từ bounding box camera}
+\end{column}
+\end{columns}
+\end{frame}

@@ -1,0 +1,117 @@
+% partADC_1b.tex --- ADC-1b: Ngưỡng hoá (thresholding) và cài đặt PyTorch
+% Tiếp nối ADC-1a (chuẩn hoá sai số). KHÔNG chứa \documentclass/\usepackage/\begin{document}.
+
+% --- 1_7_norm_compare.png ---
+\begin{frame}{Bước (2): vì sao chọn min-max thay vì z-score/percentile?}
+\begin{columns}[T]
+\begin{column}{0.48\linewidth}
+\footnotesize
+\begin{itemize}
+\item Bản đồ sai số mô phỏng $48\times32$: nền thấp $\approx 0.01$--$0.02$, hai vùng lỗi cục bộ (Gaussian), và \textbf{một outlier đơn lẻ} tại pixel $(3,44)$ với $e=0.95$.
+\item Min-max: $\tilde e = \dfrac{e - e_{\min}}{e_{\max} - e_{\min}}$ — chỉ phụ thuộc \textbf{duy nhất} vào $e_{\min}, e_{\max}$ của toàn ảnh.
+\item Z-score: $z = \dfrac{e - \mu}{\sigma}$, rồi co về $[0,1]$ — là biến đổi \textbf{affine}, nên \textbf{cùng thứ tự xếp hạng pixel} với min-max.
+\item Percentile 5--95: $\mathrm{clip}\!\left(\dfrac{e-p_5}{p_{95}-p_5},0,1\right)$ — bền với outlier hơn (outlier bị clip) nhưng tốn thêm một lần \texttt{sort}/\texttt{quantile}.
+\item Kết luận code FastGS: min-max \textbf{rẻ} (chỉ cần \texttt{min}/\texttt{max}), đủ tốt cho mục đích so sánh tương đối giữa các pixel trong cùng một view.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\linewidth}
+\centering
+\includegraphics[width=0.98\linewidth]{1_7_norm_compare.png}
+\captionof{figure}{\footnotesize So sánh $e_v$ thô, min-max, z-score (cùng thứ tự với min-max), và percentile 5--95 (clip outlier) trên cùng bản đồ sai số.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_8_tau_masks.png ---
+\begin{frame}{Bước (3): mặt nạ nhị phân với $\tau_{\text{loss}} = 0.1$}
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+\scriptsize
+\begin{itemize}
+\item Mặt nạ lỗi cao: $m_v(x) = \mathbb{1}[\tilde e_v(x) > \tau_{\text{loss}}]$, $\tau_{\text{loss}}{=}0.1$.
+\item Quét $\tau{\in}\{0.05,0.1,0.2,0.5\}$ trên 3 view $4{\times}4$: số pixel bật giảm dần khi $\tau$ tăng.
+\item Với $\tau_{\text{loss}}{=}0.1$: mặt nạ tách sạch "nền" và "lỗi" — không quá thưa ($\tau{=}0.5$) hay quá dày ($\tau{=}0.05$).
+\item Ngưỡng tuyệt đối: $e > e_{\min} + \tau(e_{\max}{-}e_{\min})$, tính lại theo từng view.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{1_8_tau_masks.png}
+\captionof{figure}{\footnotesize Mặt nạ $m_v$ trên 3 view $\times$ 4 mức $\tau$; khung xanh = $\tau_{\text{loss}}=0.1$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_9_tau_curve.png ---
+\begin{frame}{Đường cong \% pixel bị đánh dấu theo $\tau$}
+\begin{columns}[T]
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+\item Với ảnh $4\times4$ (3 view $E_1,E_2,E_3$): đường \% pixel đánh dấu theo $\tau$ có dạng \textbf{bậc thang} do chỉ có 16 pixel rời rạc.
+\item $\tau_{\text{loss}} = 0.1$ nằm trên một \textbf{bậc phẳng rộng} — nghĩa là kết quả mặt nạ \textbf{ổn định}, không nhạy với sai số nhỏ khi chọn $\tau$.
+\item Với ảnh mô phỏng $48\times32$ ở 3 mức chất lượng khác nhau (max $e \approx 0.40$, $0.16$, $0.05$): sau khi min-max chuẩn hoá theo từng ảnh, đường cong \% pixel gần như \textbf{trùng nhau}.
+\item Ý nghĩa: chuẩn hoá theo ảnh (per-image min-max) làm cho $\tau_{\text{loss}}$ mang \textbf{ý nghĩa tương đối}, không phụ thuộc chất lượng tuyệt đối của ảnh render.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.98\linewidth]{1_9_tau_curve.png}
+\captionof{figure}{\footnotesize Trái: \% pixel đánh dấu vs $\tau$ trên ảnh $4\times4$ (bậc thang, $\tau=0.1$ trên bậc phẳng). Phải: mô phỏng $48\times32$ ở 3 mức chất lượng, các đường gần trùng sau chuẩn hoá.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_10_equiv_threshold.png ---
+\begin{frame}{Ngưỡng chuẩn hoá $\Leftrightarrow$ ngưỡng tuyệt đối trên $e$ gốc}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\scriptsize
+\begin{itemize}
+\item $\tau_{\text{loss}}{=}0.1$ trên $\tilde e$ tương đương ngưỡng tuyệt đối mỗi view: $e > e_{\min} + \tau_{\text{loss}}(e_{\max}-e_{\min})$.
+\item Ví dụ 3 view: $[0.01,0.40],[0.01,0.16],[0.01,0.24]$ $\Rightarrow$ ngưỡng ${\approx}0.049,0.025,0.033$.
+\item \textbf{Cùng $\tau_{\text{loss}}$} nhưng ngưỡng tuyệt đối mỗi view khác nhau: view càng "tệ" (khoảng rộng) ngưỡng càng cao.
+\item Hệ quả của chuẩn hoá \textbf{theo từng ảnh} trước khi so với $\tau_{\text{loss}}$ cố định.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{1_10_equiv_threshold.png}
+\captionof{figure}{\footnotesize Khoảng $[e_{\min},e_{\max}]$ mỗi view và ngưỡng tuyệt đối tương đương.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_11_edge_cases.png ---
+\begin{frame}{Trường hợp biên: ảnh hoàn hảo, ảnh rất tệ, và chia cho 0}
+\begin{columns}[T]
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+\item \textbf{Ảnh hằng số} ($e_v \equiv 0.03$, mọi pixel bằng nhau): $e_{\max}-e_{\min}=0 \Rightarrow \tilde e = 0/0 = \text{NaN}$.
+\item So sánh \texttt{NaN > 0.1} luôn trả về \texttt{False} trong PyTorch/NumPy $\Rightarrow$ mặt nạ \textbf{rỗng} (0/16 pixel) một cách \textbf{an toàn}, không crash, không cần epsilon.
+\item \textbf{Ảnh gần hội tụ} ($e \in [0.004, 0.006]$, mẫu số rất nhỏ): min-max vẫn kéo giá trị về $[0,1]$ đầy đủ $\Rightarrow$ \textbf{nhiễu nhỏ bị phóng đại} thành "lỗi cao" — đây là cái giá của chuẩn hoá theo ảnh.
+\item Nếu cộng thêm $\epsilon$ vào mẫu số (code \textbf{không} làm vậy): với $\epsilon < 10^{-3}$, ảnh hưởng lên $\tilde e$ dưới $1\%$ — không đáng kể trong thực tế.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.98\linewidth]{1_11_edge_cases.png}
+\captionof{figure}{\footnotesize (a) $e$ hằng số $\to$ NaN, mặt nạ rỗng an toàn. (b) Ảnh hưởng của $\epsilon$ giả định lên $\tilde e$. (c) $e$ nhỏ (ảnh gần hội tụ) vẫn bị min-max kéo về $[0,1]$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_12_torch_flow.png ---
+\begin{frame}{Luồng PyTorch thực tế: từ render đến mặt nạ (\texttt{get\_loss})}
+\scriptsize
+\begin{itemize}
+\item \textbf{B1 — L1}: \texttt{torch.abs(rend-gt)} $[3,H,W]$ $\to$ \texttt{mean(.,0)} $\to$ \texttt{l1\_loss} $[H,W]$.
+\item \textbf{B2 — minmax}: $\frac{\text{l1\_loss}-\min}{\max-\min} \to$ \texttt{l1\_loss\_norm}$\in[0,1]$, min/max trên \textbf{toàn ảnh}.
+\item \textbf{B3 — ngưỡng}: \texttt{(l1\_loss\_norm>0.1).int()} $\to$ \texttt{metric\_map}$\in\{0,1\}$. Hàm: \texttt{get\_loss()} (\texttt{utils/fast\_utils.py:21-25}).
+\item \texttt{metric\_map} truyền vào \texttt{render\_fastgs(...,metric\_map=...)} — \textbf{bước 4}, cầu nối sang importance đa view (Phần 2).
+\end{itemize}
+\centering
+\includegraphics[width=0.68\linewidth]{1_12_torch_flow.png}
+\captionof{figure}{\footnotesize Tensor shape qua 3 bước: render/gt $\to$ l1\_loss $\to$ l1\_loss\_norm $\to$ metric\_map.}
+\end{frame}

@@ -1,0 +1,127 @@
+% === partADC_1a.tex ===
+% Phan 1 (Section 1) cua chuong Adaptive Density Control (ADC) / FastGS-lite.
+% Tin hieu sai so anh dung lam dau vao cho quyet dinh densify/prune,
+% TRUOC khi tinh importance score da view.
+% 6 frame, tuong ung 6 hinh trong DOCS/BOOK/adc_figures/part1_figures.py
+
+% --- 1_1_timeline.png ---
+\begin{frame}{Lịch chạy ADC trong vòng lặp huấn luyện (0 $\to$ 30000)}
+\footnotesize
+\begin{itemize}
+    \item Adaptive Density Control không chạy liên tục: nó được \textbf{lồng} vào vòng lặp huấn luyện 30000 iteration theo các mốc cấu hình sẵn.
+    \item \textbf{Tích luỹ thống kê gradient} (\texttt{accum}, \texttt{accum\_abs}, \texttt{denom}): chạy suốt $t < 15000$ (\texttt{densify\_until\_iter}).
+    \item \textbf{Densify + prune}: từ $t = 500$ (\texttt{densify\_from\_iter}) đến $t = 15000$, lặp lại mỗi \texttt{densification\_interval} $= 500$ vòng $\Rightarrow$ 28 lần densify+prune (multinomial).
+    \item \textbf{Reset opacity}: mỗi \texttt{opacity\_reset\_interval} $= 3000$ vòng, chỉ khi $t < 15000$ $\Rightarrow$ 4 lần tại $t = 3000, 6000, 9000, 12000$, đặt $\alpha \leftarrow \min(\alpha, 0.01)$.
+    \item \textbf{Final prune} (đặc thù FastGS): mỗi 3000 vòng trong khoảng $15000 < t < 30000$ $\Rightarrow$ 4 lần tại $t = 18000, 21000, 24000, 27000$, xoá thẳng Gaussian có $\alpha < 0.1$ \textbf{hoặc} điểm Pruning $> 0.9$.
+    \item Sau $t = 30000$: kết thúc huấn luyện, \textbf{không} còn final prune nào nữa.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.78\linewidth]{1_1_timeline.png}
+\captionof{figure}{\footnotesize Lịch chạy ADC trong \texttt{train.py} với preset \texttt{densification\_interval} $= 500$: 4 dải mốc — thống kê gradient, densify+prune, reset opacity, final prune.}
+\end{center}
+\end{frame}
+
+% --- 1_2_N_qualitative.png ---
+\begin{frame}{Số lượng Gaussian $N(t)$ thay đổi ra sao qua các giai đoạn}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Mỗi lần densify là một \textbf{phép nhân}, không phải phép cộng: sau mỗi bước tại $t \in (500, 15000)$,
+    \[
+        N \leftarrow N \cdot (1 + r_{\text{spawn}}) \cdot (1 - r_{\text{prune}}).
+    \]
+    \item Vì lặp lại 28 lần, chênh lệch nhỏ ở $r_{\text{spawn}}$ tạo tác động \textbf{luỹ thừa} lên $N$ cuối giai đoạn densify.
+    \item 3DGS gốc: $r_{\text{spawn}} \approx 0.085$, $r_{\text{prune}} \approx 0.035$, không có final prune $\Rightarrow N$ tăng nhanh rồi giữ nguyên.
+    \item FastGS-lite: $r_{\text{spawn}} \approx 0.045$ (chọn lọc hơn nhờ điều kiện Importance $> 5$), cộng thêm final prune với $r_{\text{final}} \approx 0.12$ mỗi 3000 vòng trong $(15000, 30000)$.
+    \item Kết quả định tính: $N$ \textbf{tăng nhanh} đầu train, \textbf{chững lại} khi hết giai đoạn densify ($t=15000$), rồi \textbf{giảm bậc thang} tại mỗi lần final prune.
+\end{itemize}
+\end{column}
+\begin{column}{0.46\linewidth}
+\centering
+\includegraphics[width=\linewidth]{1_2_N_qualitative.png}
+\captionof{figure}{\footnotesize $N(t)$ minh hoạ định tính: 3DGS gốc (xám) chỉ tăng rồi bão hoà; FastGS-lite (xanh) có thêm các bậc giảm do final prune mỗi 3000 vòng.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_3_pixel_error_view1.png ---
+\begin{frame}{Bước (1): sai số ảnh theo từng pixel $e_v(x)$}
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+\scriptsize
+\begin{itemize}
+    \item Đầu vào: ảnh render $I_{\text{rend}}$ và ground truth $I_{\text{gt}}$ tại view $v$, mỗi ảnh 3 kênh màu.
+    \item Sai số pixel (chuẩn $L_1$ trung bình theo kênh):
+    $\displaystyle e_v(x) = \frac{1}{3}\sum_{c} \left| I_{\text{rend}}^{c}(x) - I_{\text{gt}}^{c}(x) \right|$.
+    \item Ví dụ lưới $4{\times}4$: $e_v(P_7){=}\frac{0.30+0.24+0.21}{3}{=}0.25$, nền chỉ ${\approx}0.01$--$0.02$.
+    \item Cả lưới cho $e_v{\in}[0.01,0.40]$: vùng $P7,P8,P11,P12,P15,P16$ sai số lớn — "bản đồ lỗi" thô chuẩn hoá ở bước (2).
+\end{itemize}
+\end{column}
+\begin{column}{0.5\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{1_3_pixel_error_view1.png}
+\captionof{figure}{\footnotesize $I_{\text{gt}}$, $I_{\text{rend}}$, bản đồ $e_v(x)$ trên lưới $4\times4$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_4_l1_vs_l2.png ---
+\begin{frame}{Vì sao dùng $L_1$ thay vì $L_2$ ở bước (1)}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Với $d = |I_{\text{rend}} - I_{\text{gt}}|$ trên một kênh, hai lựa chọn đóng góp vào $e_v(x)$:
+    \[
+        L_1: \; d, \qquad L_2 \text{ (không căn)}: \; d^2.
+    \]
+    \item Với sai số nhỏ $d = 0.05$: $L_1 = 0.05$ nhưng $d^2 = 0.0025$ — $L_2$ "bóp" gần như triệt tiêu các lệch màu nhỏ, còn $L_1$ giữ tuyến tính.
+    \item Ngược lại, với sai số lớn (vùng vật thể chuyển động, $d \approx 0.3$--$0.4$), $d^2$ phóng đại mạnh hơn nhiều so với $d$ $\Rightarrow$ $L_2$ nhạy outlier hơn.
+    \item Trên 16 pixel ví dụ, tỉ lệ $\max(e)/\text{median}(e)$ (đo "đuôi dài" của phân phối) của MSE cao hơn hẳn so với $L_1$ trên thang log.
+    \item Vì bước (2) sẽ chuẩn hoá theo $\min/\max$ của toàn ảnh, dùng $L_1$ ở bước (1) giúp bản đồ lỗi ổn định hơn trước khi bị outlier chi phối thêm lần nữa.
+\end{itemize}
+\end{column}
+\begin{column}{0.46\linewidth}
+\centering
+\includegraphics[width=\linewidth]{1_4_l1_vs_l2.png}
+\captionof{figure}{\footnotesize So sánh $L_1$ ($|d|$, tuyến tính) và $L_2$ ($d^2$, phạt nặng outlier) trên cùng bộ 16 pixel view 1.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_5_minmax_3views.png ---
+\begin{frame}{Bước (2): chuẩn hoá min-max trên từng ảnh}
+\scriptsize
+\begin{itemize}
+    \item Mỗi view $v$ chuẩn hoá độc lập theo $\min,\max$ của chính $e_v$ trên ảnh đó:
+    $\displaystyle \tilde{e}_v(x) = \frac{e_v(x) - \min_x e_v(x)}{\max_x e_v(x) - \min_x e_v(x)} \in [0,1]$.
+    \item Ba view khác hẳn nhau: view 1 "tệ" ($e_v{\in}[0.01,0.40]$), view 2 "tốt" ($[0.01,0.16]$), view 3 trung bình ($[0.01,0.24]$).
+    \item Sau chuẩn hoá, cả ba dùng \textbf{chung ngưỡng} $\tau_{\text{loss}}{=}0.1$ ở bước (3).
+    \item Ngưỡng tuyệt đối tương đương khác nhau theo view: view 1 là $e_v{>}0.049$, view 2 là $e_v{>}0.025$, view 3 là $e_v{>}0.033$ — view "tốt" và "tệ" cho số pixel bật tương đương về mặt \emph{tương đối}.
+\end{itemize}
+\centering
+\includegraphics[width=0.62\linewidth]{1_5_minmax_3views.png}
+\captionof{figure}{\footnotesize $e_v$ thô (trên) và $\tilde{e}_v$ sau min-max (dưới), 3 view; nét đứt = $\tau_{\text{loss}}=0.1$.}
+\end{frame}
+
+% --- 1_6_outlier.png ---
+\begin{frame}{Vấn đề của min-max: một outlier bóp méo toàn bộ thang đo}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Chuẩn hoá min-max chỉ phụ thuộc \textbf{duy nhất} vào hai giá trị $\min$ và $\max$ của cả ảnh $\Rightarrow$ rất nhạy với một điểm bất thường.
+    \item Ví dụ: giữ nguyên lưới $4\times4$ view 1 nhưng đặt $e_v(P_1) = 0.90$ (mô phỏng một pixel lỗi/vật thể chuyển động đột ngột).
+    \item Mẫu số $(\max - \min)$ tăng từ $0.39$ ($0.40 - 0.01$) lên $0.89$ ($0.90 - 0.01$) $\Rightarrow$ ngưỡng tuyệt đối tương đương tăng từ $0.049$ lên $0.099$.
+    \item Hệ quả: các pixel lỗi thật sự khác (ví dụ $P_7$--$P_{16}$) bị \textbf{"nén"} giá trị $\tilde{e}_v$ xuống gần một nửa, dù bản chất sai số của chúng không đổi.
+    \item $P_{15}$ ($e_v = 0.18$) vẫn còn bật ($\tilde{e}_v = 0.191 > 0.1$), nhưng biên an toàn bị thu hẹp đáng kể — chỉ cần thêm vài outlier là toàn bộ importance của các Gaussian khác trong ảnh bị méo theo.
+\end{itemize}
+\end{column}
+\begin{column}{0.46\linewidth}
+\centering
+\includegraphics[width=\linewidth]{1_6_outlier.png}
+\captionof{figure}{\footnotesize So sánh $e_v$, $\tilde{e}_v$ và mặt nạ $\tilde{e}_v > 0.1$ trước/sau khi thêm một outlier duy nhất ($e_v(P_1){=}0.90$).}
+\end{column}
+\end{columns}
+\end{frame}

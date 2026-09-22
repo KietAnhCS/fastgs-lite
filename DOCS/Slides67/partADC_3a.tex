@@ -1,0 +1,118 @@
+% partADC_3a.tex --- Phan 3a: Adaptive Density Control -- E_photo va lien he voi Pruning
+% 6 frame, khong documentclass/usepackage/begin{document} (duoc include tu main.tex)
+
+% --- 3_1_ephoto-3view.png ---
+\begin{frame}{Bước (6): tổng hợp sai số ảnh $E_{\text{photo}}$ qua nhiều view}
+\begin{columns}[T]
+\begin{column}{0.48\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Mỗi view $v$ cho ra một cặp $(L1^{(v)}, \text{SSIM}^{(v)})$ giữa ảnh render và ảnh GT.
+  \item Công thức tổng hợp (code: \texttt{e\_photo}, $\lambda = 0.2$):
+  \[
+    E_{\text{photo}}^{(v)} = (1-\lambda)\, L1^{(v)} + \lambda\,\bigl(1 - \text{SSIM}^{(v)}\bigr)
+  \]
+  \item Đây chính là dạng \emph{trung bình có trọng số} giữa hai thành phần L1 và $1-\text{SSIM}$, không phải max qua view.
+  \item Ví dụ 3.md (ảnh 4x4, 3 view): $L1 = (0.11125,\, 0.06,\, 0.090625)$, $\text{SSIM} = (0.72,\, 0.88,\, 0.80)$.
+  \item Kết quả: $E_{\text{photo}} = (0.145,\; 0.072,\; 0.1125)$ -- view 1 (SSIM thấp nhất) đóng góp lỗi lớn nhất.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{3_1_ephoto-3view.png}
+\captionof{figure}{\footnotesize Phân rã $E_{\text{photo}}^{(v)} = 0.8\,L1 + 0.2(1-\text{SSIM})$ cho 3 view, cột xanh lá = giá trị dùng làm trọng số ở bước (7).}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 3_2_l1-vs-ssim.png ---
+\begin{frame}{Vì sao cần SSIM: L1 không phân biệt được ``mờ'' và ``nhiễu''}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\scriptsize
+\begin{itemize}
+  \item Thí nghiệm: GT tổng hợp, Render A (blur Gaussian $\sigma{=}1.6$), Render B (nhiễu hiệu chỉnh để \textbf{cùng} $L1$ với A).
+  \item $L1^{A}{\approx}L1^{B}$ nhưng cấu trúc khác $\Rightarrow \text{SSIM}^{A}{\neq}\text{SSIM}^{B}$ (blur phá cạnh giữ tương quan patch, noise phá cả hai).
+  \item $\Rightarrow E_{\text{photo}}^{A}{\neq}E_{\text{photo}}^{B}$ dù $L1$ gần bằng nhau — chỉ dùng $L1$ sẽ coi hai render "lỗi như nhau".
+  \item[$\Rightarrow$] $E_{\text{photo}}$ cần cả L1 (cường độ) và $1{-}$SSIM (cấu trúc, cửa sổ Gauss $11{\times}11$).
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{3_2_l1-vs-ssim.png}
+\captionof{figure}{\footnotesize Cùng $L1$, SSIM và $E_{\text{photo}}$ khác nhau giữa render mờ và nhiễu.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 3_3_ephoto-theo-lambda.png ---
+\begin{frame}{$E_{\text{photo}}$ theo trọng số trộn $\lambda$}
+\begin{columns}[T]
+\begin{column}{0.48\linewidth}
+\footnotesize
+\begin{itemize}
+  \item $E_{\text{photo}}^{(v)}(\lambda) = (1-\lambda)\,L1^{(v)} + \lambda\,(1-\text{SSIM}^{(v)})$ là hàm \emph{tuyến tính} theo $\lambda \in [0,1]$.
+  \item $\lambda = 0$: chỉ dùng $L1$ thuần; $\lambda = 1$: chỉ dùng $1-\text{SSIM}$ (giống vai trò $\lambda_{\text{dssim}}$ trong loss huấn luyện).
+  \item Giá trị mặc định trong code: $\lambda = 0.2$ -- ưu tiên L1 nhưng vẫn giữ một phần tín hiệu cấu trúc.
+  \item Các đường $E_{\text{photo}}^{(v)}(\lambda)$ của từng view có thể \textbf{cắt nhau}: view có $L1$ thấp nhưng SSIM thấp có thể vượt lên khi $\lambda$ tăng.
+  \item Tỉ số $E_{\max}/E_{\min}$ qua các view thay đổi rõ rệt giữa $\lambda=0$ và $\lambda=1$, cho thấy lựa chọn $\lambda$ ảnh hưởng trực tiếp đến việc view nào bị coi là ``tệ nhất''.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{3_3_ephoto-theo-lambda.png}
+\captionof{figure}{\footnotesize $E_{\text{photo}}^{(v)}(\lambda)$ cho 3 view (ví dụ 3.md và cảnh đồ chơi); đường đứt nét đánh dấu $\lambda=0.2$ dùng trong code.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 3_4_heatmap-dong-gop.png ---
+\begin{frame}{Đóng góp của từng Gaussian vào điểm số tổng}
+\footnotesize
+\begin{itemize}
+  \item Với mỗi Gaussian $i$ và view $v$, \texttt{counts}$_i^{(v)}$ (bước 4) đếm số pixel lỗi mà $i$ tham gia dựng nên trong view đó.
+  \item Đóng góp có trọng số vào điểm thô: $\text{contrib}_i^{(v)} = \text{counts}_i^{(v)} \cdot E_{\text{photo}}^{(v)}$.
+  \item Điểm thô tích luỹ qua $V$ view: $\text{raw}_i = \sum_{v=1}^{V} \text{counts}_i^{(v)} \, E_{\text{photo}}^{(v)}$.
+  \item Ví dụ 3.md: $G3$ có \texttt{counts} $=(6,6,6)$ ở cả 3 view $\Rightarrow \text{raw}_{G3} = 6(0.145+0.072+0.1125) \approx 1.98$ -- cao nhất trong 5 Gaussian, trong khi $G1$ với \texttt{counts}$=(0,0,0)$ có $\text{raw}=0$.
+  \item Heatmap minh hoạ trực quan: chỉ một vài Gaussian (hàng có màu đậm) chiếm phần lớn tổng sai số ảnh, phần còn lại đóng góp gần như bằng 0.
+\end{itemize}
+\centering
+\includegraphics[width=0.85\linewidth]{3_4_heatmap-dong-gop.png}
+\captionof{figure}{\footnotesize Trái: \texttt{counts}$_i^{(v)}$; giữa: đóng góp có trọng số \texttt{counts}$\cdot E_{\text{photo}}$; phải: điểm thô và Pruning sau minmax qua 5 Gaussian.}
+\end{frame}
+
+% --- 3_5_scatter-imp-pruning.png ---
+\begin{frame}{Importance vs.\ Pruning: ranh giới không phải ngưỡng cứng}
+\begin{columns}[T]
+\begin{column}{0.48\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Importance: $\text{Importance}_i = \left\lfloor \dfrac{1}{V}\sum_{v=1}^{V} \text{counts}_i^{(v)} \right\rfloor$ -- số nguyên, dùng để quyết định \emph{densify} (ngưỡng $> 5$).
+  \item Pruning: $\text{Pruning}_i = \text{minmax}_i(\text{raw}_i)$, chuẩn hoá $\text{raw}$ về $[0,1]$ qua toàn bộ $N$ Gaussian -- dùng cho \emph{final prune} (ngưỡng $>0.9$).
+  \item Trên tập mô phỏng 300 Gaussian, $V{=}10$: hai đại lượng tương quan hạng dương (hệ số Spearman $\rho$ hiển thị trên hình) nhưng \textbf{không phải hàm một-một} của nhau.
+  \item Với cùng một giá trị Importance, Pruning trải rộng trên một khoảng giá trị -- do Pruning còn phụ thuộc \emph{view nào} chứa lỗi (qua trọng số $E_{\text{photo}}^{(v)}$), còn Importance chỉ đếm số lượt xuất hiện.
+  \item Kết luận: quyết định pruning có vùng chuyển tiếp mờ quanh ranh giới, không cắt cứng theo Importance.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{3_5_scatter-imp-pruning.png}
+\captionof{figure}{\footnotesize Trái: 5 Gaussian ví dụ 3.md; phải: 300 Gaussian mô phỏng, màu = tỉ lệ view thấy được Gaussian.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 3_6_pruning-vs-1-minus-imp.png ---
+\begin{frame}{Pruning $\neq 1 - $ Importance chuẩn hoá}
+\footnotesize
+\begin{itemize}
+  \item Bốn kịch bản cùng tổng \texttt{counts} nhưng phân bố khác nhau qua 3 view: A $=(6,6,6)$, B $=(18,0,0)$, C $=(0,18,0)$, D $=(17,0,0)$.
+  \item A, B, C có cùng $\text{Importance} = \lfloor 18/3 \rfloor = 6$, nhưng điểm thô $\text{raw} = \sum_v \text{counts}^{(v)} E_{\text{photo}}^{(v)}$ khác nhau rõ rệt: dồn lỗi vào view có $E_{\text{photo}}$ cao (view 1, $E{=}0.145$) cho \text{raw} lớn hơn dồn vào view tốt nhất (view 2, $E{=}0.072$).
+  \item D có tổng thấp hơn (17) nên Importance có thể giảm bậc trong khi raw vẫn gần B -- cho thấy việc lấy $\lfloor \cdot \rfloor$ làm mất thông tin mà Pruning (không làm tròn, có trọng số $E_{\text{photo}}$) vẫn giữ được.
+  \item Trên 300 Gaussian mô phỏng: ứng với mỗi mức Importance cố định, Pruning trải trên một khoảng (thanh xám) thay vì một giá trị duy nhất.
+  \item Do đó xác suất một Gaussian bị pruning tăng dần khi importance của nó giảm ($\sim 1-\text{importance}$ về xu hướng), nhưng đây là quan hệ \textbf{mang tính xác suất/thống kê}, không phải phép cắt tất định 1--1.
+\end{itemize}
+\centering
+\includegraphics[width=0.78\linewidth]{3_6_pruning-vs-1-minus-imp.png}
+\captionof{figure}{\footnotesize Trái: cùng Importance nhưng raw khác nhau tuỳ phân bố lỗi qua view; phải: khoảng giá trị Pruning ứng với mỗi mức Importance trên 300 Gaussian mô phỏng.}
+\end{frame}

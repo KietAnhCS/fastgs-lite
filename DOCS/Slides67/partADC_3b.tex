@@ -1,0 +1,114 @@
+% partADC-3b: Adaptive Density Control - tong ket 7 buoc, do nhay, chi phi, outlier score
+% 6 frames, khong documentclass/preamble, chi include vao main.tex
+
+% --- 3_7_so-do-7-buoc.png ---
+\begin{frame}{Tổng hợp: luồng dữ liệu 7 bước tính Importance / Pruning}
+\tiny
+\begin{itemize}
+    \item Bước (1)--(4) trên từng view $v$: render $\to$ sai số $e_v{=}\text{mean}_{ch}|.|$ $\to$ minmax $\hat e_v$ $\to$ mặt nạ $m_v{=}\mathbb{1}[\hat e_v{>}0.1]$ $\to$ đổ về Gaussian thành $\texttt{counts}_v$.
+    \item Bước (6): $E_{photo}^{(v)} = 0.8\,L1 + 0.2\,(1-\text{SSIM})$ (scalar/ảnh); tích luỹ qua $V$ view:
+    $\texttt{full\_counts}{+}{=}\texttt{counts}_v,\ \texttt{full\_score}{+}{=}E_{photo}^{(v)}{\cdot}\texttt{counts}_v$
+    \item Bước (5): $\text{Importance}_i{=}\lfloor \texttt{full\_counts}_i/V\rfloor \to$ densify khi $\text{Importance}_i{>}5$.
+    \item Bước (7): $\text{Pruning}_i{=}\text{minmax}_i(\texttt{full\_score}) \to w_i{=}\frac{1}{10^{-6}+1-\text{Pruning}_i}$, prune khi ${>}0.9$.
+    \item Độ phức tạp: $O(HW)$/view, $O(\sum_v|\Omega_v|)$ đổ về Gaussian, $O(N)$ cho (5)(7).
+\end{itemize}
+\centering
+\includegraphics[width=0.55\linewidth]{3_7_so-do-7-buoc.png}
+\captionof{figure}{\footnotesize Toàn cảnh 7 bước tính Importance/Pruning.}
+\end{frame}
+
+% --- 3_8_do-nhay-lambda-5g.png ---
+\begin{frame}{Độ nhạy tham số $\lambda$: ví dụ 5 Gaussian (3.md)}
+\begin{columns}
+\begin{column}{0.55\textwidth}
+\footnotesize
+\begin{itemize}
+    \item Quét $\lambda \in [0,1]$, tính lại $\text{Pruning}_i(\lambda)$ cho 5 Gaussian $G_1,\dots,G_5$ từ \texttt{COUNTS\_3MD} và \texttt{L1\_3MD}, \texttt{SSIM\_3MD}.
+    \item Kết quả: \textbf{đổi $\lambda$ chỉ đổi giá trị Pruning, không đổi thứ hạng} trong khoảng $\lambda \in [0,1]$ -- các đường không cắt nhau.
+    \item Nếu \textbf{bỏ hoàn toàn trọng số} ($E_v \equiv 1$, tức chỉ dùng \texttt{counts.sum}), thứ hạng có thể \textbf{đảo ngược}: ví dụ $G_5$ so với $G_6^{*}$ giả định (counts $=[0,6,0]$, lỗi tập trung đúng ở view \textbf{tốt nhất}) đổi chỗ cho nhau khi bỏ trọng số.
+    \item Đổi cách chuẩn hoá (chia cho max, hoặc z-score) trên cùng \texttt{raw} ($\lambda=0.2$) \textbf{không đổi thứ hạng} vì đây là các phép biến đổi đơn điệu trên cùng một vector.
+    \item Kết luận: công thức \textbf{ổn định với $\lambda$}, nhưng \textbf{nhạy với việc có/không có trọng số} $E_{photo}^{(v)}$ theo view.
+\end{itemize}
+\end{column}
+\begin{column}{0.45\textwidth}
+\centering
+\includegraphics[width=\linewidth]{3_8_do-nhay-lambda-5g.png}
+\captionof{figure}{\footnotesize Trái: $\text{Pruning}_i(\lambda)$, đường $\lambda=0.2$ (code) và $\lambda=1.05$ (bỏ trọng số). Phải: bump chart thứ hạng qua 6 liên số, gồm $G_6^{*}$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 3_9_rank-change-300g.png ---
+\begin{frame}{Kiểm tra tính robust ở quy mô lớn: 300 Gaussian mô phỏng}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\scriptsize
+Mô phỏng $N{=}300$, $V{=}10$ view, so thứ hạng $\text{Pruning}_i$ gốc ($\lambda{=}0.2$) với biến thể:
+\begin{itemize}
+    \item $\lambda{=}0$: \textbf{0.0\%} đổi hạng, tập $>0.9$ giữ \textbf{100\%}.
+    \item $\lambda{=}1$: \textbf{2.3\%} đổi hạng, vẫn giữ \textbf{100\%}.
+    \item Bỏ trọng số ($E_v{\equiv}1$): \textbf{37.3\%} đổi hạng — lớn nhất — tập $>0.9$ chỉ còn \textbf{99.3\%}.
+    \item Thay $E_v$ bằng $\text{rank}(E_v)$: chỉ \textbf{3.7\%} đổi hạng.
+    \item $E_{photo}$ giữa 10 view: max/min${=}5.61$.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{3_9_rank-change-300g.png}
+\captionof{figure}{\footnotesize Hạng gốc vs biến thể; đỏ = Gaussian trong $\text{Pruning}>0.9$ gốc.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 3_10_chi-phi-scoring.png ---
+\begin{frame}{Chi phí tính toán của bước scoring có là nút thắt mới?}
+\begin{columns}
+\begin{column}{0.52\textwidth}
+\footnotesize
+\begin{itemize}
+    \item Thiết lập: \texttt{densify\_from\_iter}$=500$, \texttt{densify\_until\_iter}$=15000$, tổng \texttt{iterations}$=30000$; mỗi lần densify cần \textbf{thêm} $10$ view $\times$ $2$ lần render (GT + mới) $= 20$ forward-equivalent.
+    \item Interval $=500$: $n_{densify}=28$ lần $\to +560$ forward. So với train ($1$ vòng $\approx 3$ forward-equivalent, tổng $90000$): overhead $\mathbf{0{,}62\%}$ (cận trên nếu $1$ vòng $=1$ forward: $1{,}87\%$).
+    \item Interval $=200$: $n_{densify}=72$ lần $\to +1440$ forward $\to$ overhead $\mathbf{1{,}6\%}$ (cận trên $4{,}8\%$).
+    \item Interval $=100$: $n_{densify}=144$ lần $\to +2880$ forward $\to$ overhead $\mathbf{3{,}2\%}$ (cận trên $9{,}6\%$).
+    \item Overhead $\sim 1/\text{interval}$ -- ngay cả interval nhỏ nhất thường dùng ($100$), scoring vẫn dưới $10\%$ tổng chi phí train $\to$ \textbf{không} phải nút thắt mới.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\includegraphics[width=\linewidth]{3_10_chi-phi-scoring.png}
+\captionof{figure}{\footnotesize Trái: chồng bar train vs scoring theo interval. Phải: overhead (\%) theo interval, hai đường cận trên / sát thực tế.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 3_11_pruning-to-w.png ---
+\begin{frame}{Từ điểm số đến trọng số lấy mẫu $w_i$ (bước chuẩn bị cho Phần 5)}
+\footnotesize
+\begin{itemize}
+    \item Công thức chuyển đổi ($\S7.4$): $\displaystyle w_i = \frac{1}{10^{-6} + 1 - \text{Pruning}_i}$ -- $w_i$ tăng \textbf{siêu tuyến tính} và \textbf{phân kỳ} khi $\text{Pruning}_i \to 1$.
+    \item Ví dụ 3.md: $\text{Pruning} = [0,\ 0{,}057,\ 1{,}0,\ 0{,}610,\ 0{,}367]$ cho $G_1,\dots,G_5$ $\Rightarrow$ $w = [1{,}0,\ 1{,}06,\ 10^{6},\ 2{,}56,\ 1{,}58]$ (dùng $10^{-6}$ trong mẫu để tránh chia cho 0 khi $\text{Pruning}=1$).
+    \item Chuẩn hoá thành xác suất lấy mẫu $p_i = w_i / \sum_j w_j$: $G_3$ chiếm $p_{G_3} \approx 0{,}999994$ ($\approx 100\%$) xác suất ở lượt rút mẫu đầu tiên -- các Gaussian còn lại gần như \textbf{không bao giờ được chọn}.
+    \item Cảnh đồ chơi (4 Gaussian): $\text{Pruning} = [0{,}7654,\ 0{,}4507,\ 1{,}0,\ 0{,}0]$ -- vẫn có một Gaussian đạt $\text{Pruning}=1$ gây $w \to \infty$.
+    \item Ngưỡng tuyệt đối $\text{Pruning}>0.9$ (prune cuối) độc lập với công thức $w_i$, nhưng cả hai đều nhạy với cùng một đại lượng: giá trị cực đại của \texttt{full\_score}.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.68\linewidth]{3_11_pruning-to-w.png}
+\captionof{figure}{\footnotesize Trái: $w(\text{Pruning})$ (thang log), các Gaussian 3.md/đồ chơi đánh dấu. Phải: $p_i$ cho 3.md -- $G_3$ chi phối hoàn toàn.}
+\end{center}
+\end{frame}
+
+% --- 3_12_minmax-outlier.png ---
+\begin{frame}{Outlier trong chính điểm SCORE tổng hợp -- lặp lại vấn đề từ Phần 1}
+\footnotesize
+\begin{itemize}
+    \item Nhắc lại Phần 1: min-max $\dfrac{x-\min}{\max-\min}$ nhạy với outlier ở \textbf{cả hai đầu}; ở đây áp dụng cho \texttt{raw\_score} $= \sum_v \texttt{counts}_v \cdot E_{photo}^{(v)}$ trước khi lấy minmax thành Pruning.
+    \item Thí nghiệm: quần thể $300$ Gaussian mô phỏng, nhân giá trị \texttt{raw} lớn nhất lên $\times 3$ (một Gaussian sai rất nặng xuất hiện thêm).
+    \item Trước outlier: $1$ Gaussian có $\text{Pruning}>0.9$, $13$ Gaussian có $\text{Pruning}>0.5$.
+    \item Sau khi thêm outlier: vẫn chỉ $1$ Gaussian có $\text{Pruning}>0.9$ (chính nó), nhưng số Gaussian có $\text{Pruning}>0.5$ \textbf{giảm mạnh từ 13 xuống còn 1} -- toàn bộ quần thể còn lại bị kéo dồn về gần $0$.
+    \item Thứ hạng vẫn đơn điệu (giữ nguyên quan hệ thứ tự) vì minmax là phép biến đổi tuyến tính, nhưng \textbf{ngưỡng tuyệt đối} ($0.9$, $0.5$) và do đó \textbf{trọng số lấy mẫu} $w_i$ ở slide trước đều bị méo bởi một Gaussian duy nhất.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.68\linewidth]{3_12_minmax-outlier.png}
+\captionof{figure}{\footnotesize Trái: phân bố Pruning trước/sau outlier ($\times 3$). Phải: Pruning gốc vs Pruning có outlier -- thứ hạng giữ nguyên, giá trị tuyệt đối thì không.}
+\end{center}
+\end{frame}

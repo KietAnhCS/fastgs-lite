@@ -1,0 +1,141 @@
+% --- 4_8_split-geometry.png ---
+\begin{frame}{Hình học phép Split: sinh 2 Gaussian con}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Gaussian gốc $(\mu, \Sigma)$ với $\Sigma = R(q)\,\mathrm{diag}(s)^2\,R(q)^\top$ bị \textbf{xoá} sau split ($1 \to 2$).
+    \item Vị trí 2 con lấy mẫu quanh $\mu$ theo chính hình dạng gốc:
+    \[
+        \mu_{\text{con}} = \mu + R(q)\cdot \varepsilon, \qquad \varepsilon \sim \mathcal{N}(0, \mathrm{diag}(s)^2)
+    \]
+    \item Scale con giảm theo hệ số cố định trong code (\texttt{scale / (0.8 * N)} với $N{=}2$ con), tức $s_{\text{con}} = s / 1.6$.
+    \item Rotation $R(q)$ giữ \textbf{nguyên} cho cả 2 con — chỉ tâm và scale thay đổi, hướng ellipsoid không đổi.
+    \item Hệ quả: 2 ellipsoid con nhỏ hơn ($s/1.6$), lệch tâm ngẫu nhiên nhưng cùng hướng với ellipsoid cha.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{4_8_split-geometry.png}
+\captionof{figure}{\footnotesize (a) 2D: ellipse gốc (nét đứt) và 2 ellipse con (đỏ), $\mu_{\text{con}}=\mu+R(q)\varepsilon$, $s_{\text{con}}=s/1.6$. (b) 3D: ellipsoid gốc (xám) và 2 con (đỏ) cùng hướng $R(q)$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 4_9_split-distribution.png ---
+\begin{frame}{Phân bố lấy mẫu vị trí con và hệ số chia $1.6$}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Với nhiều lần split cùng một Gaussian, tâm con phân bố quanh gốc theo đúng elip đẳng mật độ của $\Sigma$ gốc (do $\varepsilon \sim \mathcal{N}(0, \mathrm{diag}(s)^2)$ rồi xoay bởi $R(q)$).
+    \item So sánh ước số chia scale: $s/1$ (2 con chồng lấn gần như trùng gốc), $s/1.6$ (giá trị dùng trong code — vẫn phủ được vùng gốc nhưng đã tách biệt), $s/2$, $s/3$ (2 con tách rời, để hở vùng giữa).
+    \item Hệ số $0.8$ trong công thức \texttt{scale/(0.8*N)} với $N{=}2$ được chọn sao cho tổng "khối lượng" phủ của 2 con xấp xỉ khối lượng gốc, tránh để hở hoặc chồng lấn quá mức.
+    \item Minh hoạ trên cảnh đồ chơi (seed 0): 4 Gaussian gốc $\to$ 8 Gaussian con, bán kính con $= s/1.6 \approx 0.53\text{–}0.70$ (world unit), do $s$ gốc $\in \{0.85,\,0.94,\,1.12,\,0.89\}$.
+    \item Vì rotation $R(q)$ ở cảnh đồ chơi bằng $I$, $\varepsilon$ cộng thẳng vào $\mu$ không cần xoay.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{4_9_split-distribution.png}
+\captionof{figure}{\footnotesize (a) Histogram tâm con quanh gốc theo elip $\Sigma$. (b) Mật độ 1D: gốc $s{=}1$ so với tổng 2 con ở các ước số $1/1.6/2/3$. (c) Cảnh đồ chơi: 4 gốc (đứt) $\to$ 8 con (liền), $s/1.6$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 4_10_clone-symmetry-break.png ---
+\begin{frame}{Clone: phá vỡ đối xứng nhờ trạng thái Adam}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Khi \textbf{CLONE} (không phải split), 2 bản sao được tạo với \textbf{cùng} tham số: $\theta_{\text{new}} = \theta_i$ — vị trí, scale, rotation, opacity, SH đều trùng khớp tại $t{=}0$.
+    \item Nếu không có cơ chế phá đối xứng nào, 2 bản nhận gradient \textbf{giống hệt nhau} ở mọi bước và không bao giờ tách biệt.
+    \item Cơ chế phá đối xứng thực tế không phải dịch chuyển vị trí, mà đến từ \texttt{cat\_tensors\_to\_optimizer}: bản clone mới có \texttt{exp\_avg}, \texttt{exp\_avg\_sq} (Adam $m, v$) khởi tạo lại bằng $0$, trong khi bản gốc đã mang lịch sử Adam tích luỹ từ trước.
+    \item Vì bộ đếm bước \texttt{step} dùng chung cho cả nhóm ($t = t_{\text{gốc}} + k$), bias-correction $\hat m = m/(1-\beta_1^t)$ áp dụng \textbf{không đối xứng} lên 2 bản có $m, v$ khác nhau $\to$ 2 quỹ đạo cập nhật lệch nhau ngay từ bước đầu.
+    \item Kết quả: $|\mu_{\text{gốc}} - \mu_{\text{clone}}|$ tăng dần theo bước tối ưu dù gradient ban đầu bằng nhau.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{4_10_clone-symmetry-break.png}
+\captionof{figure}{\footnotesize (a) Gốc và clone trùng nhau tại $t{=}0$, tách dần sau $T$ bước. (b) Quỹ đạo $\mu$: gốc kế thừa $(m,v)$, clone khởi tạo $(0,0)$. (c) $|\mu_{\text{gốc}}-\mu_{\text{clone}}|$ tăng theo bước (log).}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 4_11_n-growth.png ---
+\begin{frame}{Tăng trưởng $N$ qua các vòng Densify}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Sau mỗi vòng densify, số Gaussian biến đổi theo:
+    \[
+        N_{k+1} = N_k\,(1 + r_{\text{spawn}})\,(1 - r_{\text{prune}}), \qquad q = (1+r_{\text{spawn}})(1-r_{\text{prune}})
+    \]
+    với $r_{\text{spawn}} = f_{\text{clone}} + f_{\text{split}}$ là tỉ lệ Gaussian được nhân bản mỗi vòng.
+    \item Sau $n$ vòng: $N_n = N_0 \cdot q^n$ — tăng trưởng theo \textbf{luỹ thừa}, không tuyến tính.
+    \item Cửa sổ densify chạy từ iteration $500$ đến $15000$ (\texttt{densify\_from\_iter}, \texttt{densify\_until\_iter}); với \texttt{densification\_interval}$=100$: $n=144$ vòng; với interval$=500$: $n=28$ vòng.
+    \item Ví dụ $r_{\text{spawn}}{=}0.15$, $r_{\text{prune}}{=}0.05 \Rightarrow q{=}1.0925$: sau $n{=}28$ vòng $q^{28}\approx 1.0925^{28}$; sau $n{=}144$ vòng $q^{144}\approx 1.0925^{144}$ (chênh lệch nhiều bậc độ lớn).
+    \item Tốc độ tăng $N$ giảm dần về cuối do $r_{\text{spawn}}$ tự nhiên thu hẹp khi scene đã đủ dày đặc (ít Gaussian còn thoả điều kiện gradient/Importance).
+\end{itemize}
+\end{column}
+\begin{column}{0.48\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{4_11_n-growth.png}
+\captionof{figure}{\footnotesize (a) $N/N_0 = q^n$ theo số vòng $n$, nhiều cặp $(r_{\text{spawn}}, r_{\text{prune}})$. (b) $N(t)$ theo iteration: interval $100$ (144 vòng) so với interval $500$ (28 vòng).}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 4_12_stats-reset.png ---
+\begin{frame}{Reset thống kê tích luỹ sau mỗi vòng Densify}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Trong một chu kỳ densify (mỗi \texttt{densification\_interval} $=100$ vòng), 3 tensor tích luỹ theo Gaussian:
+    \begin{itemize}
+        \footnotesize
+        \item \texttt{xyz\_gradient\_accum} — tổng $\|g\|$ khi hữu hình.
+        \item \texttt{denom} — số lần hữu hình (radii $>0$).
+        \item \texttt{max\_radii2D} — bán kính chiếu 2D lớn nhất từng đạt.
+    \end{itemize}
+    \item Ngay sau lệnh \texttt{densify\_and\_prune\_fastgs}, hàm \texttt{densification\_postfix} đưa \textbf{cả 3 tensor về 0} cho \textbf{toàn bộ} $N$ (kể cả các Gaussian \textbf{không} được clone/split ở vòng đó).
+    \item Ngưỡng \texttt{max\_screen\_size}$=20$ px chỉ được bật kiểm tra khi $t > 3000$ — dùng \texttt{max\_radii2D} để prune Gaussian chiếm màn hình quá lớn.
+    \item Nếu quên reset: thống kê của vòng trước sẽ cộng dồn sai vào vòng sau, khiến \texttt{g\_bar = accum/denom} bị lệch và quyết định densify/prune sai tín hiệu.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{4_12_stats-reset.png}
+\captionof{figure}{\footnotesize \texttt{xyz\_gradient\_accum}, \texttt{denom}, \texttt{max\_radii2D} theo iteration — mỗi vạch đứng (mỗi 100 vòng) là một lần \texttt{densification\_postfix} đưa cả 3 tensor về 0.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 4_13_index-layout.png ---
+\begin{frame}{Bố trí lại Index/Tensor tham số sau Densify}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Sau split, tensor tham số (position, scale, rotation, opacity, SH) được nối theo thứ tự cố định:
+    \[
+        \texttt{cat(gốc, con)} \;\to\; [G_1..G_N,\ G_1c_1..G_Nc_1,\ G_1c_2..G_Nc_2]
+    \]
+    tức mẫu \texttt{repeat(N,1)} — mỗi Gaussian gốc sinh 2 con nằm cách nhau $N$ vị trí trong tensor.
+    \item \texttt{prune\_filter = cat(mask\_gốc, zeros(N·sum))} xoá toàn bộ Gaussian gốc đã split, chỉ giữ 2 lớp con.
+    \item Optimizer state (\texttt{exp\_avg}, \texttt{exp\_avg\_sq}) và 3 tensor thống kê (accum, denom, max\_radii2D) được nối/cắt \textbf{đồng bộ} theo cùng chỉ số, rồi reset về $0$ cho $N$ mới — không làm đứt gradient graph vì thao tác trên \texttt{.data}, ngoài autograd.
+    \item Hệ quả phụ: \texttt{padded\_importance[:N]} (trọng số prune $1/(10^{-6}+1-\text{Pruning})$) chỉ áp cho 4 con đầu (lớp $c_1$) theo \textbf{chỉ số cũ}, không theo danh tính — 4 con lớp $c_2$ nhận trọng số $0$, miễn nhiễm prune ở vòng đó.
+    \item Thứ tự thao tác trong \texttt{densify\_and\_prune\_fastgs}: (1) tính $\bar g,\bar g_{\text{abs}}$, \texttt{tmp\_radii=radii} (2) clone (3) split (4) \texttt{prune\_mask} + multinomial (5) opacity $\leftarrow \min(\alpha, 0.8)$ (6) \texttt{tmp\_radii=None}.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{4_13_index-layout.png}
+\captionof{figure}{\footnotesize Bố cục chỉ số khi split 4 Gaussian: (1) trước split $N{=}4$ (2) \texttt{cat} gốc+con theo \texttt{repeat(N,1)} (3) \texttt{prune\_filter} xoá gốc (4) sau split $N{=}8$, thống kê reset $0$ (5) \texttt{padded\_importance} thừa kế theo chỉ số cũ.}
+\end{column}
+\end{columns}
+\end{frame}

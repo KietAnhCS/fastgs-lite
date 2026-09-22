@@ -1,0 +1,201 @@
+% ============================================================
+% PHẦN 6 (Slide 51--60): FastGS-lite -- kết quả thực nghiệm
+% ============================================================
+
+% --- Slide 51 ---
+\begin{frame}{FastGS-lite: từ 24GB RTX 4090 xuống Colab T4 miễn phí}
+\begin{itemize}
+    \item \textbf{fastgs-lite} là bản fork giữ nguyên thuật toán FastGS gốc, chỉ đóng gói lại để chạy trên phần cứng phổ thông (Colab T4 free tier).
+    \item Không thay đổi công thức toán học hay pipeline huấn luyện -- chỉ thay đổi cách triển khai/vận hành.
+\end{itemize}
+\vspace{0.3em}
+\footnotesize
+\begin{table}
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Tiêu chí} & \textbf{FastGS gốc} & \textbf{fastgs-lite} \\
+\midrule
+Phần cứng mục tiêu & 24GB RTX 4090 & T4 ($\sim$15GB VRAM) + 12.7GB RAM \\
+CUDA extension & git submodule & vendor sẵn trong repo (\texttt{git clone}) \\
+Entry point & train.py + shell script & train.py + notebook có instrumentation \\
+Tín hiệu tiến trình & L1 + EMA & Score tổng hợp, log mỗi 1000 iter \\
+\bottomrule
+\end{tabular}
+\end{table}
+\end{frame}
+
+% --- Slide 52 ---
+\begin{frame}{Ràng buộc phần cứng thực tế}
+\begin{itemize}
+    \item Colab T4 free tier: \textbf{14.56 GB VRAM}, nhưng RAM hệ thống (host) chỉ \textbf{12.7 GB}.
+    \item Trực giác thông thường: nghẽn cổ chai sẽ ở VRAM (GPU). \textbf{Thực tế ngược lại}.
+    \item VRAM peak đo được chỉ $\sim$1.16GB -- khoảng \textbf{8\%} dung lượng khả dụng.
+    \item RAM peak đo được $\sim$9.59GB -- khoảng \textbf{91\%} giới hạn mềm 10.5GB của pipeline.
+    \item[$\Rightarrow$] Phát hiện quan trọng, sẽ nhắc lại ở phần \emph{Quan sát} cuối bài: \textbf{RAM hệ thống, không phải VRAM, là ràng buộc thật sự}.
+\end{itemize}
+\vspace{0.5em}
+\centering
+\footnotesize
+\begin{tabular}{lcc}
+\toprule
+ & VRAM (14.56GB) & RAM (12.7GB, soft limit 10.5GB) \\
+\midrule
+Peak sử dụng & 1.16GB (8\%) & 9.59GB (91\% soft limit) \\
+\bottomrule
+\end{tabular}
+\end{frame}
+
+% --- Slide 53 ---
+\begin{frame}{Kiến trúc notebook: 7 cell $\leftrightarrow$ 7 module}
+\footnotesize
+\begin{table}
+\centering
+\begin{tabular}{cll}
+\toprule
+\textbf{Cell} & \textbf{Module} & \textbf{Chức năng} \\
+\midrule
+1 & \texttt{env.py} & Cài dependency, kiểm tra GPU \\
+2 & \texttt{config.py} & Một object \texttt{Config} duy nhất cho toàn pipeline \\
+3 & \texttt{data.py} & Tải dữ liệu, liệt kê scene \\
+4 & \texttt{run.py} & Smoke test vài trăm iteration \\
+5 & \texttt{trainer.py} + \texttt{score.py} & Train toàn bộ scene, log Score + \% tiến trình \\
+6 & \texttt{report.py} & Bảng/biểu đồ phân tích kết quả \\
+7 & \texttt{submission.py} + \texttt{deliver.py} & Đóng gói \texttt{submission.zip}, kiểm tra format, tự tải về \\
+\bottomrule
+\end{tabular}
+\end{table}
+\normalsize
+\begin{itemize}
+    \item Ánh xạ 1--1 giữa cell notebook và module trong \texttt{pipeline/} giúp dễ debug và tái sử dụng ngoài Colab.
+\end{itemize}
+\end{frame}
+
+% --- Slide 54 ---
+\begin{frame}{Thiết lập thực nghiệm}
+\begin{itemize}
+    \item 4 scene từ 2 dataset: \textbf{Deep Blending} (\texttt{drjohnson}, \texttt{playroom}) và \textbf{Tanks\&Temples} (\texttt{train}, \texttt{truck}).
+    \item Split \texttt{--eval} với \texttt{llffhold=8} (cứ 8 ảnh lấy 1 làm test).
+    \item Cấu hình tối ưu giống nhau mọi scene: \texttt{iterations=7000}, \texttt{sh\_degree=3}, \texttt{resolution=2} khi train.
+    \item \textbf{Chú ý}: eval lại dùng độ phân giải gốc (\texttt{submission\_resolution=1}) -- sự lệch train/eval này do \emph{protocol cuộc thi}, không phải sơ suất.
+\end{itemize}
+\vspace{0.3em}
+\footnotesize
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Scene} & \textbf{Cameras} & \textbf{Train views} & \textbf{Test views} & \textbf{Res. eval} \\
+\midrule
+drjohnson & -- & 7/8 & 1/8 & gốc (res=1) \\
+playroom  & -- & 7/8 & 1/8 & gốc (res=1) \\
+train     & -- & 7/8 & 1/8 & gốc (res=1) \\
+truck     & -- & 7/8 & 1/8 & gốc (res=1) \\
+\bottomrule
+\end{tabular}
+\end{frame}
+
+% --- Slide 55 ---
+\begin{frame}{Bảng 1: Chất lượng cuối cùng theo scene}
+\footnotesize
+\begin{table}
+\centering
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Scene} & \textbf{Score} & \textbf{PSNR (dB)} & \textbf{SSIM} & \textbf{LPIPS} & \textbf{\#Gaussian} \\
+\midrule
+playroom  & 0.8198 & -- & -- & -- & $\sim$129k \\
+drjohnson & 0.8027 & 27.41 & -- & -- & $\sim$174k \\
+truck     & 0.7482 & -- & -- & -- & $\sim$187k \\
+train     & 0.6867 & 19.75 & -- & -- & $\sim$201k \\
+\midrule
+\textbf{Mean} & \textbf{0.7643} & \textbf{24.46} & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{itemize}
+    \item 2 scene indoor (playroom, drjohnson) vượt 2 scene outdoor (truck, train) dù dùng \textbf{ít Gaussian hơn} (129k--174k so với 187k--201k).
+\end{itemize}
+\centering
+\includegraphics[width=0.55\linewidth]{leaderboard.png}
+\captionof{figure}{Leaderboard Score theo scene}
+\end{frame}
+
+% --- Slide 56 ---
+\begin{frame}{Bảng 2: Động lực huấn luyện}
+\footnotesize
+\begin{itemize}
+    \item Score đo mỗi 1000 iteration trên cả 4 scene.
+    \item Hai điểm sụt rõ rệt tại iteration \textbf{3000} và \textbf{6000}: Score rơi xuống $\sim$0.22--0.31.
+    \item Trùng khớp chính xác với \texttt{opacity\_reset\_interval=3000}.
+    \item[$\Rightarrow$] Đây là \textbf{hiện tượng đo lường} (measurement artifact) do lấy mẫu Score ngay lúc reset opacity, \textbf{không phải} mô hình phân kỳ. Phục hồi hoàn toàn trong dưới 1000 iteration sau đó.
+\end{itemize}
+\centering
+\includegraphics[width=0.48\linewidth]{training.png}
+\captionof{figure}{\footnotesize Score theo iteration -- các điểm sụt tại 3000, 6000}
+\end{frame}
+
+% --- Slide 57 ---
+\begin{frame}{Kết quả định tính: drjohnson (tốt nhất)}
+\footnotesize
+\begin{itemize}
+    \item Score \textbf{0.8027}, PSNR \textbf{27.41dB}. Hình học, tư thế, màu sắc gần như khớp hoàn toàn với ground truth ở view đầu.
+    \item Lỗi còn lại: chi tiết tần số cao / phụ thuộc góc nhìn -- chi tiết mảnh (khe tản nhiệt, gáy sách) bị mờ, highlight phản chiếu trên gỗ mahogany gần như biến mất.
+    \item Nguyên nhân: các lobe SH bậc cao (view-dependent) có learning rate bị chia thêm \textbf{/20} trong code.
+\end{itemize}
+\centering
+\includegraphics[width=0.5\linewidth]{samples_drjohnson.png}
+\captionof{figure}{\footnotesize So sánh render vs. ground truth -- drjohnson}
+\end{frame}
+
+% --- Slide 58 ---
+\begin{frame}{Kết quả định tính: train (yếu nhất -- vấn đề bầu trời)}
+\footnotesize
+\begin{itemize}
+    \item Score \textbf{0.6867}, PSNR \textbf{19.75dB} -- thấp nhất trong 4 scene.
+    \item Thất bại rõ rệt nhất: \textbf{vùng trời}. Ground truth là màu xanh đồng nhất, render lại đầy vệt xám-trắng loang lổ. Đầu máy xe lửa (có texture/parallax) tái tạo tốt.
+    \item Vùng trời không texture, ở khoảng cách vô hạn, \textbf{không cho tín hiệu multi-view} nào để loại bỏ Gaussian dư thừa.
+    \item[$\Rightarrow$] Giải thích vì sao lỗi rơi vào \textbf{PSNR} chứ không phải \textbf{LPIPS} (perceptual, ít nhạy vùng đồng nhất).
+\end{itemize}
+\centering
+\includegraphics[width=0.5\linewidth]{samples_train.png}
+\captionof{figure}{\footnotesize So sánh render vs. ground truth -- train (lỗi vùng trời)}
+\end{frame}
+
+% --- Slide 59 ---
+\begin{frame}{Bảng 3: Chi phí \& lưu trữ}
+\begin{itemize}
+    \item Tổng thời gian train 4 scene: \textbf{327.6 giây} ($\sim$5.5 phút), tốc độ trung bình \textbf{85.5 iter/s}.
+    \item VRAM đỉnh trung bình chỉ \textbf{0.88GB} (tối đa 1.16GB ở drjohnson) -- rất thấp so với 14.56GB khả dụng.
+    \item Kích thước \texttt{point\_cloud.ply} trung bình \textbf{171.6MB} / 4 scene.
+    \item Đúng \textbf{248 byte/Gaussian} = kích thước record 3DGS không nén (62 trường float32: 3 vị trí + 3 normal + 3 f\_dc + 45 f\_rest + 1 opacity + 3 scale + 4 rotation).
+\end{itemize}
+\vspace{0.3em}
+\footnotesize
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Chỉ số} & \textbf{Trung bình} & \textbf{Ghi chú} \\
+\midrule
+Thời gian train (4 scene) & 327.6 s & $\sim$5.5 phút tổng \\
+Tốc độ & 85.5 iter/s & \\
+VRAM peak & 0.88 GB & max 1.16GB (drjohnson) \\
+Kích thước .ply & 171.6 MB & 248 byte/Gaussian \\
+\bottomrule
+\end{tabular}
+\end{frame}
+
+% --- Slide 60 ---
+\begin{frame}{Khả năng tái lập \& giới hạn phép đo}
+\footnotesize
+\texttt{Config(resolution=2, iterations=7000, score\_every=1000,\\
+\hspace{2em}eval\_views=6, psnr\_max=30.0, submission\_resolution=1)}
+\normalsize
+\vspace{0.5em}
+\begin{itemize}
+    \item \textbf{Giới hạn 1}: đây là \textbf{một lần chạy duy nhất}, không cố định seed, không lặp lại nhiều lần $\Rightarrow$ không có ước lượng phương sai/error bar.
+    \item \textbf{Giới hạn 2}: chỉ 4 scene từ 2 dataset -- mẫu hẹp.
+    \item \textbf{Giới hạn 3}: ngân sách 7k iteration chỉ bằng \textbf{1/3} lịch trình optimizer thiết kế cho 30k.
+    \item \textbf{Giới hạn 4}: bỏ qua hoàn toàn bước prune cuối (\texttt{final\_prune\_fastgs}).
+    \item[$\Rightarrow$] \textbf{Kết luận}: Bảng 1 nên xem là \emph{baseline có thể tái lập của repo này}, \textbf{không phải} kết quả benchmark chính thức để so sánh với FastGS/3DGS gốc.
+\end{itemize}
+\end{frame}

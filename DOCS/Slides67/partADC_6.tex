@@ -1,0 +1,186 @@
+% partADC_6.tex — Phan 6: Adaptive Density Control minh hoa qua toy model 2D
+% Chi chua cac khoi frame, khong documentclass/usepackage/begin{document}.
+
+% --- 6_1_muc-tieu-va-gaussian-2d.png ---
+\begin{frame}{Toy model 2D: mục tiêu và một Gaussian}
+\begin{itemize}
+    \footnotesize
+    \item Ảnh mục tiêu $64\times 64$ px: một hình tròn phẳng (màu đều) + vùng chi tiết (dải mảnh 2 px, 5 chấm màu xen kẽ, ô vuông nhỏ).
+    \item Mỗi Gaussian 2D: $G(x) = \exp\!\big(-\tfrac{1}{2}d^\top \Sigma^{-1} d\big)$, với $d = x - \mu$, $\Sigma$ tham số hoá bởi scale $s=(s_1,s_2)$ và góc xoay $\theta$.
+    \item Footprint (vùng Gaussian được phép chạm) giới hạn ở $3\sigma$, tức $d^\top\Sigma^{-1}d < 9$ — ngoài phạm vi này chỉ còn màu nền.
+    \item Render bằng alpha-compositing theo thứ tự chỉ số (độ sâu): $I(x) = \sum_i T_i\,\alpha_i G_i(x)\,c_i + T_{\text{end}}\cdot\text{bg}$, với $T_i = \prod_{j<i}(1-\alpha_j G_j)$.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.75\linewidth]{6_1_muc-tieu-va-gaussian-2d.png}
+\captionof{figure}{\footnotesize (a) Ảnh mục tiêu + lưới pixel; (b) một Gaussian $s=(7,3)$ px, $\theta=30°$ với các đường mức $1\sigma,2\sigma,3\sigma$; (c) kết quả render của Gaussian đó lên nền.}
+\end{center}
+\end{frame}
+
+% --- 6_2_thieu-gaussian.png ---
+\begin{frame}{Trường hợp thiếu Gaussian (under-reconstruction)}
+\begin{itemize}
+    \footnotesize
+    \item Khởi tạo toy chỉ với 6 Gaussian nhỏ ($s=3$ px), rải rác không đủ để phủ vùng chi tiết (dải + chấm + ô vuông).
+    \item Sai số $|I-T|$ (trung bình 3 kênh) lớn tại đúng những vùng không có Gaussian nào chạm tới.
+    \item Gradient vị trí $-\nabla_\mu L$ tại mỗi Gaussian có độ lớn $\|\nabla_\mu\|$ vượt ngưỡng clone toy $\tau_{\text{grad}} = 4\times 10^{-5}$.
+    \item Đây chính là tín hiệu để ADC quyết định \textbf{CLONE}: Gaussian di chuyển không đủ nhanh để tự phủ hết vùng thiếu, cần thêm bản sao.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.75\linewidth]{6_2_thieu-gaussian.png}
+\captionof{figure}{\footnotesize (a) Render với 6 Gaussian nhỏ; (b) mục tiêu; (c) bản đồ sai số; (d) mũi tên $-\nabla_\mu L$ và giá trị $\|\nabla_\mu\|\times 10^5$ tại từng Gaussian.}
+\end{center}
+\end{frame}
+
+% --- 6_3_du-gaussian-qua-to.png ---
+\begin{frame}{Trường hợp Gaussian dư / quá to (over-reconstruction)}
+\begin{itemize}
+    \footnotesize
+    \item Một Gaussian duy nhất, kích thước lớn $s=(13,\ 6.5)$ px, cố phủ toàn bộ vùng chi tiết (dải + 5 chấm) cùng lúc.
+    \item Sai số mờ đều trên toàn vùng, sai cả tại chấm lẫn khoảng trống — Gaussian quá to không tái tạo được chi tiết cục bộ.
+    \item Ngưỡng phân loại ``to'': $\max_k s_k > S_{\text{big}} = 3.5$ px.
+    \item Chỉ số quyết định split dùng \emph{tổng trị tuyệt đối} gradient theo pixel $\sum_x |g_x|$ (ngưỡng $\tau_{\text{abs}}=4\times 10^{-4}$), lớn hơn nhiều lần so với tổng có dấu $\|\sum_x g_x\|$ — vì các mũi tên gradient trong footprint kéo về nhiều phía trái ngược nhau.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.75\linewidth]{6_3_du-gaussian-qua-to.png}
+\captionof{figure}{\footnotesize (a) Render với 1 Gaussian to; (b) mục tiêu; (c) sai số mờ đều; (d) gradient theo từng pixel — tổng có dấu nhỏ nhưng tổng trị tuyệt đối lớn $\Rightarrow$ \textbf{SPLIT}.}
+\end{center}
+\end{frame}
+
+% --- 6_4_clone-truoc-sau.png ---
+\begin{frame}{CLONE: sao chép nguyên trạng Gaussian thiếu}
+\begin{itemize}
+    \footnotesize
+    \item Trước clone: 1 Gaussian nhỏ có $\|\nabla_\mu\| \ge \tau$, cần phủ vùng rộng hơn kích thước hiện tại.
+    \item CLONE tạo bản sao \emph{y hệt} (cùng $\mu,\Sigma,c,\alpha$); trạng thái Adam của bản mới được khởi tạo lại $m=v=0$ trong khi bản gốc giữ nguyên lịch sử — nên hai bản dịch chuyển khác tốc độ.
+    \item Ngay sau clone hai bản trùng khít nhau; sau khoảng 120 bước Adam, quỹ đạo $\mu$ của bản gốc và bản sao tách rời để mỗi bản phủ một phần vùng cần thiết.
+    \item Kết quả: loss L1 giảm rõ rệt sau khi hai bản tách ra và chia nhau vùng phủ.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.75\linewidth]{6_4_clone-truoc-sau.png}
+\captionof{figure}{\footnotesize (a) Trước clone; (b) ngay sau clone — 2 bản trùng nhau; (c) sau 120 bước — hai bản tách ra; (d) khoảng cách $\|\mu_{\text{gốc}}-\mu_{\text{sao}}\|$ theo bước, cùng L1 trước/sau.}
+\end{center}
+\end{frame}
+
+% --- 6_5_split-truoc-sau.png ---
+\begin{frame}{SPLIT: tách Gaussian quá to thành các con nhỏ hơn}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\scriptsize
+\begin{itemize}
+    \item $n_{\text{child}}{=}2$ con lấy mẫu từ hình dạng gốc: $\mu_{\text{con}}{=}\mu+R\epsilon^{(j)}$, $\epsilon^{(j)}{\sim}\mathcal{N}(0,\text{diag}(s^2))$.
+    \item Scale mỗi con giảm còn $s/1.6$; Gaussian gốc bị \textbf{xoá}.
+    \item Ngay sau split, loss \emph{xấu tạm thời}; sau 150 bước Adam mỗi con tự định vị lại.
+    \item Kết quả cuối: L1 giảm, chi tiết cục bộ khôi phục tốt hơn 1 Gaussian to.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{6_5_split-truoc-sau.png}
+\captionof{figure}{\footnotesize Trên: vị trí/hình dạng trước–ngay sau–150 bước sau split. Dưới: render + L1.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 6_6_chuoi-thoi-gian.png ---
+\begin{frame}{Chuỗi thời gian: toàn bộ vòng đời densify trên toy model}
+\begin{itemize}
+    \footnotesize
+    \item Khởi tạo kiểu SfM-thu nhỏ: $N_0 = 12$ Gaussian, vị trí lấy mẫu ưu tiên vùng có gradient ảnh mục tiêu lớn (vùng chi tiết).
+    \item Huấn luyện $T_{\text{total}}=1200$ vòng bằng Adam; ADC chạy mỗi $K=100$ vòng, trong cửa sổ densify $t\in[100, 900]$.
+    \item Các mốc quan sát: $t = 0, 100, 300, 600, 1000$ — tại mỗi mốc ghi lại $N$ và L1 loss.
+    \item Qua các mốc, Gaussian tự dịch chuyển, co giãn, nhân đôi (clone/split) và dần phủ kín ảnh mục tiêu, loss giảm liên tục.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.85\linewidth]{6_6_chuoi-thoi-gian.png}
+\captionof{figure}{\footnotesize Hàng trên: render tại từng mốc thời gian (N và L1 loss). Hàng dưới: ellipse $1.5\sigma$ của từng Gaussian chồng lên ảnh mục tiêu mờ.}
+\end{center}
+\end{frame}
+
+% --- 6_7_chia-vung.png ---
+\begin{frame}{Chia vùng: mỗi Gaussian ``phụ trách'' một lãnh thổ}
+\begin{itemize}
+    \footnotesize
+    \item Với mỗi pixel, xác định Gaussian đóng góp lớn nhất theo trọng số $T_i \alpha_i G_i$ (đóng góp thực sự sau alpha-compositing).
+    \item Pixel được tô theo màu của Gaussian ``thắng'' tại đó; màu trắng là nền (khi $T_{\text{end}}$ tại pixel đó lớn hơn mọi đóng góp).
+    \item Đường viền đen là biên vật thể mục tiêu (đường mức gradient), dùng để đối chiếu vùng lãnh thổ với hình dạng thật.
+    \item Theo thời gian, số lượng lãnh thổ tăng lên (do clone/split) và các lãnh thổ co lại, khớp sát hơn với biên vật thể và vùng chi tiết.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.85\linewidth]{6_7_chia-vung.png}
+\captionof{figure}{\footnotesize Bản đồ lãnh thổ tại các mốc thời gian: pixel tô theo Gaussian có $T_i\alpha_i G_i$ lớn nhất; đường đen = biên vật thể mục tiêu.}
+\end{center}
+\end{frame}
+
+% --- 6_8_duong-cong-loss-N.png ---
+\begin{frame}{Đường cong loss và số Gaussian $N(t)$}
+\begin{columns}
+\begin{column}{0.5\textwidth}
+\begin{itemize}
+    \footnotesize
+    \item So sánh 3 kịch bản: (i) có ADC; (ii) không ADC, $N$ cố định bằng $N_0$; (iii) không ADC, $N$ cố định bằng $N$ cuối của ADC nhưng khởi tạo ngẫu nhiên ngay từ đầu.
+    \item Vạch dọc đánh dấu các mốc ADC (mỗi $K_{\text{ADC}}=100$ vòng).
+    \item $N(t)$ tăng theo bậc thang đúng tại các mốc ADC, chỉ trong cửa sổ densify $[100,900]$.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\textwidth}
+\begin{itemize}
+    \footnotesize
+    \item Biểu đồ cột: số Gaussian bị clone / split / prune tại từng mốc ADC — cho thấy tỉ lệ thay đổi giữa các cơ chế qua thời gian.
+    \item Có ADC luôn đạt L1 loss thấp hơn rõ rệt so với giữ nguyên $N_0$ ban đầu trong suốt quá trình.
+\end{itemize}
+\end{column}
+\end{columns}
+\begin{center}
+\includegraphics[width=0.95\linewidth]{6_8_duong-cong-loss-N.png}
+\captionof{figure}{\footnotesize (a) Loss (thang log, vạch dọc = mốc ADC); (b) $N(t)$ dạng bậc thang; (c) số clone/split/prune tại mỗi mốc ADC.}
+\end{center}
+\end{frame}
+
+% --- 6_9_kich-thuoc-vs-chi-tiet.png ---
+\begin{frame}{Kích thước Gaussian so với mức chi tiết tái tạo}
+\begin{itemize}
+    \footnotesize
+    \item Phân bố kích thước $\max_k s_{i,k}$ (scale lớn nhất mỗi Gaussian) tại $t=0$ so với lúc kết thúc — Gaussian cuối tập trung nhiều hơn quanh và dưới ngưỡng toy $S_{\text{big}}=3.5$ px.
+    \item Độ chi tiết vùng phủ của một Gaussian được đo bằng gradient ảnh mục tiêu trung bình trong footprint ($q<9$) của Gaussian đó.
+    \item Quan hệ ngược chiều rõ rệt: Gaussian nằm ở vùng chi tiết cao có kích thước nhỏ hơn; Gaussian ở vùng phẳng (ví dụ hình tròn màu đều) có kích thước lớn hơn.
+    \item Màu điểm biểu diễn opacity $\alpha$ — hầu hết Gaussian còn lại sau ADC có $\alpha$ cao, phản ánh chúng đóng góp thực chất vào ảnh cuối.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.8\linewidth]{6_9_kich-thuoc-vs-chi-tiet.png}
+\captionof{figure}{\footnotesize (a) Histogram kích thước Gaussian đầu vs cuối, vạch đỏ = ngưỡng $S_{\text{big}}$; (b) scatter độ chi tiết vs kích thước, màu = opacity $\alpha$.}
+\end{center}
+\end{frame}
+
+% --- 6_10_khong-adc-vs-co-adc.png ---
+\begin{frame}{So sánh trực tiếp: không ADC vs có ADC}
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+\scriptsize
+\begin{itemize}
+    \item Ba kịch bản: (1) không ADC, $N{=}N_0$; (2) không ADC, khởi tạo ngẫu nhiên $N{=}N_{\text{cuối}}$; (3) có ADC, $N_0{\to}N_{\text{cuối}}$ dần.
+    \item (2) cùng số Gaussian (3) nhưng khởi tạo ngẫu nhiên không khớp tự nhiên vào vùng chi tiết.
+    \item[$\Rightarrow$] ADC không chỉ tăng $N$ mà đặt đúng chỗ cần thiết.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\textwidth}
+\centering
+\includegraphics[width=0.85\linewidth]{6_10_khong-adc-vs-co-adc.png}
+\captionof{figure}{\footnotesize 3 hàng (không ADC $N_0$; ngẫu nhiên; có ADC) $\times$ 3 cột.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 6_11_prune-opacity.png ---
+\begin{frame}{PRUNE: loại bỏ Gaussian dư theo opacity}
+\begin{itemize}
+    \footnotesize
+    \item Tại mốc $t=550$, opacity được reset: $\alpha \leftarrow \min(\alpha,\ \alpha_{\text{reset}}=0.02)$ — buộc mọi Gaussian phải ``chứng minh lại'' sự cần thiết của mình.
+    \item Gaussian nào không phục hồi được opacity (không đóng góp giảm loss) sẽ bị đánh dấu để prune tại mốc ADC kế tiếp, theo ngưỡng $\alpha < \varepsilon_{\text{opa}} = 0.03$.
+    \item So sánh render ngay trước và ngay sau prune: sai lệch tối đa $\max|\Delta I|$ rất nhỏ — ảnh gần như không đổi dù đã loại bỏ các Gaussian dư.
+    \item Kết quả: mô hình gọn hơn (ít Gaussian hơn) mà chất lượng tái tạo giữ nguyên — đúng vai trò dọn dẹp của bước prune trong chu trình ADC.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.8\linewidth]{6_11_prune-opacity.png}
+\captionof{figure}{\footnotesize (a) Quỹ đạo opacity quanh mốc reset (đỏ = bị prune); (b) render ngay trước reset; (c) trước prune, ellipse đỏ = $\alpha<\varepsilon$; (d) sau prune — ảnh gần như không đổi.}
+\end{center}
+\end{frame}

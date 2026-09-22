@@ -1,0 +1,166 @@
+% partSH_B.tex --- SH-B: Ứng dụng SH vào 3DGS (phần toán chuyên sâu)
+% KHÔNG chứa \documentclass / \usepackage / \begin{document}
+
+% --- 2_2_low_order_real_sh.png ---
+\begin{frame}{Real SH bậc thấp: $Y_{00}, Y_{1,-1}, Y_{10}, Y_{11}$}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Đặt $x=\sin\theta\cos\phi,\ y=\sin\theta\sin\phi,\ z=\cos\theta$ trên mặt cầu đơn vị.
+    \item Bậc $l=0$ (hằng số, không phụ thuộc hướng):
+    $$Y_{00}=C_0=\frac12\sqrt{\frac1\pi}$$
+    \item Bậc $l=1$ (3 hàm tuyến tính theo $x,y,z$), với $C_1=\frac12\sqrt{\frac3\pi}$:
+    $$Y_{1,-1}=C_1\,y,\quad Y_{1,0}=C_1\,z,\quad Y_{1,1}=C_1\,x$$
+    \item Bậc $l=2$: 5 hàm bậc 2 theo $x,y,z$ (vd. $xy,\ yz,\ 3z^2-1,\ xz,\ x^2-y^2$), mỗi hàm nhân một hằng số chuẩn hoá $C_2^{(m)}$.
+    \item Trong 3DGS, các hằng số $C_0,C_1,\dots$ này là \emph{cố định}; các hệ số nhân $k_{lm}$ (tương ứng \texttt{f\_dc} cho $l=0$ và \texttt{f\_rest} cho $l\ge1$) mới là tham số \textbf{học được} lưu trong mỗi Gaussian.
+\end{itemize}
+\end{column}
+\begin{column}{0.46\linewidth}
+\includegraphics[width=0.9\linewidth]{2_2_low_order_real_sh.png}
+\captionof{figure}{\footnotesize Bốn hàm SH thực bậc thấp $Y_{00}=C_0$, $Y_{1,-1}=C_1y$, $Y_{1,0}=C_1z$, $Y_{1,1}=C_1x$ vẽ trên mặt cầu (bán kính $=|$giá trị$|$).}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 3_1_fourier_vs_sh.png ---
+\begin{frame}{Chuỗi Fourier (1D) so với khai triển SH (2D cầu)}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Fourier 1D là cơ sở trực chuẩn cho hàm tuần hoàn trên đường tròn $S^1$:
+    $$f(\phi)=\sum_{n=-\infty}^{\infty} c_n\,e^{in\phi}$$
+    \item SH là cơ sở trực chuẩn cho hàm trên mặt cầu $S^2$:
+    $$f(\theta,\phi)=\sum_{l=0}^{\infty}\sum_{m=-l}^{l} k_{lm}\,Y_{lm}(\theta,\phi)$$
+    \item Cùng một ý tưởng: phân tích tín hiệu theo \emph{tần số không gian} tăng dần ($n$ hoặc $l$ càng lớn thì dao động càng nhanh), chỉ khác miền định nghĩa (đường tròn 1D vs. mặt cầu 2D).
+    \item Cả hai đều dựa trên tính \textbf{đầy đủ} (completeness) và \textbf{trực chuẩn} của hệ hàm cơ sở, cho phép biểu diễn chính xác mọi hàm bình phương khả tích khi lấy tổng vô hạn.
+    \item Trong 3DGS, $f$ chính là hàm màu $c_i(\vec d)$ theo hướng nhìn $\vec d\in S^2$.
+\end{itemize}
+\end{column}
+\begin{column}{0.46\linewidth}
+\includegraphics[width=0.9\linewidth]{3_1_fourier_vs_sh.png}
+\captionof{figure}{\footnotesize Trái: tái dựng sóng vuông bằng chuỗi Fourier 1D khi tăng $N$. Phải: sai số $L^2$ khi tái dựng hàm trên mặt cầu bằng SH khi tăng bậc cắt cụt $D$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 3_2_truncation_reconstruction.png ---
+\begin{frame}{Cắt cụt chuỗi SH ở bậc hữu hạn $D$}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Chuỗi vô hạn được xấp xỉ bằng tổng hữu hạn đến bậc $D$:
+    $$c_i(\vec d)\approx\sum_{l=0}^{D}\sum_{m=-l}^{l} k_{i,lm}\,Y_{lm}(\vec d)$$
+    \item Khi $D$ nhỏ, hàm tái dựng chỉ giữ được thành phần tần số thấp $\Rightarrow$ mất chi tiết tần số cao (các "thuỳ" sắc nét của hàm màu bị làm mượt).
+    \item Hiện tượng tương tự Gibbs phenomenon trong cắt cụt Fourier: tái dựng có thể dao động/gợn sóng gần các vùng biến thiên nhanh khi $D$ còn thấp.
+    \item Sai số tái dựng (đo bằng $L^2$ trên mặt cầu) giảm dần đơn điệu khi $D$ tăng: $D=0\to1\to2\to3$ cho hình dạng ngày càng "nhọn"/chi tiết hơn.
+    \item Đây là lý do 3DGS chọn $D=3$: cân bằng giữa khả năng biểu diễn hiệu ứng góc nhìn (specular) và số hệ số phải lưu/tối ưu.
+\end{itemize}
+\end{column}
+\begin{column}{0.46\linewidth}
+\includegraphics[width=0.9\linewidth]{3_2_truncation_reconstruction.png}
+\captionof{figure}{\footnotesize Tái dựng một hàm màu mẫu trên mặt cầu khi tăng dần bậc cắt cụt $D=0,1,2,3$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 3_2b_coefficient_count.png ---
+\begin{frame}{Số hệ số SH: từ $2l+1$ đến $(D+1)^2$}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Mỗi bậc $l$ có đúng $2l+1$ hàm cơ sở (ứng với $m=-l,\dots,l$).
+    \item Tổng số hệ số cần lưu khi cắt cụt đến bậc $D$:
+    $$\sum_{l=0}^{D}(2l+1)=(D+1)^2$$
+    \item Bảng cụ thể: $D=0\to1$, $D=1\to4$, $D=2\to9$, $D=3\to16$ hệ số \textbf{mỗi kênh màu}.
+    \item Với $D=3$ (dùng trong 3DGS/fastgs-lite): $16$ hệ số $\times\ 3$ kênh RGB $=\mathbf{48}$ số thực mỗi Gaussian cho toàn bộ SH (1 hệ số DC $\times 3$ kênh $=$ \texttt{f\_dc}, còn $45$ hệ số còn lại $=$ \texttt{f\_rest}).
+    \item Đây chính là chi phí bộ nhớ/băng thông tối ưu phải trả cho việc biểu diễn màu phụ thuộc góc nhìn.
+\end{itemize}
+\end{column}
+\begin{column}{0.46\linewidth}
+\includegraphics[width=0.9\linewidth]{3_2b_coefficient_count.png}
+\captionof{figure}{\footnotesize Số hệ số $(D+1)^2$ theo từng bậc cắt cụt $D$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 3_3_compute_color_from_sh.png ---
+\begin{frame}{Công thức \texttt{computeColorFromSH}: giải mã màu view-dependent}
+\footnotesize
+Màu quan sát theo hướng nhìn $\vec d$ được tính bằng tổng khai triển SH đến bậc $D=3$:
+$$
+c_i(\vec d)=\max\!\Bigg(0,\ 0.5+\underbrace{C_0k_{00}}_{l=0}\underbrace{-C_1y\,k_{1,-1}+C_1z\,k_{10}-C_1x\,k_{11}}_{l=1}+\underbrace{\sum_m C_2^{(m)}P_2^{(m)}k_{2m}}_{l=2}+\underbrace{\sum_m C_3^{(m)}P_3^{(m)}k_{3m}}_{l=3}\Bigg)
+$$
+\begin{itemize}
+    \item $C_l^{(m)}=\sqrt{\dfrac{2l+1}{4\pi}\dfrac{(l-|m|)!}{(l+|m|)!}}$: hằng số chuẩn hoá cố định (đã gộp dấu, hoán vị); $P_l^{(m)}(x,y,z)$: đa thức bậc $l$ theo toạ độ hướng nhìn.
+    \item $k_{i,lm}$: hệ số khai triển học được của Gaussian $i$ (tham số \texttt{f\_dc}/\texttt{f\_rest}).
+    \item $+0.5$: dịch tâm phân bố màu về $[0,1]$ (RGB); $\max(0,\cdot)$: chặn dưới vì tổng SH hữu hạn có thể âm — đạo hàm ngược bị chặn tại nơi bị clamp (lưu trong \texttt{clamped[]}).
+    \item Sau bước này, giá trị được clamp/qua sigmoid tuỳ triển khai để ra RGB cuối cùng trong \texttt{gaussian\_renderer/\_\_init\_\_.py} — đây là bước "giải mã" (decode) màu phụ thuộc góc nhìn từ các hệ số SH đã tối ưu.
+\end{itemize}
+\centering
+\includegraphics[width=0.55\linewidth]{3_3_compute_color_from_sh.png}
+\captionof{figure}{\footnotesize Áp công thức \texttt{computeColorFromSH} đầy đủ ($l=0..3$) cho từng kênh R/G/B với hệ số $k_{lm}$ ngẫu nhiên, vẽ trên mặt cầu; đo tỉ lệ điểm bị $\max(0,\cdot)$ chặn.}
+\end{frame}
+
+% --- 3_4_degree_schedule.png ---
+\begin{frame}{Lịch tăng bậc SH khi huấn luyện: $D(t)$}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Bậc SH đang dùng $D$ không cố định ngay từ đầu mà tăng dần theo bước huấn luyện $t$, dưới dạng hàm bậc thang (không phải PDE hay tối ưu liên tục):
+    $$D(t)=\min\!\left(3,\ \left\lfloor\frac{t}{1000}\right\rfloor\right)$$
+    \item Bắt đầu $D=0$: chỉ dùng $Y_{00}$ $\Rightarrow$ màu đẳng hướng, không phụ thuộc hướng nhìn (chỉ có \texttt{f\_dc}).
+    \item Mỗi $1000$ iteration, $D$ tăng thêm $1$ cho đến khi đạt $D_{\max}=3$, lần lượt "mở khoá" thêm $2l+1$ hệ số bậc cao.
+    \item Lý do: khi hình học (vị trí, hiệp phương sai) của Gaussian còn thô/chưa hội tụ, để tối ưu ngay các hệ số bậc cao (specular) dễ gây overfit nhiễu quan sát $\Rightarrow$ tăng dần bậc giúp huấn luyện ổn định hơn, tách biệt học hình học trước, học phản xạ góc nhìn sau.
+\end{itemize}
+\end{column}
+\begin{column}{0.46\linewidth}
+\includegraphics[width=0.9\linewidth]{3_4_degree_schedule.png}
+\captionof{figure}{\footnotesize Đồ thị hàm bậc thang $D(t)$ theo bước huấn luyện $t$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 4_1_parseval_energy.png ---
+\begin{frame}{Định lý Parseval trên mặt cầu: năng lượng và hệ số}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Do tính trực chuẩn của $\{Y_{lm}\}$, năng lượng ($L^2$-norm bình phương) của hàm màu bằng tổng bình phương các hệ số khai triển:
+    $$\int_{S^2}|c_i(\vec d)|^2\,d\Omega=\sum_{l,m}k_{i,lm}^2$$
+    \item Cho phép kiểm chứng số học: tích phân số (cầu phương trên lưới $(\theta,\phi)$) vế trái phải khớp tổng bình phương hệ số vế phải.
+    \item Phân tách năng lượng theo từng bậc $l$: $\sum_m k_{lm}^2$ cho biết bậc nào "mang" nhiều năng lượng tín hiệu nhất — thực nghiệm cho thấy $l=0$ (DC) chiếm ưu thế áp đảo.
+    \item Ứng dụng: đánh giá được \emph{bao nhiêu năng lượng bị mất} khi cắt chuỗi ở bậc $D$ hữu hạn — phần dư $\sum_{l>D}\sum_m k_{lm}^2$ chính là sai số bị bỏ qua.
+\end{itemize}
+\end{column}
+\begin{column}{0.46\linewidth}
+\includegraphics[width=0.9\linewidth]{4_1_parseval_energy.png}
+\captionof{figure}{\footnotesize Kiểm chứng số học hai vế Parseval và phân bố năng lượng $\sum_m k_{lm}^2$ theo từng bậc $l$ (cho thấy $l=0$ chiếm ưu thế).}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 4_2_mean_color_dc.png ---
+\begin{frame}{Hệ số DC $k_{00}$: chính là màu trung bình}
+\begin{columns}[T]
+\begin{column}{0.52\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Vì $Y_{00}=C_0=\frac12\sqrt{1/\pi}$ là hằng số, còn mọi $Y_{lm}$ với $l\ge1$ có trung bình bằng $0$ trên mặt cầu (trực giao với hàm hằng $Y_{00}$), nên lấy trung bình đều hướng nhìn của $c_i$:
+    $$\bar c_i=\frac{1}{4\pi}\int_{S^2}c_i(\vec d)\,d\Omega = C_0\,k_{i,00}$$
+    \item Đây là lý do khởi tạo \texttt{f\_dc = RGB2SH(color)} dùng đúng quan hệ nghịch đảo $k_{00}=\bar c_i / C_0$ để hệ số bậc $0$ khớp chính xác màu quan sát trung bình ban đầu (trước khi có thông tin về phụ thuộc góc nhìn).
+    \item Vì $k_{00}$ chiếm phần lớn năng lượng tín hiệu màu (theo Parseval ở slide trước), nó cần learning rate \emph{thấp} để tránh dao động màu toàn ảnh.
+    \item Ngược lại, $45$ hệ số bậc $l=1..3$ (\texttt{f\_rest}) chỉ là nhiễu loạn nhỏ bậc cao mã hoá hiệu ứng phản xạ/specular $\Rightarrow$ tách optimizer riêng, cập nhật thưa hơn.
+\end{itemize}
+\end{column}
+\begin{column}{0.46\linewidth}
+\includegraphics[width=0.9\linewidth]{4_2_mean_color_dc.png}
+\captionof{figure}{\footnotesize So sánh trung bình số học $\frac{1}{4\pi}\int c_i\,d\Omega$ (tích phân số trên lưới cầu) với công thức lý thuyết $C_0 k_{00}$.}
+\end{column}
+\end{columns}
+\end{frame}

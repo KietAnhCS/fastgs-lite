@@ -1,0 +1,118 @@
+% partADC_2a.tex — Adaptive Density Control, Phần 2a: Footprint & Importance (bước 4-5)
+% 6 frame, dùng lại figures/ đã có trong main.tex (graphicspath)
+
+% --- 2_1_footprint-mot-gaussian.png ---
+\begin{frame}{Footprint thật của một Gaussian không phải là ellipse hình học}
+    \begin{columns}[T]
+        \begin{column}{0.46\textwidth}
+            \footnotesize
+            \begin{itemize}
+                \item Với mỗi pixel $p$, khoảng cách Mahalanobis:
+                \[
+                    d_M^2(p) = (p-\mu)^\top \Sigma'^{-1} (p-\mu)
+                \]
+                và độ mờ (opacity hiệu dụng):
+                \[
+                    \alpha(p) = \min\!\big(0.99,\ o \cdot e^{-\tfrac{1}{2} d_M^2(p)}\big)
+                \]
+                \item (a) Ellipse hình học 3$\sigma$: $d_M^2 \le 9$ — chỉ là hình dạng lý thuyết.
+                \item (b) Sau cull compact-box (mult $=0.5$): $d_M^2 \le t_{cb} = \ln(255\,o)$.
+                \item (c) Chỉ giữ pixel có $\alpha(p) \ge 1/255$ (ngưỡng hiển thị).
+                \item (d) Footprint \textbf{hữu hình} $\Omega_i^v$: giao (b) $\cap$ (c) $\cap$ \{pixel chưa bị che, $T \ge 10^{-4}$\}.
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \centering
+            \includegraphics[width=0.98\linewidth]{2_1_footprint-mot-gaussian.png}
+            \captionof{figure}{\footnotesize 4 định nghĩa footprint khác nhau cho cùng một Gaussian: chỉ (d) mới là $\Omega_i^v$ dùng để đếm lỗi.}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- 2_2_nhieu-gaussian-chong-nhau.png ---
+\begin{frame}{Nhiều Gaussian chồng lấn: một pixel lỗi ``tố cáo'' tất cả}
+    \footnotesize
+    \begin{itemize}
+        \item Ba Gaussian $A$ (gần, $\alpha=0.95$), $B$ (giữa, $\alpha=0.5$), $C$ (xa, $\alpha=0.7$) có footprint chồng lên nhau.
+        \item Độ trong suốt tích lũy cập nhật theo thứ tự alpha-blending (gần $\to$ xa):
+        \[
+            T \leftarrow T \cdot (1 - \alpha(p)) \quad \text{nếu } p \in \Omega \text{ và } \alpha(p) \ge 1/255
+        \]
+        \item Điều kiện Gaussian còn "sống" tại pixel đó (early-out): $T \ge 10^{-4}$ — nếu $T < 10^{-4}$, các Gaussian ở sau bị loại khỏi $\Omega$.
+        \item Vì vậy \textbf{không thể} chỉ nhìn màu pixel cuối cùng để suy ra Gaussian nào gây lỗi — phải đếm/tổng hợp riêng đóng góp của từng Gaussian có mặt trong $\Omega_i^v$.
+        \item Một pixel có thể thuộc 0, 1, 2 hoặc cả 3 footprint cùng lúc.
+    \end{itemize}
+    \centering
+    \includegraphics[width=0.75\linewidth]{2_2_nhieu-gaussian-chong-nhau.png}
+    \captionof{figure}{\footnotesize Trái: 3 footprint chồng nhau. Giữa: số Gaussian "chạm" mỗi pixel. Phải: $T$ còn lại sau $A,B,C$.}
+\end{frame}
+
+% --- 2_3_giao-mat-na-footprint.png ---
+\begin{frame}{Giao mặt nạ lỗi $m_v$ với footprint $\Omega_i^v$: chỉ phần giao mới được tính}
+    \footnotesize
+    \begin{itemize}
+        \item Ví dụ minh họa: lưới $4\times 4$ (16 pixel), 5 Gaussian $G1$--$G5$, 3 view.
+        \item Mặt nạ lỗi cao mỗi view: $|m_1| = |m_2| = 6$ pixel, $|m_3| = 7$ pixel.
+        \item Với mỗi Gaussian $i$ và view $v$:
+        \[
+            \text{counts}_i^v = \big|\, \Omega_i^v \cap m_v \,\big|
+        \]
+        \item Ví dụ $G4$: $|\Omega_4^1|=6, |\Omega_4^2|=4, |\Omega_4^3|=3$ — kích thước footprint co lại qua các view do bị che khuất một phần.
+        \item $G5$ chỉ hữu hình ở view 1 ($\Omega_5^2=\Omega_5^3=\varnothing$) — Gaussian bị che hoàn toàn ở view 2, 3 không đóng góp gì.
+    \end{itemize}
+    \centering
+    \includegraphics[width=0.62\linewidth]{2_3_giao-mat-na-footprint.png}
+    \captionof{figure}{\footnotesize Xám = pixel lỗi $m_v$; khung màu = $\Omega_i^v$; ô tô đặc = phần giao (được đếm vào counts).}
+\end{frame}
+
+% --- 2_4_bar-counts-moi-view.png ---
+\begin{frame}{Tổng hợp counts qua nhiều view: đầu vào cho Importance}
+    \footnotesize
+    \begin{itemize}
+        \item Với ví dụ $4\times4$ ở trên: mỗi Gaussian $i$ có một vector counts $(\text{counts}_i^1, \text{counts}_i^2, \text{counts}_i^3)$, nền xám là kích thước footprint $|\Omega_i^v|$ tương ứng.
+        \item Tổng số lỗi bị "tố cáo" trên mỗi view luôn $\ge$ số pixel lỗi thật:
+        \[
+            \sum_i \text{counts}_i^v \ \ge\ |m_v|
+        \]
+        vì một pixel lỗi có thể được nhiều Gaussian chồng lấn cùng đếm.
+        \item Trong code: mỗi lần render một view $v$, kernel CUDA cộng dồn atomic vào tensor \texttt{metricCount}$[N]$, rồi cộng lũy kế: \texttt{full\_metric\_counts += counts\textsuperscript{(v)}}.
+        \item Vector counts theo Gaussian, tổng hợp qua $V$ view, là đầu vào trực tiếp cho bước tính Importance.
+    \end{itemize}
+    \centering
+    \includegraphics[width=0.85\linewidth]{2_4_bar-counts-moi-view.png}
+    \captionof{figure}{\footnotesize Trái: counts$_i^v$ (màu) trên nền $|\Omega_i^v|$ (xám) từng Gaussian. Phải: tổng $|m_v|$ so với $\sum_i \text{counts}_i^v$ mỗi view.}
+\end{frame}
+
+% --- 2_5_importance-heatmap.png ---
+\begin{frame}{Importance score: trung bình counts qua các view, làm tròn xuống}
+    \footnotesize
+    \begin{itemize}
+        \item Công thức Importance (khớp code \texttt{compute\_gaussian\_score\_fastgs}):
+        \[
+            \text{Importance}_i = \left\lfloor \frac{1}{V} \sum_{v=1}^{V} \text{counts}_i^v \right\rfloor
+        \]
+        (\texttt{torch.div(full\_metric\_counts, V, rounding\_mode='floor')}).
+        \item Gaussian được xem là "quan trọng" (giữ lại/densify) khi $\text{Importance}_i > 5$.
+        \item Trong ví dụ $4\times4$, $3$ view: chỉ $G3$ có mean $> 5$ và vượt ngưỡng; các Gaussian còn lại (kể cả $G5$ với mean $=1.67$) bị chặn.
+        \item Nếu thay trung bình bằng $\max_v$ hay $\sum_v$: $G5$ có $\max=5, \sum=5$ — vẫn không vượt ngưỡng $>5$, nhưng thứ hạng tương đối giữa các Gaussian có thể đổi khác so với dùng mean.
+        \item Màu nóng trong heatmap = Gaussian đóng góp nhiều vào vùng lỗi cao (giữ lại); màu lạnh = ứng viên prune.
+    \end{itemize}
+    \centering
+    \includegraphics[width=0.85\linewidth]{2_5_importance-heatmap.png}
+    \captionof{figure}{\footnotesize Trái: ma trận counts $(5\times 3)$. Giữa: Importance$_i = \lfloor \text{mean}_v \rfloor$, ngưỡng $5$. Phải: so sánh mean vs.\ max vs.\ sum.}
+\end{frame}
+
+% --- 2_6_mo-phong-200-gaussian.png ---
+\begin{frame}{Kiểm chứng ở quy mô lớn: mô phỏng 200 Gaussian, $V=10$ view}
+    \footnotesize
+    \begin{itemize}
+        \item Mô hình mô phỏng: kích thước footprint $|\Omega_i| \sim \exp\big(U(\ln 4, \ln 3000)\big)$, tỉ lệ lỗi trong footprint $\rho_i \sim \text{Beta}(0.7, 4.0)$, xác suất hữu hình mỗi view $p_{vis} \sim U(0.3, 1.0)$.
+        \item Với mỗi view: hữu hình với xác suất $p_{vis}$, khi đó $\text{counts}_i^v \sim \text{Binomial}(|\Omega_i|, \rho_i)$; nếu không hữu hình thì counts $=0$.
+        \item Importance$_i = \left\lfloor \frac{1}{V}\sum_v \text{counts}_i^v \right\rfloor$ như công thức đã dùng ở slide trước.
+        \item Phân bố Importance không tập trung/lệch bất thường: một số vượt ngưỡng $5$, một số bằng $0$ — phù hợp trực giác Importance $\approx |\Omega_i| \cdot \rho_i \cdot p_{vis}$ (Gaussian to, tỉ lệ lỗi cao, hữu hình nhiều view dễ vượt ngưỡng hơn).
+        \item Gaussian nhỏ dù có tỉ lệ lỗi cao (counts/$|\Omega|$ lớn) vẫn dễ bị chặn vì số pixel tuyệt đối thấp.
+    \end{itemize}
+    \centering
+    \includegraphics[width=0.85\linewidth]{2_6_mo-phong-200-gaussian.png}
+    \captionof{figure}{\footnotesize Trái: phân bố Importance trên 200 Gaussian. Giữa: Importance theo $|\Omega|$, màu theo $\rho$. Phải: đỏ = Importance$>5$, xanh = không.}
+\end{frame}

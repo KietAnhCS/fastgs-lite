@@ -1,0 +1,197 @@
+% ============================================================
+% PHẦN 4 (Slide 31--40): Adaptive Density Control (ADC)
+% ============================================================
+
+% --- Slide 31 ---
+\begin{frame}{Tổng quan Adaptive Density Control (ADC)}
+    \begin{itemize}
+        \item Point cloud khởi tạo từ COLMAP thường \textbf{quá thưa} ở vùng thiếu chi tiết, đồng thời có Gaussian \textbf{quá to} che khuất chi tiết nhỏ.
+        \item ADC chạy định kỳ mỗi \texttt{densification\_interval} iteration trong lúc train để điều chỉnh mật độ Gaussian.
+        \item Hai nhóm thao tác chính:
+        \begin{itemize}
+            \item \textbf{Densify}: nhân bản (clone) hoặc tách (split) Gaussian thiếu hình học.
+            \item \textbf{Prune}: cắt tỉa Gaussian thừa, mờ, hoặc vô dụng.
+        \end{itemize}
+        \item Mục tiêu: cân bằng giữa chất lượng tái tạo và số lượng Gaussian (chi phí bộ nhớ, tốc độ render).
+    \end{itemize}
+    \vspace{0.3cm}
+    \centering
+    \begin{tikzpicture}[node distance=1.6cm, every node/.style={font=\footnotesize}]
+        \node[draw, rounded corners, fill=blue!10] (adc) {ADC};
+        \node[draw, rounded corners, fill=green!10, below left=1.0cm and 1.8cm of adc] (clone) {Clone};
+        \node[draw, rounded corners, fill=orange!10, below=1.4cm of adc] (split) {Split};
+        \node[draw, rounded corners, fill=red!10, below right=1.0cm and 1.8cm of adc] (prune) {Prune};
+        \draw[->] (adc) -- (clone);
+        \draw[->] (adc) -- (split);
+        \draw[->] (adc) -- (prune);
+    \end{tikzpicture}
+\end{frame}
+
+% --- Slide 32 ---
+\begin{frame}{Dòng thời gian densify/prune}
+    \footnotesize
+    \begin{itemize}
+        \item \texttt{densify\_from\_iter}: bắt đầu cho phép densify (thường bỏ qua vài trăm iteration đầu để scene ổn định).
+        \item Mỗi \texttt{densification\_interval} iteration: chạy một vòng \textbf{clone/split} dựa trên gradient tích luỹ.
+        \item Mỗi \texttt{opacity\_reset\_interval}: \textbf{reset opacity} định kỳ để loại bỏ Gaussian dư thừa.
+        \item \texttt{densify\_until\_iter}: mốc dừng hẳn việc thêm Gaussian mới.
+        \item (Chỉ 3DGS gốc) \texttt{final\_prune}: một lượt cắt tỉa cuối cùng sau khi densify kết thúc.
+    \end{itemize}
+    \centering
+    \includegraphics[width=0.62\linewidth]{fig_01_timeline.png}
+\end{frame}
+
+% --- Slide 33 ---
+\begin{frame}{Tích luỹ gradient view-space}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\footnotesize
+    \begin{itemize}
+        \item Với mỗi Gaussian, gradient vị trí 2D (view-space) được \textbf{cộng dồn} qua nhiều lần render từ các camera khác nhau.
+        \item Đồng thời đếm \texttt{denom}: số lần Gaussian đó thực sự được nhìn thấy (visible) trong batch.
+        \item Gradient trung bình dùng làm tín hiệu quyết định densify:
+        \[
+            \bar{g} = \frac{\sum_{v} \nabla_{\text{view}} }{\text{denom}}
+        \]
+        \item $\bar g$ lớn $\Rightarrow$ ứng viên clone/split.
+    \end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+    \centering
+    \includegraphics[width=0.95\linewidth]{fig_02_accum_denom.png}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- Slide 34 ---
+\begin{frame}{Vấn đề triệt tiêu gradient (gradient cancellation)}
+    \begin{itemize}
+        \item Khi lấy trung bình vector gradient từ \textbf{nhiều view có hướng ngược nhau}, chúng có thể \textbf{triệt tiêu lẫn nhau}.
+        \item Hệ quả: dù mỗi view riêng lẻ đều báo lỗi lớn (Gaussian sai vị trí/kích thước), $\bar g$ trung bình vẫn nhỏ $\Rightarrow$ Gaussian \textbf{bị bỏ sót}, không được densify.
+        \item Đây là hạn chế đã biết của 3DGS gốc: chỉ dùng gradient trung bình làm tín hiệu duy nhất.
+        \item FastGS cải thiện bằng \textbf{multi-view consistency score} thay vì chỉ dựa vào gradient trung bình (sẽ trình bày ở phần sau).
+    \end{itemize}
+    \vspace{0.2cm}
+    \centering
+    \includegraphics[width=0.75\linewidth]{fig_03_grad_cancel.png}
+\end{frame}
+
+% --- Slide 35 ---
+\begin{frame}{Mặt phẳng quyết định clone/split}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\footnotesize
+    \begin{itemize}
+        \item \texttt{grad\_thresh} $= 0.0002$: ngưỡng gradient trung bình, kích hoạt \textbf{clone} nếu Gaussian nhỏ.
+        \item \texttt{grad\_abs\_thresh} $= 0.0012$: ngưỡng absolute-gradient (kiểu Abs-GS), kích hoạt \textbf{split} nếu Gaussian lớn.
+        \item Hai ngưỡng chia không gian (gradient, kích thước) thành 3 vùng: giữ nguyên / clone / split.
+    \end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+    \centering
+    \includegraphics[width=0.95\linewidth]{fig_05_decision_plane.png}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- Slide 36 ---
+\begin{frame}{Clone (nhân bản)}
+    \footnotesize
+    \begin{itemize}
+        \item Áp dụng cho Gaussian \textbf{nhỏ nhưng thiếu hình học} (under-reconstruction).
+        \item Nhân đôi Gaussian theo \textbf{hướng gradient vị trí} $\bar g$, đặt bản sao lệch một khoảng nhỏ.
+        \item \textbf{Không} thay đổi kích thước/covariance -- chỉ lấp đầy vùng thiếu chi tiết bằng cách tăng mật độ.
+    \end{itemize}
+    \begin{columns}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{fig_08_clone_before_after.png}
+            \captionof{figure}{Trước/sau clone}
+        \end{column}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{ch7_clone_region.png}
+            \captionof{figure}{Vùng được clone}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 37 ---
+\begin{frame}{Split (tách)}
+    \footnotesize
+    \begin{itemize}
+        \item Áp dụng cho Gaussian \textbf{quá to} (over-reconstruction), vượt ngưỡng \texttt{--dense} theo scene extent.
+        \item Tách thành \textbf{2 Gaussian con} nhỏ hơn (thường giảm scale theo hệ số cố định).
+        \item Vị trí Gaussian con được \textbf{lấy mẫu ngẫu nhiên} theo phân phối chuẩn dựa trên chính covariance gốc của Gaussian cha.
+    \end{itemize}
+    \begin{columns}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{fig_09_split_geometry.png}
+            \captionof{figure}{Hình học split}
+        \end{column}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{ch7_split_sampling.png}
+            \captionof{figure}{Lấy mẫu theo covariance}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 38 ---
+\begin{frame}{Prune theo độ quan trọng đa góc nhìn (FastGS)}
+    \begin{itemize}
+        \item 3DGS gốc: prune đơn thuần theo ngưỡng \textbf{opacity thấp} hoặc \textbf{kích thước quá lớn}.
+        \item \textbf{FastGS}: tính điểm \emph{importance} cho mỗi Gaussian dựa trên đóng góp thực tế vào chất lượng ảnh render, tổng hợp qua \textbf{nhiều góc nhìn}.
+        \item Gaussian có điểm importance thấp nhất bị cắt tỉa trước, bất kể opacity/kích thước.
+        \item Kết quả: mô hình \textbf{gọn hơn} nhưng vẫn giữ chất lượng tái tạo -- đây là một đòn bẩy chính giúp FastGS tăng tốc.
+    \end{itemize}
+    \vspace{0.2cm}
+    \centering
+    \includegraphics[width=0.7\linewidth]{ch7_importance_pruning.png}
+\end{frame}
+
+% --- Slide 39 ---
+\begin{frame}{Số lượng Gaussian tăng theo iteration}
+    \footnotesize
+    \begin{itemize}
+        \item Số Gaussian $N$ \textbf{tăng dần} qua mỗi vòng densify (clone + split).
+        \item Có \textbf{bước nhảy rõ rệt} tại các mốc \texttt{densification\_interval}.
+        \item $N$ \textbf{ngừng tăng} sau mốc \texttt{densify\_until\_iter}, chỉ còn giảm do prune.
+    \end{itemize}
+    \begin{columns}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{ch7_n_growth.png}
+            \captionof{figure}{N tăng theo iteration}
+        \end{column}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{fig_11_N_accounting.png}
+            \captionof{figure}{Hạch toán clone/split/prune}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 40 ---
+\begin{frame}{Reset opacity định kỳ}
+    \footnotesize
+    \begin{itemize}
+        \item Mỗi \texttt{opacity\_reset\_interval} (mặc định 3000 iteration): toàn bộ opacity được reset về \textbf{giá trị thấp} (qua sigmoid-inverse).
+        \item Buộc optimizer \textbf{"đánh giá lại"} từng Gaussian từ đầu.
+        \item Gaussian thực sự cần thiết: opacity \textbf{tăng trở lại} qua quá trình train.
+        \item Gaussian dư thừa: opacity không hồi phục kịp $\Rightarrow$ bị \textbf{prune} ở vòng sau.
+    \end{itemize}
+    \begin{columns}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{fig_17_opacity_trajectory.png}
+            \captionof{figure}{Quỹ đạo opacity theo thời gian}
+        \end{column}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{fig_18_hist_reset.png}
+            \captionof{figure}{Histogram trước/sau reset}
+        \end{column}
+    \end{columns}
+\end{frame}

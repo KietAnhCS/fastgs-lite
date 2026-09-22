@@ -1,0 +1,150 @@
+% ============================================================
+% PHẦN 7 — Slide 61-67 (Quan sát bổ sung, Tổng kết, Q&A)
+% ============================================================
+
+% --- Slide 61 ---
+\begin{frame}{Quan sát 1: \texttt{final\_prune} không kịp chạy ở 7k iteration}
+\begin{itemize}
+    \item Hàm \texttt{final\_prune\_fastgs} chỉ được phép chạy trong cửa sổ bảo vệ:
+    \[
+        15000 < \text{iteration} < 30000
+    \]
+    \item Một lần chạy chỉ với \textbf{7000 iteration} \textbf{không bao giờ} chạm tới cửa sổ này $\Rightarrow$ mô hình giao ra \textbf{chưa từng được prune cuối cùng}.
+    \item Đây là lời giải thích khả dĩ nhất cho:
+    \begin{itemize}
+        \item Kích thước file lớn bất thường: \textbf{248 B/Gaussian}, hoàn toàn chưa nén.
+        \item LPIPS "chững" quanh \textbf{0.31} thay vì tiếp tục cải thiện.
+    \end{itemize}
+    \item \alert{Hệ quả quan trọng:} mọi so sánh trực tiếp giữa số liệu 7k-iteration này với kết quả công bố gốc của FastGS/3DGS (chạy đủ 30k iteration) đều \textbf{không hợp lệ} — khác ngân sách huấn luyện, khác điểm dừng pipeline.
+\end{itemize}
+\end{frame}
+
+% --- Slide 62 ---
+\begin{frame}{Quan sát 2: Nút thắt là RAM hệ thống, không phải VRAM}
+\begin{itemize}
+    \item Đo trên Google Colab T4 trong quá trình huấn luyện:
+\end{itemize}
+\footnotesize
+\begin{table}[]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Tài nguyên & Đỉnh sử dụng & Khả dụng & \% sử dụng \\
+\midrule
+VRAM (GPU) & 1.16 GB & 14.56 GB & \textbf{8\%} \\
+RAM hệ thống & 9.59 GB & 12.7 GB & \textbf{91\%} (giới hạn mềm 10.5 GB) \\
+\bottomrule
+\end{tabular}
+\end{table}
+\normalsize
+\begin{itemize}
+    \item RAM hệ thống áp sát giới hạn mềm của pipeline, trong khi VRAM còn dư rất nhiều.
+    \item Khuyến nghị cũ "giảm độ phân giải để tiết kiệm VRAM" \textbf{không cần thiết} ở ngân sách này.
+    \item \texttt{resolution=1} (độ phân giải gốc) hoàn toàn khả thi và còn loại bỏ luôn độ lệch train/eval resolution.
+\end{itemize}
+\end{frame}
+
+% --- Slide 63 ---
+\begin{frame}{Quan sát 3: Live-score vs reported-score — khác protocol, không phải suy giảm}
+\begin{itemize}
+    \item Score đo \textbf{trong lúc train} (live) cao hơn hẳn score \textbf{báo cáo cuối} (reported) — nhưng đây không phải mô hình bị tệ đi.
+\end{itemize}
+\footnotesize
+\begin{table}[]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Metric & Live (trong train) & Reported (cuối) & Chênh lệch \\
+\midrule
+PSNR (dB) & 26.23 & 24.46 & $-1.77$ \\
+SSIM & 0.8675 & 0.8142 & $-0.0533$ (ít nhất) \\
+LPIPS & 0.114 & 0.311 & $+0.197$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+\normalsize
+\begin{itemize}
+    \item Nguyên nhân: (1) LPIPS backbone khác nhau — AlexNet lúc train vs VGG lúc báo cáo; (2) độ phân giải khác nhau — nửa độ phân giải lúc train vs độ phân giải gốc lúc báo cáo.
+    \item \alert{Bài học:} không so sánh chéo hai protocol đo khác nhau khi đánh giá tiến bộ giữa các lần chạy.
+\end{itemize}
+\end{frame}
+
+% --- Slide 64 ---
+\begin{frame}{Tổng kết pipeline render 3D Gaussian Splatting}
+\centering
+\footnotesize
+\begin{tikzpicture}[
+    node distance=8mm and 6mm,
+    box/.style={draw, rounded corners, align=center, minimum height=0.9cm, minimum width=2.6cm, fill=blue!8}
+]
+\node[box] (gauss) {3D Gaussian\\$(\mu,\Sigma,\alpha,SH)$};
+\node[box, right=of gauss] (proj) {Chiếu phối cảnh\\(EWA)};
+\node[box, right=of proj] (raster) {Rasterizer khả vi\\theo tile};
+
+\node[box, below=of raster] (blend) {Alpha\\blending};
+\node[box, left=of blend] (loss) {Loss\\($L_1$+D-SSIM)};
+\node[box, left=of loss] (back) {Backward\\(gradient)};
+
+\node[box, below=of back, fill=orange!12] (adc) {Adaptive\\Density Control};
+
+\draw[-Latex] (gauss) -- (proj);
+\draw[-Latex] (proj) -- (raster);
+\draw[-Latex] (raster) -- (blend);
+\draw[-Latex] (blend) -- (loss);
+\draw[-Latex] (loss) -- (back);
+\draw[-Latex] (back) -- (adc);
+\draw[-Latex] (adc) -- (gauss);
+\end{tikzpicture}
+\vspace{2mm}
+
+\normalsize
+Một chu trình khép kín: render $\rightarrow$ tính loss $\rightarrow$ lan truyền ngược $\rightarrow$ điều chỉnh mật độ Gaussian $\rightarrow$ lặp lại.
+\end{frame}
+
+% --- Slide 65 ---
+\begin{frame}{Tổng kết cải tiến FastGS \& giới hạn còn lại}
+\textbf{Ba đòn bẩy chính và tác động:}
+\begin{itemize}
+    \item \textbf{Multi-view score} + \textbf{Compact box} $\Rightarrow$ giảm số Gaussian dư thừa mà không giảm chất lượng đáng kể.
+    \item \textbf{Sparse Adam} $\Rightarrow$ giảm chi phí tính toán mỗi iteration (chỉ cập nhật tham số liên quan).
+\end{itemize}
+\vspace{2mm}
+\textbf{Giới hạn / hướng phát triển:}
+\begin{enumerate}
+    \item Dữ liệu Gaussian đầu ra chưa được nén (248 B/Gaussian, thô).
+    \item Ngân sách 7k iteration của fastgs-lite bỏ lỡ bước \texttt{final\_prune} (xem Slide 61).
+    \item Chưa có ablation study cô lập riêng từng đòn bẩy để đo đóng góp thực tế của mỗi thành phần.
+    \item 4 nhánh mở rộng của FastGS gốc — dynamic scenes, sparse view, surface reconstruction, SLAM — chưa được tích hợp vào fork này.
+\end{enumerate}
+\end{frame}
+
+% --- Slide 66 ---
+\begin{frame}{Bản đồ tài liệu tham khảo}
+\footnotesize
+\begin{table}[]
+\centering
+\begin{tabular}{p{4.2cm}p{6.5cm}}
+\toprule
+\textbf{Tài liệu} & \textbf{Nội dung} \\
+\midrule
+\texttt{README.md} & Điểm vào tiếng Anh, bảng kết quả đầy đủ \\
+\texttt{DOCS/fastgs-\allowbreak acceleration-\allowbreak method.md} & Nền tảng toán 3DGS + 3 đòn bẩy FastGS + đo FastGS-lite vs 3DGS \\
+\texttt{DOCS/colab-t4-guide.md} & Playbook Colab T4, chống OOM, lộ trình CUDA \\
+\texttt{DOCS/BOOK/} & Sách hợp nhất 15 chương, từ toán nền tảng tới cost model \\
+GitHub & \texttt{KietAnhCS/fastgs-lite} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\end{frame}
+
+% --- Slide 67 ---
+\begin{frame}[c]{}
+\centering
+{\Huge \textbf{Cảm ơn đã theo dõi!}}
+
+\vspace{6mm}
+{\LARGE Hỏi đáp (Q\&A)}
+
+\vspace{10mm}
+{\small Digital Twin GS --- FastGS-lite \\ \texttt{github.com/KietAnhCS/fastgs-lite}}
+\end{frame}

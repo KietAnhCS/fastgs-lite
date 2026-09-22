@@ -1,0 +1,216 @@
+% ============================================================
+% Phần SH-A: Nền tảng toán học đầy đủ của Spherical Harmonics
+% 9 slide, từ phương trình Laplace đến hàm điều hòa cầu thực
+% File này KHÔNG tự đứng độc lập -- được \input trong main.tex
+% ============================================================
+
+% --- 1_1_laplace_equation.png ---
+\begin{frame}{Xuất phát điểm: Phương trình Laplace}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\footnotesize
+\begin{itemize}
+    \item Hàm điều hòa (harmonic function) $\Phi(x,y,z)$ là nghiệm của phương trình Laplace trong không gian 3 chiều:
+    $$\nabla^2\Phi=\frac{\partial^2\Phi}{\partial x^2}+\frac{\partial^2\Phi}{\partial y^2}+\frac{\partial^2\Phi}{\partial z^2}=0$$
+    \item Chuyển sang toạ độ cầu $(r,\theta,\phi)$ với $x=r\sin\theta\cos\phi,\ y=r\sin\theta\sin\phi,\ z=r\cos\theta$, toán tử Laplace trở thành:
+    $$\nabla^2\Phi=\dfrac{1}{r^2}\dfrac{\partial}{\partial r}\!\left(r^2\dfrac{\partial\Phi}{\partial r}\right)+\dfrac{1}{r^2\sin\theta}\dfrac{\partial}{\partial\theta}\!\left(\sin\theta\dfrac{\partial\Phi}{\partial\theta}\right)+\dfrac{1}{r^2\sin^2\theta}\dfrac{\partial^2\Phi}{\partial\phi^2}=0$$
+    \item Phần góc $(\theta,\phi)$ của nghiệm chính là hàm điều hòa cầu $Y_l^m$ -- lý do SH là ``cơ sở tự nhiên'' cho hàm số trên mặt cầu, tương tự chuỗi Fourier là cơ sở tự nhiên trên đường tròn.
+    \item Kiểm chứng số học (sai phân hữu hạn) trên lưới 2D lát cắt $z=\text{const}$: $\Phi=x^2-y^2$ cho $\nabla^2\Phi\approx0$, trong khi $\Phi=x^2+y^2$ cho $\nabla^2\Phi=4\neq0$.
+    \item Đây là điểm khởi đầu của toàn bộ chuỗi suy diễn: Laplace $\to$ tách biến $\to$ Legendre $\to$ $Y_l^m$.
+\end{itemize}
+\end{column}
+\begin{column}{0.44\textwidth}
+\centering
+\includegraphics[width=0.9\linewidth]{1_1_laplace_equation.png}
+\captionof{figure}{\footnotesize Kiểm chứng số học $\nabla^2\Phi=0$ (hàm điều hòa) so với $\nabla^2\Phi\neq0$ trên lưới 2D.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_2_spherical_coords.png ---
+\begin{frame}{Hệ toạ độ cầu $(\theta,\phi)$}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\begin{itemize}
+    \item Toạ độ cầu dùng góc thiên đỉnh (polar angle) $\theta\in[0,\pi]$ và góc phương vị (azimuthal angle) $\phi\in[0,2\pi)$.
+    \item Quan hệ với toạ độ Descartes trên mặt cầu bán kính $r$:
+    $$
+    \begin{aligned}
+    x&=r\sin\theta\cos\phi\\
+    y&=r\sin\theta\sin\phi\\
+    z&=r\cos\theta
+    \end{aligned}
+    $$
+    \item Với mặt cầu đơn vị ($r=1$): $(x,y,z)=(\sin\theta\cos\phi,\ \sin\theta\sin\phi,\ \cos\theta)$.
+    \item Các hệ số $\sin\theta,\ \cos\theta,\ \sin^2\theta$ xuất hiện trực tiếp trong toán tử Laplace cầu -- đây là nguồn gốc của trọng số đo (measure) $d\Omega=\sin\theta\,d\theta\,d\phi$ dùng trong tích phân trực chuẩn về sau.
+    \item Lưới toạ độ cầu $(\theta,\phi)$ được dựng bằng \texttt{meshgrid} và chiếu lên mặt cầu đơn vị để trực quan hoá.
+\end{itemize}
+\end{column}
+\begin{column}{0.44\textwidth}
+\centering
+\includegraphics[width=0.9\linewidth]{1_2_spherical_coords.png}
+\captionof{figure}{\footnotesize Lưới toạ độ cầu $(\theta,\phi)$ trên mặt cầu đơn vị.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_2b_radial_solution.png ---
+\begin{frame}{Tách biến: Nghiệm phần bán kính $R(r)$}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\footnotesize
+\begin{itemize}
+    \item Giả sử nghiệm tách được: $\Phi(r,\theta,\phi)=R(r)\,\Theta(\theta)\,\Phi_m(\phi)$. Nhân hai vế phương trình Laplace với $r^2/(R\Theta\Phi_m)$, ta tách thành phần chỉ phụ thuộc $r$ và phần chỉ phụ thuộc $(\theta,\phi)$:
+    $$\underbrace{\frac{1}{R}\frac{d}{dr}\!\left(r^2\frac{dR}{dr}\right)}_{\text{chỉ phụ thuộc }r}+\underbrace{\frac{1}{\Theta\sin\theta}\frac{d}{d\theta}\!\left(\sin\theta\frac{d\Theta}{d\theta}\right)+\frac{1}{\Phi_m\sin^2\theta}\frac{d^2\Phi_m}{d\phi^2}}_{\text{chỉ phụ thuộc }\theta,\phi}=0$$
+    \item Vì hai nhóm phụ thuộc biến độc lập nhau, mỗi nhóm phải bằng một hằng số đối nhau. Đặt hằng số phân ly là $l(l+1)$:
+    $$\frac{d}{dr}\!\left(r^2\frac{dR}{dr}\right)=l(l+1)R$$
+    \item Nghiệm tổng quát của phương trình Euler-Cauchy này là hai nhánh độc lập:
+    $$R(r)=A\,r^{l}+\dfrac{B}{r^{l+1}}$$
+    \item Nhánh $r^l$ hữu hạn tại gốc toạ độ $r=0$; nhánh $r^{-l-1}$ hữu hạn tại vô cực -- tuỳ điều kiện biên vật lý mà chọn nhánh phù hợp.
+\end{itemize}
+\end{column}
+\begin{column}{0.44\textwidth}
+\centering
+\includegraphics[width=0.9\linewidth]{1_2b_radial_solution.png}
+\captionof{figure}{\footnotesize Hai nhánh nghiệm bán kính $R(r)=Ar^l$ và $R(r)=B/r^{l+1}$ với $l=0,1,2,3$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_3_azimuthal_solution.png ---
+\begin{frame}{Tách biến: Nghiệm phần phương vị $\Phi_m(\phi)$}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\begin{itemize}
+    \item Từ phần góc còn lại, đặt hằng số tách thứ hai:
+    $$-\dfrac{1}{\Phi_m}\dfrac{d^2\Phi_m}{d\phi^2}=m^2$$
+    \item Phương trình vi phân thu được: $\dfrac{d^2\Phi_m}{d\phi^2}=-m^2\Phi_m$, có nghiệm tổng quát dạng sóng phức:
+    $$\Phi_m(\phi)=e^{im\phi}$$
+    \item Điều kiện tuần hoàn vật lý bắt buộc $\Phi_m(\phi+2\pi)=\Phi_m(\phi)$, tức $e^{im\cdot2\pi}=1$, dẫn đến điều kiện lượng tử hoá:
+    $$m\in\mathbb{Z}$$
+    \item Phần thực $\cos(m\phi)$ và quỹ đạo phức $e^{im\phi}=\cos(m\phi)+i\sin(m\phi)$ trên vòng tròn đơn vị được minh hoạ cho các giá trị nguyên $m=0,1,2,3$.
+    \item Đây chính là "phiên bản cầu" của chuỗi Fourier theo góc phương vị -- bước trung gian trước khi ghép với nghiệm Legendre theo $\theta$.
+\end{itemize}
+\end{column}
+\begin{column}{0.44\textwidth}
+\centering
+\includegraphics[width=0.9\linewidth]{1_3_azimuthal_solution.png}
+\captionof{figure}{\footnotesize $\cos(m\phi)$ và quỹ đạo $e^{im\phi}$ trên vòng tròn đơn vị, $m=0,1,2,3$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_4_legendre_functions.png ---
+\begin{frame}{Phương trình Legendre liên kết}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\footnotesize
+\begin{itemize}
+    \item Đặt $x=\cos\theta$, phần góc $\theta$ còn lại trở thành \textbf{phương trình Legendre liên kết} (associated Legendre equation):
+    $$\frac{d}{dx}\!\left[(1-x^2)\frac{d\Theta}{dx}\right]+\left[l(l+1)-\frac{m^2}{1-x^2}\right]\Theta=0$$
+    \item Nghiệm hữu hạn tại hai cực $x=\pm1$ (cực Bắc/Nam của mặt cầu) chỉ tồn tại khi $l=0,1,2,\dots$ và $m=-l,\dots,l$ nguyên -- đây chính là nguồn gốc của điều kiện lượng tử hoá bậc $l$.
+    \item Nghiệm là \textbf{hàm Legendre liên kết}:
+    $$P_l^m(x)=(-1)^m(1-x^2)^{m/2}\frac{d^m}{dx^m}P_l(x)$$
+    với đa thức Legendre thường (trường hợp $m=0$) cho bởi công thức Rodrigues:
+    $$P_l(x)=\frac{1}{2^l\,l!}\frac{d^l}{dx^l}(x^2-1)^l$$
+    \item Đồ thị minh hoạ: đa thức Legendre $P_l(x)$ với $l=0,\dots,5$, và hàm Legendre liên kết $P_3^m(x)$ với $m=0,\dots,3$.
+\end{itemize}
+\end{column}
+\begin{column}{0.44\textwidth}
+\centering
+\includegraphics[width=0.9\linewidth]{1_4_legendre_functions.png}
+\captionof{figure}{\footnotesize $P_l(x)$ với $l=0..5$ và $P_3^m(x)$ với $m=0..3$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_5_spherical_harmonics_lobes.png ---
+\begin{frame}{Ghép lại: Định nghĩa đầy đủ $Y_l^m$}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\footnotesize
+\begin{itemize}
+    \item Ghép nghiệm phần Legendre $P_l^m(\cos\theta)$ với nghiệm phương vị $e^{im\phi}$, cùng hằng số chuẩn hoá để đảm bảo trực chuẩn, ta có định nghĩa đầy đủ của hàm điều hòa cầu (spherical harmonics):
+    $$\boxed{Y_l^m(\theta,\phi)=\sqrt{\dfrac{2l+1}{4\pi}\dfrac{(l-m)!}{(l+m)!}}\;P_l^m(\cos\theta)\,e^{im\phi}}$$
+    \item $l\ge0$ gọi là \textbf{bậc} (degree), $m\in\{-l,\dots,l\}$ gọi là \textbf{bậc con} (order) -- ứng với mỗi $l$ có $2l+1$ hàm $Y_l^m$ độc lập.
+    \item Hình dạng "thuỳ" (lobe) của $|Y_l^m|$ trên mặt cầu phụ thuộc vào cặp $(l,m)$: $l$ càng lớn, số thuỳ càng nhiều (dao động không gian càng nhanh); $m$ quyết định phân bố thuỳ theo phương vị.
+    \item Trực quan hoá: bán kính tại mỗi hướng $=|Y_l^m(\theta,\phi)|$, màu sắc thể hiện dấu/giá trị của phần thực $\mathrm{Re}(Y_l^m)$.
+\end{itemize}
+\end{column}
+\begin{column}{0.44\textwidth}
+\centering
+\includegraphics[width=0.9\linewidth]{1_5_spherical_harmonics_lobes.png}
+\captionof{figure}{\footnotesize Hình dạng thuỳ của $\mathrm{Re}(Y_l^m)$ trên mặt cầu cho các cặp $(l,m)$ tiêu biểu.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_6_eigenvalue_check.png ---
+\begin{frame}{$Y_l^m$ là hàm riêng của Laplace-Beltrami}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\begin{itemize}
+    \item Hàm điều hòa cầu $Y_l^m$ chính là \textbf{hàm riêng} (eigenfunction) của toán tử Laplace-Beltrami $\nabla^2_{S^2}$ trên mặt cầu đơn vị $S^2$ (phần góc của toán tử Laplace 3D), với \textbf{trị riêng} (eigenvalue) $-l(l+1)$:
+    $$\nabla^2_{S^2}Y_l^m=-l(l+1)\,Y_l^m$$
+    \item Đây là hệ quả trực tiếp của quá trình tách biến: $l(l+1)$ chính là hằng số phân ly đã đặt ra ở bước tách phương trình Laplace 3D thành phần bán kính và phần góc.
+    \item Kiểm chứng số học bằng sai phân hữu hạn của $\nabla^2_{S^2}$ trên lưới $(\theta,\phi)$:
+    $$\nabla^2_{S^2}Y=\frac{1}{\sin\theta}\frac{\partial}{\partial\theta}\!\left(\sin\theta\frac{\partial Y}{\partial\theta}\right)+\frac{1}{\sin^2\theta}\frac{\partial^2Y}{\partial\phi^2}$$
+    tính bằng \texttt{np.gradient} hai lần, sau đó so sánh tỉ số $\nabla^2_{S^2}Y/Y$ với giá trị lý thuyết $-l(l+1)$.
+    \item Kết quả số khớp với lý thuyết trong sai số rời rạc hoá -- xác nhận $Y_l^m$ đúng là nghiệm riêng, không phải xấp xỉ.
+\end{itemize}
+\end{column}
+\begin{column}{0.44\textwidth}
+\centering
+\includegraphics[width=0.9\linewidth]{1_6_eigenvalue_check.png}
+\captionof{figure}{\footnotesize Kiểm chứng số học trị riêng $-l(l+1)$ bằng sai phân hữu hạn của $\nabla^2_{S^2}Y_l^m$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 1_7_orthonormality_matrix.png ---
+\begin{frame}{Tính trực chuẩn của hệ $\{Y_l^m\}$}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\scriptsize
+\begin{itemize}
+    \item Hệ $\{Y_l^m\}$ thoả \textbf{trực chuẩn} trên $S^2$ với đo $d\Omega{=}\sin\theta\,d\theta\,d\phi$:
+    $\int_{S^2}Y_l^m(Y_{l'}^{m'})^{*}d\Omega{=}\delta_{ll'}\delta_{mm'}$.
+    \item Hệ quả Sturm-Liouville (phương trình Legendre, phần $\theta$) kết hợp trực giao $e^{im\phi}$ trên chu kỳ $2\pi$ (phần $\phi$).
+    \item Kiểm chứng số: ma trận Gram $M_{ij}{=}\sum Y_i(Y_j)^{*}\sin\theta\,\Delta\theta\Delta\phi \approx \delta_{ij}$ cho $l{=}0,1,2$.
+    \item Nền tảng dùng $\{Y_l^m\}$ làm cơ sở Fourier trên mặt cầu — hệ số tính bằng phép chiếu, không chồng lấn giữa các bậc.
+\end{itemize}
+\end{column}
+\begin{column}{0.44\textwidth}
+\centering
+\includegraphics[width=0.9\linewidth]{1_7_orthonormality_matrix.png}
+\captionof{figure}{\footnotesize Ma trận Gram xấp xỉ ma trận đơn vị.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 2_1_real_sh_construction.png ---
+\begin{frame}{Từ SH phức sang SH thực (Real SH)}
+\begin{columns}[T]
+\begin{column}{0.55\textwidth}
+\scriptsize
+    Đồ hoạ máy tính (3DGS) dùng số thực, nhưng $Y_l^m$ gốc chứa $e^{im\phi}$ là số phức $\Rightarrow$ tổ hợp tuyến tính $Y_l^{\pm m}$ để có cơ sở \textbf{thực} tương đương, giữ trực chuẩn:
+    \[
+    Y_{lm}^{\text{real}}=
+    \begin{cases}
+    \frac{i}{\sqrt{2}}\left(Y_l^{m}-(-1)^m Y_l^{-m}\right) & m<0\\
+    Y_l^0 & m=0\\
+    \frac{1}{\sqrt{2}}\left(Y_l^{-m}+(-1)^m Y_l^{m}\right) & m>0
+    \end{cases}
+    \]
+    \begin{itemize}
+    \item Với $m\neq0$: tổ hợp $Y_l^m$ và liên hợp $Y_l^{-m}=(-1)^m(Y_l^m)^*$ triệt tiêu phần ảo.
+    \item \textbf{Lý do dùng SH thực trong 3DGS}: tránh số phức toàn pipeline, giảm nửa số biến lưu, khớp trực tiếp RGB trong \texttt{computeColorFromSH}.
+    \end{itemize}
+\end{column}
+\begin{column}{0.45\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{2_1_real_sh_construction.png}
+\captionof{figure}{\footnotesize Dựng $Y_{1,m}^{\text{real}}$, $m{=}-1,0,1$.}
+\end{column}
+\end{columns}
+\end{frame}

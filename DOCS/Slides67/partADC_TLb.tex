@@ -1,0 +1,159 @@
+% =============================================================
+% ADC-TLb: Adaptive Density Control -- Prune theo tiêu chí + Opacity reset
+% Tiếp nối ADC-TLa (clone/split). 9 frame, dùng ảnh trong figures/.
+% =============================================================
+
+% --- fig_10_split_samples.png ---
+\begin{frame}{Split: mẫu Monte Carlo vị trí con quanh gốc}
+\begin{columns}[T]
+\begin{column}{0.46\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Gaussian gốc: $s_i = (0.06, 0.02)$, góc xoay $40^\circ$, mô phỏng $2000$ cặp con (seed cố định).
+  \item Vị trí con lấy mẫu: $e^{(j)} \sim \mathcal{N}(0, \mathrm{diag}(s_i^2))$ trong khung cục bộ, rồi xoay về khung thế giới: $\mu^{(j)} - \mu_i = R\, e^{(j)}$.
+  \item Độ lệch chuẩn mẫu đo được: theo trục dài $\approx 0.06$ (lý thuyết $0.06$), theo trục ngắn $\approx 0.02$ (lý thuyết $0.02$) -- khớp covariance gốc.
+  \item Khoảng cách chuẩn hoá $\|\mu^{(j)}-\mu_i\|/\max(s_i)$: trung vị $\approx 1{,}0$, khoảng $90\%$ số con nằm trong bán kính này.
+  \item Diện tích ellipse mỗi con co lại $1/1.6^2 = 0{,}391$ lần gốc; hai con cộng lại $2/1.6^2 = 0{,}781$ lần gốc (thể tích 3D co $1.6^3 \approx 4{,}1\times$).
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{fig_10_split_samples.png}
+\captionof{figure}{\footnotesize Scatter $2000$ cặp con quanh Gaussian gốc, histogram khoảng cách chuẩn hoá, và so sánh diện tích ellipse gốc/con.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- fig_11_N_accounting.png ---
+\begin{frame}{Kế toán số Gaussian $N$ qua một bước densify + prune}
+\footnotesize
+\begin{itemize}
+  \item Trong một bước densify+prune: $N_{\text{old}} = 1000$, clone thêm $n_{\text{clone}} = 120$, split $n_{\text{split}} = 80$ Gaussian (mỗi Gaussian split sinh $2$ con, xoá $1$ gốc $\Rightarrow$ ròng $+n_{\text{split}}$), prune xoá $n_{\text{prune}} = 45$.
+  \[ N_{t+1} = N_t + n_{\text{clone}} + n_{\text{split}} - n_{\text{prune}} = 1000 + 120 + 80 - 45 = 1155 \]
+  \item Nếu tỉ lệ densify không đổi mỗi bước, $N$ tăng theo cấp số nhân: $N(t) = N_0(1+r)^t$ với $r \approx 1{,}5\%$ mỗi $100$ vòng, so với tăng tuyến tính $N_0(1 + rt)$.
+  \item Với $N_0 = 100\,000$ và $144$ bước densify (mỗi $100$ vòng, từ vòng $500$ đến $15000$): luỹ thừa cho $N \approx 8{,}2\times N_0$ tại $t=144$, trong khi tuyến tính chỉ $\approx 3{,}16\times N_0$.
+  \item Đây là lý do cần các tiêu chí prune \emph{cứng} và tần suất reset opacity đều đặn -- nếu không, số Gaussian sẽ bùng nổ và vượt ngân sách bộ nhớ/tốc độ render.
+\end{itemize}
+\centering
+\includegraphics[width=0.72\linewidth]{fig_11_N_accounting.png}
+\captionof{figure}{\footnotesize Waterfall kế toán $N$ trong một bước, và tăng trưởng $N(t)$ luỹ thừa vs.\ tuyến tính qua $144$ bước.}
+\end{frame}
+
+% --- fig_12_prune_alpha.png ---
+\begin{frame}{Tiêu chí prune 1: opacity thấp $\alpha_i < 0{,}005$}
+\begin{columns}[T]
+\begin{column}{0.48\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Điều kiện xoá: $\alpha_i < 0{,}005$ (ngưỡng \texttt{min\_opacity} mặc định Inria).
+  \item Ý nghĩa vật lý: Gaussian gần như trong suốt hoàn toàn -- đóng góp không đáng kể vào công thức alpha-blending của ảnh render, giữ lại chỉ tốn tài nguyên vô ích.
+  \item Trên quần thể mô phỏng $N = 20\,000$ Gaussian (trộn opacity từ nhiều nguồn: đa số hữu ích, một cụm nhỏ vừa reset, một số trung gian): số Gaussian bị xoá là $981/20\,000 \approx 4{,}91\%$.
+  \item Phân phối $\alpha$ có một cụm nhỏ dồn sát $0$ (Gaussian vừa reset opacity chưa kịp "hồi") -- đây chính là nhóm bị prune ngay ở lần densify kế tiếp nếu không tăng $\alpha$ kịp.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{fig_12_prune_alpha.png}
+\captionof{figure}{\footnotesize Histogram $\alpha$ (trục log) với vùng xoá $\alpha<0{,}005$ tô đỏ; $981/20\,000 \approx 4{,}91\%$ Gaussian bị xoá.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- fig_13_prune_radius2d.png ---
+\begin{frame}{Tiêu chí prune 2: bán kính chiếu 2D $r_i^{2D} > 20$ px}
+\footnotesize
+\begin{itemize}
+  \item Xấp xỉ hình học: $r^{2D} \approx \dfrac{f \cdot s}{z}$, với $f$ là tiêu cự (px), $s$ là scale 3D, $z$ là độ sâu tới camera.
+  \item Ngưỡng Inria: xoá nếu $r_i^{2D} > 20$ px, nhưng \textbf{chỉ áp dụng khi $t > 3000$} (sau lần reset opacity đầu tiên); trước đó điều kiện này bị bỏ qua để không xoá nhầm Gaussian to đang hình thành.
+  \item \texttt{max\_radii2D} là giá trị lớn nhất quan sát được qua mọi view đã render, cập nhật mỗi vòng bởi rasterizer.
+  \item Ví dụ số: $s=0{,}01, z=1, f=1000 \Rightarrow r^{2D}=10$ px (giữ); $s=0{,}03, z=1 \Rightarrow r^{2D}=30$ px (xoá); nhưng cùng $s=0{,}03$ với $z=3 \Rightarrow r^{2D}=10$ px (giữ) -- cùng một scale 3D có thể giữ hoặc xoá tuỳ độ sâu.
+  \item Cùng một $s$ lớn, gần camera cho $r^{2D}$ lớn hơn xa camera -- đây là lý do tiêu chí này bổ sung cho tiêu chí scale tuyệt đối (không phụ thuộc view).
+\end{itemize}
+\centering
+\includegraphics[width=0.7\linewidth]{fig_13_prune_radius2d.png}
+\captionof{figure}{\footnotesize Sơ đồ chiếu pinhole $r^{2D}\approx fs/z$ và ảnh minh hoạ các đĩa với ngưỡng $20$ px.}
+\end{frame}
+
+% --- fig_14_prune_scale.png ---
+\begin{frame}{Tiêu chí prune 3: scale tuyệt đối $\max(s_i) > 0{,}1 \cdot \text{extent}$}
+\footnotesize
+\begin{itemize}
+  \item Điều kiện xoá: bán trục lớn nhất của Gaussian vượt quá $10\%$ kích thước cảnh (\texttt{extent}, world-space, không phụ thuộc camera).
+  \item Diễn giải: Gaussian với $\max(s_i)/\text{extent} > 0{,}1$ phủ lên quá nhiều vật thể khác nhau trong cảnh -- thường là artefact "sương"/floater to, không mô tả bề mặt cụ thể nào $\Rightarrow$ xoá ngay bất kể $\alpha$ hay gradient.
+  \item Ví dụ minh hoạ với $4$ Gaussian có $\max(s)/\text{extent} \in \{0{,}02,\ 0{,}05,\ 0{,}10,\ 0{,}18\}$: chỉ hai Gaussian đầu ($0{,}02$ và $0{,}05$) được giữ; $0{,}10$ và $0{,}18$ bị xoá (ranh giới $0{,}10$ tính là vượt).
+  \item So sánh: ngưỡng khởi tạo split/clone dùng $\delta = 0{,}01 \cdot \text{extent}$ -- nhỏ hơn ngưỡng prune này $10$ lần, cho thấy hai cơ chế nhắm hai thái cực kích thước khác nhau.
+\end{itemize}
+\centering
+\includegraphics[width=0.6\linewidth]{fig_14_prune_scale.png}
+\captionof{figure}{\footnotesize Vòng tròn extent cảnh và các Gaussian mẫu ở nhiều tỉ lệ $\max(s)/\text{extent}$, đánh dấu xoá/giữ.}
+\end{frame}
+
+% --- fig_15_prune_or_region.png ---
+\begin{frame}{Kết hợp tiêu chí prune bằng phép OR}
+\footnotesize
+\[
+\mathrm{xoa}_i = \big[\alpha_i < 0{,}005\big] \;\vee\; \big[r_i^{2D} > 20\text{ px},\; t>3000\big] \;\vee\; \big[\max(s_i) > 0{,}1\cdot\text{extent}\big]
+\]
+\begin{itemize}
+  \item Gaussian chỉ cần vi phạm \textbf{một} trong ba điều kiện (A: $\alpha$ thấp, B: bán kính 2D lớn, C: scale tuyệt đối lớn) là bị xoá -- vùng quyết định trong không gian tham số là \emph{hợp} $A \cup B \cup C$.
+  \item Trên $N=20\,000$ Gaussian mô phỏng, tại $t=9000$ (đủ cả 3 điều kiện, $|A|=981$, $|B|=1869$, $|C|=237$): tổng vùng hợp $|A\cup B\cup C| = 2751$ Gaussian bị xoá ($\approx 13{,}8\%$).
+  \item Tại $t=2000$ ($t \le 3000$ nên điều kiện B bị bỏ qua): chỉ còn $A$ và $C$ hoạt động, tổng xoá $= 1204$ Gaussian ($\approx 6{,}0\%$) -- thấp hơn hẳn vì thiếu tiêu chí B.
+  \item Tổng OR luôn nhỏ hơn $|A|+|B|+|C|$ vì các điều kiện chồng lấn nhau (ví dụ Gaussian to thường cũng mờ do "sương" -- vùng $A\cap C$ khác rỗng).
+  \item Đây là prune \emph{cứng}: xoá ngay lập tức, không cần ứng viên hay ngân sách như trong densify.
+\end{itemize}
+\centering
+\includegraphics[width=0.62\linewidth]{fig_15_prune_or_region.png}
+\captionof{figure}{\footnotesize Sơ đồ Venn 3 vòng và bar chart so sánh đóng góp từng tiêu chí tại $t=2000$ và $t=9000$.}
+\end{frame}
+
+% --- fig_16_sigmoid_inverse.png ---
+\begin{frame}{Vì sao lưu opacity dưới dạng logit: sigmoid và nghịch đảo}
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+\scriptsize
+\begin{itemize}
+  \item $\alpha{\in}[0,1]$ tham số hoá gián tiếp qua $x{\in}\mathbb{R}$ (không chặn):
+  $\alpha{=}\sigma(x){=}\frac{1}{1+e^{-x}}$, $x{=}\sigma^{-1}(\alpha){=}\ln\frac{\alpha}{1-\alpha}$.
+  \item Tối ưu $x$ bằng GD không ràng buộc, $\alpha{=}\sigma(x)$ tự động $\in[0,1]$.
+  \item Mốc: $\alpha{=}0.005\Leftrightarrow x{\approx}{-}5.293$; $\alpha{=}0.01\Leftrightarrow x{\approx}{-}4.595$; $\alpha{=}0.99\Leftrightarrow x{\approx}{+}4.595$.
+  \item Reset: $\alpha_{\text{sau}}{=}\min(\alpha_{\text{trước}},0.01)$, rồi $x{\leftarrow}\sigma^{-1}(\alpha_{\text{sau}})$.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{fig_16_sigmoid_inverse.png}
+\captionof{figure}{\footnotesize $\sigma(x)$, $\sigma^{-1}(\alpha)$, ánh xạ reset.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- fig_17_opacity_trajectory.png ---
+\begin{frame}{Quỹ đạo opacity theo thời gian: nhảy xuống rồi phục hồi}
+\footnotesize
+\begin{itemize}
+  \item Mô phỏng $4$ Gaussian qua $4$ lần reset tại $t \in \{3000, 6000, 9000, 12000\}$, khởi tạo $\alpha_0 = 0{,}1$ (giá trị khởi tạo mặc định Inria).
+  \item (i) Gaussian hữu ích: hồi phục nhanh về $\approx 0{,}9$ sau mỗi lần reset (tốc độ hồi phục cao).
+  \item (ii) Gaussian "ảo"/thừa: sau lần reset tại $t=6000$ không hồi phục được nữa (gradient không đủ mạnh), $\alpha$ giảm dần và bị prune ngay khi chạm ngưỡng $\alpha < 0{,}005$ tại lần densify kế tiếp.
+  \item (iii) Gaussian hữu ích vừa: hồi phục chậm hơn, chỉ về $\approx 0{,}4$.
+  \item (iv) Gaussian mới sinh (do clone/split) tại $t=9000$ với $\alpha_0=0{,}1$ -- tham gia chu trình reset từ mốc $t=12000$ trở đi.
+  \item Mỗi lần reset là một "cú nhảy xuống" tức thời về $\alpha=0{,}01$ trên trục log, sau đó quỹ đạo phân nhánh: hoặc leo trở lại (hữu ích) hoặc tụt xuống dưới ngưỡng xoá (vô dụng).
+\end{itemize}
+\centering
+\includegraphics[width=0.68\linewidth]{fig_17_opacity_trajectory.png}
+\captionof{figure}{\footnotesize $\alpha(t)$ của 4 Gaussian (thang log) qua 4 lần reset; đường (ii) bị xoá sau khi không phục hồi.}
+\end{frame}
+
+% --- fig_18_hist_reset.png ---
+\begin{frame}{Toàn cảnh: histogram opacity trước/sau một lần reset}
+\scriptsize
+\begin{itemize}
+  \item Mô phỏng $N{=}20{,}000$ quanh reset $t{=}6000$: $72\%$ "hữu ích" ($\alpha{\approx}0.80$ trước reset), $28\%$ "vô dụng" ($\alpha{\approx}0.15$).
+  \item \textbf{Trước reset}: phân phối trải rộng, một lượng nhỏ đã dưới ngưỡng xoá $0.005$.
+  \item \textbf{Sau reset}: $\alpha{\leftarrow}\min(\alpha,0.01)$ toàn bộ — gần như mọi Gaussian dồn về $0.01$.
+  \item \textbf{500 vòng sau}: nhóm hữu ích hồi phục mạnh ($\alpha{>}0.5$), nhóm vô dụng tiếp tục giảm — một phần rơi dưới $0.005 \Rightarrow$ bị prune; $12\%$ nhóm vô dụng hồi phục vừa phải và được giữ lại.
+  \item[$\Rightarrow$] Cơ chế cốt lõi: buộc mọi Gaussian "chứng minh lại" giá trị qua gradient — khép lại chu trình ADC theo thời gian.
+\end{itemize}
+\centering
+\includegraphics[width=0.8\linewidth]{fig_18_hist_reset.png}
+\captionof{figure}{\footnotesize Ba histogram $\alpha$: trước reset, sau reset (dồn về $0.01$), $500$ vòng sau.}
+\end{frame}

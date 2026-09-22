@@ -1,0 +1,194 @@
+% partADC_7.tex — Phần 7 (chương ADC): so sánh toàn pipeline 3DGS gốc vs FastGS-lite trên toy model
+% Chỉ chứa các khối frame, không có preamble. Include từ main.tex.
+
+% --- 7_1_3dgs-chuoi-thoi-gian.png ---
+\begin{frame}{Chuỗi thời gian ADC: 3DGS gốc trên toy 2D}
+\begin{columns}[T]
+\begin{column}{0.45\linewidth}
+\footnotesize
+\begin{itemize}
+  \item ADC của \textbf{3DGS gốc} (Kerbl 2023) chỉ dùng gradient vị trí trung bình tích luỹ $\bar g$, \textbf{có dấu}:
+  \[
+    \text{clone} = [\|\bar g\| \ge \tau] \wedge [\max s \le S_{\text{BIG}}]
+  \]
+  \[
+    \text{split} = [\|\bar g\| \ge \tau] \wedge [\max s > S_{\text{BIG}}]
+  \]
+  \item Prune: xoá \textbf{ngay lập tức} mọi Gaussian có $\alpha < \varepsilon_{\text{opa}}$ (hoặc $\max s > S_{\text{HUGE}}$ sau mốc reset $\alpha$).
+  \item \textbf{Không} có: trần opacity, Importance đa view, prune multinomial, hay final prune.
+  \item Hình vẽ: render (hàng trên) và ellipse $1.5\sigma$ của từng Gaussian trên nền mục tiêu mờ (hàng dưới), tại 6 mốc snapshot $t \in \{0, 100, 300, 600, 1000, T_{\text{total}}\}$, cùng $N$ và $L_1$ mỗi mốc.
+\end{itemize}
+\end{column}
+\begin{column}{0.55\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{7_1_3dgs-chuoi-thoi-gian.png}
+\captionof{figure}{\footnotesize ADC của 3DGS gốc trên toy 2D: clone/split chỉ theo gradient có dấu, prune cứng $\alpha<\varepsilon$, không trần opacity.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 7_2_fastgs-chuoi-thoi-gian.png ---
+\begin{frame}{Chuỗi thời gian ADC: FastGS-lite trên CÙNG toy model}
+\begin{columns}[T]
+\begin{column}{0.45\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Cùng seed, cùng layout với 3DGS gốc, nhưng FastGS-lite thêm \textbf{Importance đa view} ($V=1$ view trong toy) và gradient \textbf{tuyệt đối}:
+  \[
+    \text{clone} = [\|\bar g\| \ge \tau] \wedge [\max s \le S_{\text{BIG}}] \wedge [\text{Imp} > \text{IMP\_THR}]
+  \]
+  \[
+    \text{split} = [\|\bar g_{\text{abs}}\| \ge \tau_{\text{abs}}] \wedge [\max s > S_{\text{BIG}}] \wedge [\text{Imp} > \text{IMP\_THR}]
+  \]
+  \item Prune: lập tập ứng viên $C = \{\alpha < \varepsilon_{\text{opa}} \vee \max s > S_{\text{HUGE}}\}$, trọng số $w_i = 1/(10^{-6} + 1 - \text{Pruning}_i)$, rút mẫu $S \sim \text{Multinomial}(w, \lfloor 0.5|C|\rfloor)$ không hoàn lại, xoá $C \cap S$.
+  \item Sau mỗi ADC: trần opacity $\alpha \leftarrow \min(\alpha, 0.8)$.
+  \item Final prune bổ sung tại $t = 1000, 1100$.
+\end{itemize}
+\end{column}
+\begin{column}{0.55\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{7_2_fastgs-chuoi-thoi-gian.png}
+\captionof{figure}{\footnotesize ADC của FastGS-lite trên cùng toy: AND với Importance, split theo $|g|$, prune multinomial, trần 0.8, final prune tại $t=1000/1100$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 7_3_chia-vung-3dgs-vs-fastgs.png ---
+\begin{frame}{Bản đồ lãnh thổ: 3DGS gốc vs FastGS-lite}
+\footnotesize
+\begin{itemize}
+  \item Mỗi pixel được tô theo Gaussian có $T_i \alpha_i G_i$ lớn nhất tại pixel đó (lãnh thổ chiếm ưu thế trong alpha-blend) — trắng = nền, đường đen = biên vật thể mục tiêu.
+  \item So sánh trực tiếp 2 hàng $\times$ 6 mốc thời gian $t \in \{0, 100, 300, 600, 1000, T_{\text{total}}\}$: hàng trên = 3DGS gốc, hàng dưới = FastGS-lite.
+  \item Vì clone/split của FastGS bị chặn thêm bởi điều kiện Importance và dùng gradient tuyệt đối cho split, ranh giới các mảng lãnh thổ (đặc biệt tại vùng biên vật thể) tách rời rõ rệt so với 3DGS gốc.
+  \item Đây là bằng chứng trực quan cho thấy hai bộ luật ADC khác nhau dẫn đến \textbf{cấu trúc không gian tham số khác nhau}, không chỉ khác về $N$ hay loss.
+\end{itemize}
+\centering
+\includegraphics[width=0.7\linewidth]{7_3_chia-vung-3dgs-vs-fastgs.png}
+\captionof{figure}{\footnotesize Lãnh thổ của từng Gaussian, 3DGS gốc (trên) và FastGS-lite (dưới), 6 mốc thời gian.}
+\end{frame}
+
+% --- 7_4_loss-N-clone-split-prune.png ---
+\begin{frame}{Loss, $N(t)$ và các sự kiện clone/split/prune}
+\footnotesize
+\begin{itemize}
+  \item \textbf{(a)} Loss $L_1$ theo thời gian (thang log) cho 3 kịch bản: ADC 3DGS gốc, ADC FastGS-lite, và không dùng ADC ($N$ cố định) — các vạch mờ đánh dấu mốc ADC, vạch tím đứt đánh dấu mốc reset $\alpha$, vạch xanh đứt đánh dấu final prune của FastGS.
+  \item \textbf{(b)} Số Gaussian $N(t)$: FastGS-lite kết thúc với $N$ \textbf{ít hơn} 3DGS gốc nhờ prune multinomial và final prune (mũi tên chú thích "final prune $-n_r$" tại từng mốc $t \in$ FINAL\_AT); trần $N = N_{\text{MAX}}$ (toy) được vẽ nét đứt.
+  \item \textbf{(c)} Số Gaussian clone/split/prune tại mỗi mốc ADC, 3DGS gốc (gạch chéo) cạnh FastGS-lite (đặc) — cột riêng biệt cho final prune của FastGS.
+  \item Liên hệ nhân-quả trực tiếp: mỗi bước nhảy của $N(t)$ ở (b) khớp với sự kiện clone/split/prune ở (c), và mỗi lần $N$ thay đổi kéo theo bước ngoặt trên đường loss ở (a).
+\end{itemize}
+\centering
+\includegraphics[width=0.85\linewidth]{7_4_loss-N-clone-split-prune.png}
+\captionof{figure}{\footnotesize Loss, $N(t)$, và clone/split/prune theo mốc — 3DGS gốc vs FastGS-lite vs không ADC.}
+\end{frame}
+
+% --- 7_5_cuoi-3dgs-fastgs-khong-adc.png ---
+\begin{frame}{Kết quả render cuối cùng: 3 kịch bản đối chiếu}
+\scriptsize
+\begin{itemize}
+  \item Hàng 1 — \textbf{ADC 3DGS gốc}: $N$ tăng từ khởi tạo lên $N$ cuối, $L_1$ cuối như trong hình.
+  \item Hàng 2 — \textbf{ADC FastGS-lite}: $L_1$ cuối \textbf{tương đương} nhưng \textbf{ít Gaussian hơn} — hiệu quả của Importance + prune multinomial + final prune.
+  \item Hàng 3 — \textbf{Không ADC}: $N{=}N_0$ cố định, không clone/split/prune — chất lượng kém hơn rõ rệt.
+  \item Mỗi hàng: render cuối, sai số $|I-T|$, ellipse $1.5\sigma$. Viền màu: đỏ=3DGS, xanh=FastGS, xám=không ADC.
+\end{itemize}
+\centering
+\includegraphics[width=0.42\linewidth]{7_5_cuoi-3dgs-fastgs-khong-adc.png}
+\captionof{figure}{\footnotesize Đối chiếu cuối: ADC 3DGS gốc / ADC FastGS-lite / không ADC.}
+\end{frame}
+
+% --- 7_6_and-importance-tren-toy.png ---
+\begin{frame}{Cải tiến 1: logic AND với Importance, số liệu thật trên toy}
+\begin{columns}[T]
+\begin{column}{0.48\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Nhắc lại Phần 4: FastGS chỉ densify khi \textbf{cả} gradient \textbf{và} Importance đa view đều vượt ngưỡng — ở đây minh hoạ cụ thể bằng số liệu tại một mốc $t$ chọn từ log thật (ưu tiên $t=300$, hoặc mốc có nhiều Gaussian bị chặn nhất).
+  \item Mặt nạ lỗi (bước \textcircled{1}\textcircled{2}\textcircled{3}): $\hat e(x) = \text{minmax}(\text{mean}_{\text{ch}}|I - T|) > 0.1$.
+  \item Importance$_i$ = số pixel lỗi trong footprint hữu hình của Gaussian $i$ (đã qua 3 cửa lọc: $3\sigma$, $w \ge 1/255$, $T \ge 10^{-4}$); ngưỡng $\text{IMP\_THR} = 5$.
+  \item 4 nhóm quyết định: densify ở \textbf{cả hai} phương pháp (xanh lá), 3DGS muốn densify nhưng FastGS \textbf{chặn} vì $\text{Imp} \le 5$ (đỏ, dấu X — gradient "muốn đổi" nhưng render không thật sự sai), chỉ FastGS densify nhờ split theo $|g|$ (cam), và không ai densify (xám).
+\end{itemize}
+\end{column}
+\begin{column}{0.52\linewidth}
+\centering
+\includegraphics[width=\linewidth]{7_6_and-importance-tren-toy.png}
+\captionof{figure}{\footnotesize Cải tiến 1 — AND với Importance$>5$: gradient nói "muốn đổi", mặt nạ lỗi nói "render có thật sự sai không".}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 7_7_abs-vs-signed-split.png ---
+\begin{frame}{Cải tiến 2: split theo $\sum|g|$ thay vì $\sum g$ (có dấu)}
+\footnotesize
+\begin{itemize}
+  \item Vấn đề của gradient \textbf{có dấu}: các gradient pixel trong footprint của một Gaussian to có thể kéo về nhiều phía khác nhau trong cùng một ảnh, \textbf{triệt tiêu lẫn nhau} khi cộng vector.
+  \item Chọn Gaussian $i^*$ minh hoạ: tại mốc $t$, $\|\sum_x g_x\|$ (có dấu) rất nhỏ so với $\sum_x |g_x|$ (tuyệt đối) — tỉ lệ chênh lệch thể hiện trực tiếp trên hình (ví dụ "gấp $k$ lần").
+  \item Tích luỹ theo thời gian: $\|\bar g\|/\tau < 1 \Rightarrow$ 3DGS \textbf{bỏ qua} $i^*$; nhưng $\|\bar g_{\text{abs}}\|/\tau_{\text{abs}} \ge 1 \Rightarrow$ FastGS \textbf{split} $i^*$.
+  \item So sánh kết quả sau $N_{\text{ADAM}} = 80$ bước Adam: \textbf{không split} (như 3DGS, $L_1$ cải thiện ít) vs \textbf{split} $i^*$ thành 2 con (FastGS, $L_1$ giảm ngay sau split rồi tiếp tục giảm qua 80 bước Adam).
+  \item Panel (b): bar so sánh $\|\bar g\|$ (có dấu, 3DGS) vs $\|\bar g_{\text{abs}}\|$ (FastGS) cho toàn bộ Gaussian to ($\max s > S_{\text{BIG}}$), có đường ngưỡng $\tau$ và $\tau_{\text{abs}}$.
+\end{itemize}
+\centering
+\includegraphics[width=0.72\linewidth]{7_7_abs-vs-signed-split.png}
+\captionof{figure}{\footnotesize Cải tiến 2 — split dùng $\sum|g|$ thay $\sum g$: gradient pixel triệt tiêu nhau trong một ảnh nên $\|\bar g\|$ nhỏ dù Gaussian đang bị kéo nhiều phía.}
+\end{frame}
+
+% --- 7_8_prune-hard-vs-multinomial.png ---
+\begin{frame}{Cải tiến 3: prune cứng vs multinomial, áp dụng trên toy}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\scriptsize
+\begin{itemize}
+  \item Tập ứng viên chung: $C{=}\{\alpha{<}\varepsilon_{\text{opa}} \vee \max s{>}S_{\text{HUGE}}\}$.
+  \item \textbf{3DGS gốc}: xoá \textbf{ngay lập tức} toàn bộ $C$.
+  \item \textbf{FastGS}: $w_i{=}1/(1{-}\text{Pruning}_i)$, rút $S{\sim}\text{Multinomial}(w,\lfloor 0.5|C|\rfloor)$, chỉ xoá $C{\cap}S$ — giữ lại ứng viên "ít đáng xoá hơn".
+  \item Sau prune, FastGS áp trần $\alpha{\leftarrow}\min(\alpha,0.8)$; $\max|\Delta I|$ rất nhỏ.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{7_8_prune-hard-vs-multinomial.png}
+\captionof{figure}{\footnotesize 3DGS xoá NGAY mọi $\alpha{<}\varepsilon$; FastGS rút multinomial theo Pruning.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 7_9_tran-opacity-08.png ---
+\begin{frame}{Cải tiến 4: tràn opacity $\alpha \leftarrow \min(\alpha, 0.8)$}
+\begin{columns}[T]
+\begin{column}{0.48\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Hiện tượng "tràn" opacity: khi Gaussian phía trước có $\alpha$ rất cao (ví dụ $\alpha \to 0.99$), transmittance còn lại cho lớp sau:
+  \[
+    T(x) = 1 - \alpha_{\text{front}}\, G_{\text{front}}(x)
+  \]
+  \item Tại tâm ($x=0$, $G=1$): $\alpha_{\text{front}}=0.99 \Rightarrow T(0)=0.01$; nhưng $\alpha_{\text{front}}=0.8 \Rightarrow T(0)=0.20$ — \textbf{gấp 20 lần} ánh sáng còn lại cho Gaussian phía sau.
+  \item Vì $\partial L/\partial \theta_{\text{back}} \propto T \cdot \alpha_{\text{back}} \cdot G_{\text{back}}$, trần $\alpha \le 0.8$ giữ 20\% tín hiệu gradient cho lớp sau thay vì "chôn" nó vĩnh viễn.
+  \item Histogram opacity cuối: đếm số Gaussian có $\alpha > 0.8$ và $\alpha > 0.99$ cho cả 3DGS gốc và FastGS-lite; bản đồ $T_{\text{end}}(x)$ trên vùng vật thể cho thấy phần trăm pixel bị "chặn hết" ($T_{\text{end}} < 0.01$) ở mỗi phương pháp.
+\end{itemize}
+\end{column}
+\begin{column}{0.52\linewidth}
+\centering
+\includegraphics[width=\linewidth]{7_9_tran-opacity-08.png}
+\captionof{figure}{\footnotesize Cải tiến 4 — trần opacity 0.8: Gaussian phía sau vẫn nhận gradient qua $T$, không bị "chôn" vĩnh viễn.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- 7_10_final-prune-tren-toy.png ---
+\begin{frame}{Cải tiến 5: final prune trên toy — khép lại chương ADC}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\scriptsize
+\begin{itemize}
+  \item Sau densify (kết thúc $t{=}900$), FastGS-lite chạy \textbf{final prune} tại $t{\in}(1000,1100)$: $\text{rm}{=}[\alpha{<}0.1] \vee [\text{Pruning}{>}0.9]$.
+  \item \textbf{3DGS gốc không có bước này} — $N(t)$ phẳng $[900,1200]$; FastGS giảm "hai bậc thang" tại $1000,1100$.
+  \item Scatter $(\alpha,\text{Pruning})$: vùng "chữ L" bị xoá ($\alpha$ thấp, Pruning cao), đánh dấu X đỏ.
+  \item $L_1$ cuối FastGS-lite tương đương 3DGS nhưng $N$ nhỏ hơn — kết quả gọn nhất, khép lại chương ADC.
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{7_10_final-prune-tren-toy.png}
+\captionof{figure}{\footnotesize Final prune sau densify: xoá $[\alpha{<}0.1]\vee[\text{Pruning}{>}0.9]$.}
+\end{column}
+\end{columns}
+\end{frame}

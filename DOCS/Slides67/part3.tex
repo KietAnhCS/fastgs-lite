@@ -1,0 +1,242 @@
+% ==============================================
+% PHẦN 3 (Slide 21--30): Hàm mất mát, Metric đánh giá,
+% Gradient và Optimizer trong huấn luyện 3DGS
+% ==============================================
+
+% --- Slide 21 ---
+\begin{frame}{Hàm mất mát: kết hợp L1 và D-SSIM}
+    \begin{columns}[T]
+        \begin{column}{0.5\textwidth}
+            \begin{itemize}
+                \item Loss huấn luyện kết hợp hai thành phần bổ trợ nhau:
+                \begin{itemize}
+                    \item \textbf{L1}: sai khác trung bình theo từng pixel.
+                    \item \textbf{D-SSIM}: $1-\text{SSIM}$, phản ánh sai lệch \textbf{cấu trúc}.
+                \end{itemize}
+                \item Công thức tổng:
+                \[
+                    \mathcal{L} = (1-\lambda)\,\mathcal{L}_1 + \lambda\,(1-\text{SSIM})
+                \]
+                \item Hệ số $\lambda = $ \texttt{lambda\_dssim}:
+                \begin{itemize}
+                    \item Mặc định: $0.2$
+                    \item \texttt{fastgs-lite}: $0.25$ (nhấn mạnh cấu trúc hơn)
+                \end{itemize}
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{ch5_loss_mix.png}
+            \captionof{figure}{Tỉ trọng L1 và D-SSIM trong loss}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 22 ---
+\begin{frame}{SSIM: so sánh theo cửa sổ trượt}
+    \begin{columns}[T]
+        \begin{column}{0.5\textwidth}
+            \begin{itemize}
+                \item SSIM không so sánh pixel đơn lẻ mà trượt một \textbf{cửa sổ nhỏ} (thường $11\times 11$) trên ảnh render và ảnh gốc.
+                \item Trong mỗi cửa sổ, kết hợp 3 yếu tố:
+                \begin{itemize}
+                    \item Độ sáng (luminance)
+                    \item Độ tương phản (contrast)
+                    \item Cấu trúc (structure)
+                \end{itemize}
+                \item Nhạy với sai lệch \textbf{cấu trúc cục bộ} hơn hẳn L1/L2 thuần pixel.
+                \item Do đó bổ sung tốt cho L1 trong hàm loss.
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{ch5_ssim_window.png}
+            \captionof{figure}{Cửa sổ trượt khi tính SSIM}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 23 ---
+\begin{frame}{PSNR: metric per-pixel}
+    \begin{columns}[T]
+        \begin{column}{0.5\textwidth}
+            \begin{itemize}
+                \item PSNR (Peak Signal-to-Noise Ratio) đo theo dB, dựa trên MSE giữa ảnh render và ảnh gốc:
+                \[
+                    \text{PSNR} = 10 \cdot \log_{10}\!\left(\frac{\text{MAX}^2}{\text{MSE}}\right)
+                \]
+                \item PSNR càng cao $\Rightarrow$ sai số pixel càng nhỏ.
+                \item Nhược điểm: là metric \textbf{per-pixel thuần}, không phản ánh tốt chất lượng \textbf{cảm nhận thị giác} như SSIM hay LPIPS.
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{ch5_psnr.png}
+            \captionof{figure}{Quan hệ MSE và PSNR (dB)}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 24 ---
+\begin{frame}{Điểm số tổng hợp (Score) đánh giá benchmark}
+    \begin{columns}[T]
+        \begin{column}{0.5\textwidth}
+            \footnotesize
+            \begin{itemize}
+                \item Công thức điểm dùng trong benchmark/cuộc thi, kết hợp cả 3 metric:
+                \[
+                    \text{Score} = 0.4(1-\text{LPIPS}) + 0.3\,\text{SSIM} + 0.3\,\text{clamp}\!\left(\frac{\text{PSNR}}{\text{PSNR}_{\max}}, 0, 1\right)
+                \]
+                với $\text{PSNR}_{\max} = 30$dB.
+                \item Mục tiêu: cân bằng giữa
+                \begin{itemize}
+                    \item độ chính xác pixel (PSNR),
+                    \item cấu trúc (SSIM),
+                    \item cảm nhận thị giác (LPIPS).
+                \end{itemize}
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{ch5_score_decomp.png}
+            \captionof{figure}{Phân rã đóng góp của Score}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 25 ---
+\begin{frame}{Lan truyền gradient qua rasterizer khả vi}
+    \begin{itemize}
+        \item Phép render 3DGS (chiếu Gaussian + alpha blending) hoàn toàn \textbf{khả vi}, nên có thể lan truyền ngược (backprop) từ loss về từng tham số Gaussian.
+        \item Chuỗi lan truyền ngược:
+    \end{itemize}
+    \begin{center}
+        \footnotesize
+        pixel $\xrightarrow{\ \partial\ }$ alpha blend $\xrightarrow{\ \partial\ }$ alpha field $\xrightarrow{\ \partial\ }$ covariance chiếu $\xrightarrow{\ \partial\ }$ $(\mu, \Sigma)$ gốc
+    \end{center}
+    \begin{itemize}
+        \item Quy tắc chuỗi (chain rule) tổng quát cho mỗi tham số $\theta \in \{\mu, \Sigma, \alpha, \text{SH}\}$:
+        \[
+            \frac{\partial \mathcal{L}}{\partial \theta} = \frac{\partial \mathcal{L}}{\partial C} \cdot \frac{\partial C}{\partial \theta}
+        \]
+        \item Nhờ đó mọi tham số Gaussian đều được cập nhật trực tiếp từ tín hiệu loss ở không gian ảnh.
+    \end{itemize}
+\end{frame}
+
+% --- Slide 26 ---
+\begin{frame}{Gradient tập trung tại biên Gaussian}
+    \begin{columns}[T]
+        \begin{column}{0.5\textwidth}
+            \begin{itemize}
+                \item Gradient view-space lớn nhất xuất hiện ở vùng \textbf{biên/rìa} của Gaussian.
+                \item Đây là nơi ảnh render lệch nhiều nhất so với ảnh thật (sai số cao).
+                \item Ý nghĩa quan trọng: gradient tại biên chính là \textbf{tín hiệu} dùng để quyết định \textbf{densify} (thêm Gaussian mới) ở giai đoạn sau.
+                \item Vùng gradient thấp $\Rightarrow$ Gaussian đã khớp tốt, không cần chia tách thêm.
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{ch6_edge_gradient.png}
+            \captionof{figure}{Gradient tập trung ở biên Gaussian}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 27 ---
+\begin{frame}{Adam optimizer cho từng tham số Gaussian}
+    \begin{columns}[T]
+        \begin{column}{0.5\textwidth}
+            \begin{itemize}
+                \item Mỗi tham số Gaussian ($\mu, \Sigma, \alpha, \text{SH}$) có trạng thái Adam riêng:
+                \begin{itemize}
+                    \item Moment bậc 1 (trung bình gradient)
+                    \item Moment bậc 2 (trung bình bình phương gradient)
+                \end{itemize}
+                \item Learning rate thích ứng (adaptive) theo từng chiều tham số.
+                \item Quỹ đạo hội tụ \textbf{mượt hơn} so với SGD thuần, tránh dao động mạnh khi gradient nhiễu.
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{ch6_adam_trajectory.png}
+            \captionof{figure}{Quỹ đạo cập nhật của Adam}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 28 ---
+\begin{frame}{Lịch suy giảm learning rate}
+    \begin{columns}[T]
+        \begin{column}{0.5\textwidth}
+            \begin{itemize}
+                \item Learning rate của từng nhóm tham số (đặc biệt là vị trí $\mu$) giảm dần theo \textbf{hàm mũ} (exponential decay).
+                \item Suy giảm diễn ra qua số bước \texttt{position\_lr\_max\_steps}.
+                \item Mục đích:
+                \begin{itemize}
+                    \item Học nhanh, bước lớn ở giai đoạn đầu.
+                    \item Ổn định, tinh chỉnh nhỏ dần về cuối huấn luyện.
+                \end{itemize}
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{ch6_lr_decay.png}
+            \captionof{figure}{Suy giảm learning rate theo hàm mũ}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 29 ---
+\begin{frame}{Sparse Adam schedule (đòn bẩy tăng tốc \#3)}
+    \begin{columns}[T]
+        \begin{column}{0.5\textwidth}
+            \footnotesize
+            \begin{itemize}
+                \item Không phải mọi tham số được cập nhật ở mọi iteration.
+                \item \texttt{features\_rest} (SH bậc cao, chi phối màu view-dependent):
+                \begin{itemize}
+                    \item Chỉ \texttt{step} mỗi \textbf{16} iteration đến 15k.
+                \end{itemize}
+                \item Sau đó, mọi tham số:
+                \begin{itemize}
+                    \item \texttt{step} mỗi \textbf{32} iteration (15k--20k)
+                    \item \texttt{step} mỗi \textbf{64} iteration (sau 20k)
+                \end{itemize}
+                \item Giảm mạnh chi phí \texttt{optimizer.step()}, gần như không ảnh hưởng chất lượng vì thành phần SH bậc cao thay đổi chậm.
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{ch6_step_schedule.png}
+            \captionof{figure}{Lịch step thưa của Sparse Adam}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 30 ---
+\begin{frame}{Tổng kết vòng lặp huấn luyện}
+    \begin{center}
+        \footnotesize
+        \begin{tikzpicture}[
+            node distance=1.1cm and 1.6cm,
+            box/.style={draw, rounded corners, fill=blue!8, align=center, minimum width=2.6cm, minimum height=1cm},
+            ->, thick
+        ]
+            \node[box] (render) {1. Render};
+            \node[box, right=of render] (loss) {2. Tính loss\\ (L1 + D-SSIM)};
+            \node[box, right=of loss] (backward) {3. Backward\\ (lan gradient)};
+            \node[box, below=of loss] (step) {4. optimizer.step()\\ (sparse Adam)};
+            \node[box, left=of step] (dp) {5. Densify /\\ Prune (định kỳ)};
+
+            \draw (render) -- (loss);
+            \draw (loss) -- (backward);
+            \draw (backward) |- (step);
+            \draw (step) -- (dp);
+            \draw (dp) |- (render);
+        \end{tikzpicture}
+    \end{center}
+    \begin{itemize}
+        \item Một iteration: \textbf{render} $\to$ \textbf{tính loss} $\to$ \textbf{backward} $\to$ \textbf{optimizer.step()} $\to$ (định kỳ) \textbf{densify/prune} $\to$ lặp lại.
+        \item Vòng lặp này chạy hàng chục nghìn iteration cho đến khi hội tụ.
+    \end{itemize}
+\end{frame}
