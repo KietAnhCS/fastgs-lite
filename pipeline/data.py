@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import zipfile
 
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".JPG", ".PNG")
@@ -120,11 +121,25 @@ def verify_scene(cfg, scene):
     if not expected:
         return None
 
-    actual = {}
-    for split, key in (("train", "Train"), ("test", "Test")):
-        images = os.path.join(root, split, cfg.images_dir)
-        actual[key] = (len([f for f in os.listdir(images) if f.endswith(IMAGE_EXT)])
-                       if os.path.isdir(images) else 0)
+    def _count():
+        counts = {}
+        for split, key in (("train", "Train"), ("test", "Test")):
+            images = os.path.join(root, split, cfg.images_dir)
+            counts[key] = (len([f for f in os.listdir(images) if f.endswith(IMAGE_EXT)])
+                           if os.path.isdir(images) else 0)
+        return counts
+
+    # Ngay sau khi gắn Drive, FUSE đôi khi liệt kê thư mục con chưa đầy đủ trong
+    # vài giây đầu (đặc biệt thư mục test/ nằm sâu hơn) -> thử lại vài lần trước
+    # khi kết luận thiếu ảnh thật, để không báo nhầm [THIẾU] rồi khuyên bật lại
+    # drive_mount=True trong khi nó đã bật sẵn.
+    actual = _count()
+    if getattr(cfg, "drive_mount", False) and any(actual.get(k, 0) != v for k, v in expected.items()):
+        for _ in range(4):
+            time.sleep(2)
+            actual = _count()
+            if all(actual.get(k, 0) == v for k, v in expected.items()):
+                break
 
     ok = True
     for key, want in expected.items():
@@ -134,8 +149,12 @@ def verify_scene(cfg, scene):
             ok = False
         print(f"  [{mark}] {key} images: {got}/{want}")
     if not ok:
-        print("  -> tải thiếu ảnh. Dùng cách gắn Drive (drive_mount=True) "
-              "hoặc tải lại với `run.load_data(cfg, force=True)`.")
+        if getattr(cfg, "drive_mount", False):
+            print("  -> vẫn thiếu sau khi đợi Drive đồng bộ. Kiểm tra lại thư mục trên Drive,"
+                  " hoặc chạy lại run.load_data(cfg) sau vài giây.")
+        else:
+            print("  -> tải thiếu ảnh. Dùng cách gắn Drive (drive_mount=True) "
+                  "hoặc tải lại với `run.load_data(cfg, force=True)`.")
     return ok
 
 

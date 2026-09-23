@@ -83,16 +83,30 @@ def _run(command):
 
 
 def install_dependencies(force=False, flag_path=DEPS_FLAG):
-    """Cài pip package + 3 submodule CUDA. Lần đầu ~3-5 phút, sau đó bỏ qua nhờ cờ."""
+    """Cài pip package + 3 submodule CUDA. Lần đầu ~3-5 phút, sau đó bỏ qua nhờ cờ.
+
+    Cờ chỉ được ghi khi MỌI submodule build thành công -- trước đây cờ ghi vô điều
+    kiện, nên một submodule build lỗi (vd thiếu #include) vẫn để lại /content/.deps_ok,
+    khiến các lần chạy sau "dependencies đã cài" bỏ qua luôn bước cài lại và
+    import ModuleNotFoundError lặp lại vô thời hạn.
+    """
     if os.path.exists(flag_path) and not force:
         print("dependencies đã cài (xoá", flag_path, "để cài lại)")
         return False
     _run([sys.executable, "-m", "pip", "-q", "install", *PIP_PACKAGES])
+    failed = []
     for module in SUBMODULES:
         if os.path.isdir(module):
-            _run([sys.executable, "-m", "pip", "-q", "install", f"./{module}"])
+            rc = _run([sys.executable, "-m", "pip", "-q", "install", f"./{module}"])
+            if rc != 0:
+                failed.append(module)
         else:
             print("bỏ qua submodule không tồn tại:", module)
+    if failed:
+        raise RuntimeError(
+            "build submodule thất bại: " + ", ".join(failed) +
+            f" -- {flag_path} KHÔNG được ghi, chạy lại install_dependencies() sau khi sửa lỗi build"
+            " (xem log !pip install ./submodules/<tên> -v ở trên để đọc lỗi biên dịch thật)")
     os.makedirs(os.path.dirname(flag_path) or ".", exist_ok=True)
     open(flag_path, "w").close()
     return True
