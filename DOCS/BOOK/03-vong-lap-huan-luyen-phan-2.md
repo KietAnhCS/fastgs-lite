@@ -481,6 +481,34 @@ densify_until = max(1, int(round(cfg.densify_until_frac * n_iter)))   # 0.5 * n_
 ```
 Với `iterations = 7000`, `densify_until_iter` thực tế được truyền vào `argv` là **3500**, không phải 15000 — densify dừng ở 50% tiến trình, không phải "không bao giờ chạm mốc dừng". Lý do co giãn: nếu giữ nguyên mốc 15000 gốc (được thiết kế cho lịch 30k) trong một lần train ngắn hơn, `densify_until_iter` có thể vượt quá hẳn tổng số iteration thực tế, khiến densify chạy suốt cả quá trình train mà không có giai đoạn "ổn định lại" cuối cùng.
 
+### 29.1. `get_scaling` sụp đổ shape ngay giữa `densify_and_prune_fastgs` — bug đã sửa
+
+`get_scaling` (`scene/gaussian_model.py:134-140`) không chỉ là `exp(self._scaling)` đơn thuần — nếu `self._filter_3d` đã được set (bởi `compute_3d_filter`, một low-pass filter kiểu Mip-Splatting áp dụng sau khi camera đã biết, xem chương chiếu/rasterizer), nó clamp từ dưới:
+```python
+return self.scaling_activation(torch.maximum(self._scaling, self._filter_3d))
+```
+`torch.maximum` yêu cầu hai tensor **cùng shape theo dimension 0** (số Gaussian hiện tại) — đây chính là điều kiện ngầm mà `densify_and_prune_fastgs` phá vỡ ở giữa lượt gọi của chính nó.
+
+**Trình tự gây crash** (bên trong một lần gọi `densify_and_prune_fastgs`, §29 ở trên):
+1. Dòng 427-428 gọi `get_scaling` lần đầu để tính `clone_qualifiers`/`split_qualifiers` — tại thời điểm này `self._scaling` và `self._filter_3d` còn khớp shape (N cũ), không sao.
+2. `densify_and_clone_fastgs`/`densify_and_split_fastgs` chạy — cả hai gọi `densification_postfix` (nối thêm Gaussian mới vào `self._scaling` qua `cat_tensors_to_optimizer`) và/hoặc `prune_points` (xoá bớt qua `_prune_optimizer`). Cả hai hàm này cập nhật `_xyz, _features_dc, _features_rest, _opacity, _scaling, _rotation` và các bộ đếm phụ trợ (`xyz_gradient_accum`, `denom`, `max_radii2D`, `tmp_radii`) — **nhưng không đụng đến `self._filter_3d`**. Sau bước này `self._scaling.shape[0]` đã đổi (N mới), còn `self._filter_3d.shape[0]` vẫn giữ nguyên N cũ.
+3. Ngay bên trong cùng lần gọi, khi `max_screen_size` được truyền (khối `if max_screen_size:`), dòng `big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent` (`scene/gaussian_model.py:509`) gọi lại `get_scaling` — lần này `torch.maximum(self._scaling, self._filter_3d)` broadcast hai tensor lệch shape (ví dụ N=219014 so với N=218846, đúng cặp số quan sát được lúc chạy thật) → `RuntimeError: The size of tensor a (219014) must match the size of tensor b (218846) at non-singleton dimension 0`.
+4. `compute_3d_filter(scene_obj.getTrainCameras())` — hàm duy nhất đồng bộ lại `self._filter_3d` cho khớp N mới — chỉ được gọi **sau khi** `densify_and_prune_fastgs` đã return xong (`pipeline/trainer.py`, ngay sau lời gọi `densify_and_prune_fastgs`, §29 bảng lịch gọi). Tức là điểm re-sync luôn tới **sau** điểm crash, không bao giờ kịp.
+
+Vì `densify_until_iter` mặc định co giãn `0.5 * iterations` (§29) và `densification_interval=500`, crash này rơi đúng vào **lần densify đầu tiên có `max_screen_size` khác `None`** — tức khi `iteration > opacity_reset_interval` (§30.1) lần đầu trùng với một mốc `% densification_interval == 0`. Với cấu hình chạy 30000 iterations thực tế (scene `HCM0539`, xem §14/chương nhật ký train), điều này xảy ra ở **iteration 999** — vài trăm iteration sau khi `setup_3d_filter` khởi tạo `_filter_3d` lần đầu, đúng lượt densify đầu tiên đã đủ điều kiện tăng N.
+
+**Cách sửa** (`scene/gaussian_model.py:134-141`): thêm điều kiện so khớp shape ngay tại `get_scaling`, không sửa trình tự gọi hàm ở `densify_and_prune_fastgs`/`pipeline/trainer.py`:
+```python
+@property
+def get_scaling(self):
+    if self._filter_3d is not None and self._filter_3d.shape[0] == self._scaling.shape[0]:
+        return self.scaling_activation(torch.maximum(self._scaling, self._filter_3d))
+    return self.scaling_activation(self._scaling)
+```
+Khi shape lệch (đúng khoảng giữa một lần densify/prune), `get_scaling` tạm thời bỏ qua low-pass filter và trả thẳng `exp(self._scaling)` — an toàn về mặt toán học vì filter chỉ là một cận dưới **bổ sung** (chống alias khi zoom), không phải nguồn giá trị scale chính; bỏ qua nó trong một cửa sổ ngắn (tới lần `compute_3d_filter` kế tiếp, luôn chạy ngay sau đó trong cùng iteration) không làm hỏng hình học, chỉ tạm mất tác dụng chống alias trong đúng lệnh gọi `big_points_ws` đó.
+
+**Bài học tổng quát:** đây là lớp lỗi kinh điển khi một tensor phụ trợ per-Gaussian (`_filter_3d`, được tính bởi một hàm riêng, cập nhật không đồng bộ) tồn tại song song với các tensor chính bị thay đổi kích thước bởi densify/prune. Mọi bộ đếm/cache per-Gaussian phải hoặc (a) được cập nhật ngay trong `densification_postfix`/`prune_points` giống như `xyz_gradient_accum`, `denom`, `max_radii2D`, hoặc (b) tự guard kích thước ở nơi tiêu thụ như cách sửa ở trên. `_filter_3d` thuộc nhóm (b) vì nó cần thông tin camera (`compute_3d_filter(cameras)`) chứ không thể suy ra chỉ từ mask densify/prune như nhóm (a) — không thể đơn giản áp dụng lại pattern `_reorder_optimizer` (vốn chỉ hoán vị, không đổi N) hay `prune_points`/`densification_postfix` (biết chính xác mask/tensor mới) cho nó.
+
 ## 30. Ba tầng pruning + `final_prune_fastgs`
 
 | Tầng | Khi nào chạy | Điều kiện xoá | Hằng số | File:line |

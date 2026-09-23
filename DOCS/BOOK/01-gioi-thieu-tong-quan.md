@@ -10,6 +10,12 @@ Bên cạnh cơ chế FastGS gốc (densify/prune riêng theo gradient + điểm
 
 ![Ba lớp kiến trúc: 3DGS gốc → FastGS → cơ chế Faster-GS (sơ đồ minh hoạ, không phải số đo)](fastergs_merge_figures/01_pipeline_layers.png)
 
+### Định vị: 3DGS gốc, FastGS-lite, và Faster-GS
+
+Ba lớp trong sơ đồ trên không phải ba phương pháp cạnh tranh nhau mà là ba tầng **chồng lên nhau**: FastGS-lite là 3DGS gốc cộng thêm cơ chế densify/prune theo **điểm số nhất quán đa góc nhìn** (thay vì chỉ ngưỡng gradient như 3DGS — xem [Chương 3](03-vong-lap-huan-luyen-phan-2.md), [Chương 12](12-adaptive-density-control.md)); Faster-GS đóng góp thêm các đòn bẩy **tối ưu tốc độ/bộ nhớ** — Morton reordering để tăng tính cục bộ bộ nhớ khi rasterize, fused Adam, và 3D anti-aliasing filter — được bật thường trực trong repo này, không phải cờ tuỳ chọn. Nói cách khác: FastGS-lite quyết định **đặt Gaussian ở đâu**, Faster-GS quyết định **truy cập chúng nhanh thế nào**; hai lớp độc lập về mặt thuật toán nên cộng dồn được.
+
+Phép đo thực nghiệm mới nhất minh hoạ cả ba tầng cùng hoạt động trên dữ liệu thật (không phải benchmark chuẩn `tandt_db`): scene **HCM0539** của cuộc thi VAI_NVS_DATA_ROUND2, 30.000 iterations trên Colab T4 — **Score 0,8579**, PSNR 25,27 dB (psnr_norm 0,8423), SSIM 0,866, LPIPS 0,136, hội tụ về 344.484 Gaussian, huấn luyện trong 1776 giây (~29,6 phút), **VRAM đỉnh chỉ 1,92 GB** trên tổng 14,56 GB của T4 — dư địa lớn dù ảnh gốc có độ phân giải cao. Số liệu này, cùng bảng so sánh chi tiết PSNR/SSIM/LPIPS/tốc độ/bộ nhớ giữa 3DGS vanilla, FastGS và Faster-GS, nằm ở chương so sánh riêng: [Chương 17 — So sánh 3DGS, FastGS, Faster-GS](17-so-sanh-3dgs-fastgs-fastergs.md).
+
 ## 1.1 Mục lục tài liệu gốc (README.md)
 
 Tài liệu của fork này. `docs/` và `docs2/` đã được gộp làm một thư mục `DOCS/`.

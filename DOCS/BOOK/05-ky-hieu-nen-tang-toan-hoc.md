@@ -2,20 +2,17 @@
 
 # Chương 5 — Ký hiệu & Nền tảng toán học chung
 
-> Nguồn: `DOCS/Report/00-ky-hieu.md`, phần mở đầu `DOCS/Report/README.md`
+> Ký hiệu trong chương này được rút ra trực tiếp từ code (`scene/gaussian_model.py`, `gaussian_renderer/`,
+> `submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/`), dùng chung cho các chương 6–13.
 
-Từ chương này trở đi, sách chuyển sang bộ tài liệu "Report" — trình bày lại toàn bộ pipeline 3D Gaussian Splatting theo đúng thứ tự các khối trong sơ đồ, đối chiếu công thức trực tiếp với code trong repo (không lấy số liệu từ paper upstream). Mỗi chương (6–13) tương ứng một khối trong sơ đồ pipeline bên dưới, và có phần kiểm định số kèm theo (chạy trên cùng một "cảnh đồ chơi").
+Từ chương này trở đi, sách trình bày lại toàn bộ pipeline 3D Gaussian Splatting theo đúng thứ tự các khối trong sơ đồ, đối chiếu công thức trực tiếp với code trong repo (không lấy số liệu từ paper upstream). Mỗi chương (6–13) tương ứng một khối trong sơ đồ pipeline bên dưới, và có phần kiểm định số kèm theo (chạy trên cùng một "cảnh đồ chơi").
 
-## 5.1 Sơ đồ pipeline & mục lục phần Report
+## 5.1 Sơ đồ pipeline & mục lục các chương tiếp theo
 
-> Báo cáo này đi theo **đúng thứ tự các khối trong sơ đồ pipeline** của 3D Gaussian Splatting, và ở mỗi khối chỉ ra
+> Các chương sau đi theo **đúng thứ tự các khối trong sơ đồ pipeline** của 3D Gaussian Splatting, và ở mỗi khối chỉ ra
 > phần nào là 3DGS gốc (giữ nguyên) và phần nào là FastGS-lite (thay đổi). Mọi công thức đối chiếu với code trong repo,
-> không lấy con số nào từ paper upstream.
->
-> Nguồn tham khảo (cùng thư mục `DOCS/`):
-> - [`fastgs-acceleration-method.md`](../fastgs-acceleration-method.md) — tài liệu gốc, đầy đủ nhất (Phần I–IX)
-> - [`3.md`](../3.md) — ví dụ số end-to-end cho Adaptive Density Control (chương 7)
-> - [`box.md`](../box.md), [`box2.md`](../box2.md) — bài tập và ba công thức đếm tile cho compact box (chương 3)
+> không lấy con số nào từ paper upstream. So sánh chất lượng đo được với 3DGS/FasterGS: xem
+> [Chương 17](17-so-sanh-3dgs-fastgs-fastergs.md).
 
 ![pipeline](../../pipe.png)
 
@@ -36,15 +33,15 @@ Mũi tên đen = **Operation Flow** (chương 1 → 5). Mũi tên xanh = **Gradi
 
 | Chương | Khối trong sơ đồ | File | FastGS thay đổi gì |
 |---|---|---|---|
-| 0 | Ký hiệu chung | [00-ky-hieu.md](00-ky-hieu.md) | — |
-| 1 | SfM Points → Initialization | [01-initialization.md](01-initialization.md) | giữ nguyên |
-| 2 | 3D Gaussians | [02-3d-gaussians.md](02-3d-gaussians.md) | giữ nguyên |
-| 3 | Camera + Projection | [03-projection.md](03-projection.md) | **compact box, lọc tile theo ellipse** (giảm $K$) |
-| 4 | Differentiable Tile Rasterizer | [04-rasterizer.md](04-rasterizer.md) | giữ nguyên toán; đầu vào nhỏ hơn |
-| 5 | Image → Loss & Metrics | [05-image-loss.md](05-image-loss.md) | giữ nguyên loss; ghi chú metrics |
-| 6 | Gradient Flow | [06-gradient-flow.md](06-gradient-flow.md) | **gradient trị tuyệt đối, Adam thưa, lr SH** |
-| 7 | Adaptive Density Control | [07-adaptive-density-control.md](07-adaptive-density-control.md) | **Importance / Pruning score, densify AND, prune multinomial, final prune** (giảm $N$) |
-| 8 | Tổng hợp: mô hình chi phí | [08-tong-hop.md](08-tong-hop.md) | ba tỉ số nhân nhau |
+| 5 | Ký hiệu chung | (chương này) | — |
+| 6 | SfM Points → Initialization | [06-initialization.md](06-initialization.md) | giữ nguyên |
+| 7 | 3D Gaussians | [07-3d-gaussians.md](07-3d-gaussians.md) | giữ nguyên |
+| 8 | Camera + Projection | [08-projection-compact-box.md](08-projection-compact-box.md) | **compact box, lọc tile theo ellipse** (giảm $K$) |
+| 9 | Differentiable Tile Rasterizer | [09-differentiable-tile-rasterizer.md](09-differentiable-tile-rasterizer.md) | giữ nguyên toán; đầu vào nhỏ hơn |
+| 10 | Image → Loss & Metrics | [10-anh-den-loss-metrics.md](10-anh-den-loss-metrics.md) | giữ nguyên loss; ghi chú metrics |
+| 11 | Gradient Flow | [11-gradient-flow-backprop.md](11-gradient-flow-backprop.md) | **gradient trị tuyệt đối, Adam thưa, lr SH** |
+| 12 | Adaptive Density Control | [12-adaptive-density-control.md](12-adaptive-density-control.md) | **Importance / Pruning score, densify AND, prune multinomial, final prune** (giảm $N$) |
+| 13 | Tổng hợp: mô hình chi phí | [13-tong-hop-chi-phi-fastgs.md](13-tong-hop-chi-phi-fastgs.md) | ba tỉ số nhân nhau |
 
 ## Kết luận trước khi đọc
 

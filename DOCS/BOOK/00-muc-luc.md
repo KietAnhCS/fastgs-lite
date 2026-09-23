@@ -28,6 +28,7 @@ Công thức toán (LaTeX), bảng, code block, sơ đồ Mermaid và ảnh minh
 | 14 | [Triển khai Thực tế: Colab T4 & Nhật ký Huấn luyện](14-trien-khai-colab-nhat-ky-train.md) | Preset A trên T4, chống tràn RAM, roadmap CUDA, nhật ký các phiên train thật |
 | 15 | [Phụ lục: Kiểm định số chéo, Dữ liệu & Tài nguyên](15-phu-luc-kiem-dinh-tai-nguyen.md) | Tổng hợp 8 bài test số, `history.csv`/`leaderboard.csv`, công cụ `test.html`, danh mục script |
 | 16 | [Bài toán lớn: Từ COLMAP đến `.ply` render 3D](16-bai-toan-lon-de-bai.md) | Một đề bài duy nhất gộp chương 6–13 (input COLMAP thật) + [lời giải 8 phần, ~30 000 dòng](16-loi-giai/00-muc-luc-loi-giai.md), tính tay đến file `.ply` render được |
+| 17 | [So sánh chất lượng: 3DGS vanilla vs FastGS vs FasterGS](17-so-sanh-3dgs-fastgs-fastergs.md) | Số liệu thật trên scene cuộc thi HCM0539 (30 000 vòng): Score 0.8579, PSNR 25.27, SSIM 0.866, LPIPS 0.136, 344K Gaussian, VRAM đỉnh 1.92 GB |
 
 ## Nguồn tài liệu gốc
 
@@ -79,7 +80,7 @@ Bên cạnh FastGS (đóng góp densify/prune chính, xem Chương 12), repo gi�
 
 ![Số lượng cơ chế luôn bật trước/sau đợt merge (đếm số lượng kỹ thuật, không phải benchmark hiệu năng)](fastergs_merge_figures/00_techniques_overview.png)
 
-Chưa có số liệu PSNR/SSIM/LPIPS/VRAM/thời gian thật cho các cơ chế mới này (cần build lại `diff-gaussian-rasterization_fastgs` trên máy có CUDA và chạy huấn luyện thật để đo).
+**Cập nhật:** đã có số liệu thật (scene cuộc thi HCM0539, 30 000 vòng, Colab T4) — Score 0.8579, PSNR 25.27, SSIM 0.866, LPIPS 0.136, 344K Gaussian, VRAM đỉnh 1.92 GB/14.56 GB. Chi tiết và so sánh với 3DGS vanilla ở [Chương 17](17-so-sanh-3dgs-fastgs-fastergs.md); nhật ký phiên train ở [Chương 14](14-trien-khai-colab-nhat-ky-train.md).
 
 ---
 
