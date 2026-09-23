@@ -51,7 +51,7 @@ def smoke_test(cfg, scene, iterations=None):
     trial = dataclasses.replace(cfg,
                                 output_root=os.path.join(cfg.output_root, "_smoke"),
                                 score_every=max(50, (iterations or cfg.smoke_iterations) // 2),
-                                eval_views=min(cfg.eval_views, 3))
+                                eval_views=3 if cfg.eval_views is None else min(cfg.eval_views, 3))
     trial._scene_paths = getattr(cfg, "_scene_paths", {})
     result, _, _ = train_scene(trial, scene, iterations or cfg.smoke_iterations, tag="smoke")
     gc.collect()

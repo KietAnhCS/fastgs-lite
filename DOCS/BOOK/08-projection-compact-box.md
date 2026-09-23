@@ -1429,4 +1429,48 @@ hàng 6:  ··  ··  ██  ██  ██
 
 ---
 
+## Cập nhật: 3D anti-aliasing filter (tuỳ chọn)
+
+### Vấn đề aliasing trong 3DGS gốc
+
+3DGS tối ưu mỗi Gaussian (vị trí, scale, rotation, opacity) chỉ để khớp ảnh training ở **đúng** độ phân giải và khoảng cách camera lúc train. Không có ràng buộc nào ngăn scale $s_i$ (công thức (6), $\Sigma=RSS^TR^T$, đã nêu ở chương nền tảng) co lại nhỏ hơn 1 pixel màn hình khi chiếu. Hậu quả: nếu render ở độ phân giải khác (cao hơn) hoặc camera lùi xa hơn lúc train, footprint 2D của Gaussian đó rơi lọt giữa các pixel, bị lấy mẫu (sample) không đều theo từng frame — sinh ra nhấp nháy (aliasing/moiré), vì rasterizer chỉ evaluate Gaussian tại tâm pixel chứ không tích phân đúng trên diện tích pixel.
+
+Đây chính là vi phạm định lý lấy mẫu Nyquist ở mức tín hiệu không gian — vấn đề mà Mip-Splatting (Yu et al., CVPR 2024) chỉ ra và giải quyết bằng cách chặn dưới kích thước Gaussian.
+
+### Công thức filter (bản "optimized formulation" đã cài, `scene/gaussian_model.py::compute_3d_filter`/`setup_3d_filter`)
+
+Với mỗi camera train $c$ có tiêu cự $f_x^{(c)}, f_y^{(c)}$, định nghĩa hệ số khoảng cách-tới-filter:
+
+$$d_{\text{filter}} = \frac{\sqrt{\text{filter\_variance}}}{\max_c \max\!\big(f_x^{(c)}, f_y^{(c)}\big)}$$
+
+(chọn theo camera có tiêu cự lớn nhất — camera "khó" nhất, đòi hỏi Gaussian phải đủ lớn ngay cả khi nhìn cận/zoom nhất).
+
+Với mỗi Gaussian $i$ và mỗi camera $c$ mà nó nằm trong tầm nhìn (test near/far-plane + góc nhìn theo FoV, cùng logic frustum đã dùng ở carving — xem chương 6), gọi $z_i^{(c)}$ là độ sâu của nó trong không gian camera $c$:
+
+$$f_i = \min_{c \,:\, i \,\in\, \text{frustum}(c)} \; d_{\text{filter}} \cdot z_i^{(c)}$$
+
+Giá trị này được dùng làm **cận dưới trong log-space** cho scale đã học:
+
+$$s_i^{\text{final}} = \max\!\big(s_i^{\text{raw}},\, f_i\big)$$
+
+(so sánh trực tiếp trong log-space vì `self._scaling` lưu log-scale).
+
+Diễn giải trực quan: $f_i$ là kích thước **thế giới thực** tối thiểu để khi Gaussian $i$ được chiếu qua bất kỳ camera train nào (không chỉ camera lúc nó được tối ưu riêng lẻ), footprint màn hình của nó không nhỏ hơn khoảng $\sqrt{\text{filter\_variance}}$ pixel (mặc định `filter_variance=0.2` → khoảng $0.45$ pixel).
+
+### Vì sao KHÔNG phải là thay đổi cho compact-box/K
+
+Compact box + lọc ellipse (`duplicateToTilesTouched`, chủ đề chính của chương này) quyết định Gaussian **chạm tile nào** ($K$) **dựa trên** kích thước đã có sẵn của nó — nó không đổi kích thước Gaussian, chỉ tính rẻ hơn xem nó phủ tile nào.
+
+Filter 3D ở đây thì ngược lại: nó thay đổi chính scale $s_i$ — đầu vào của công thức chiếu covariance $\Sigma'=JW\Sigma W^TJ^T$ — **trước khi** covariance/$K$ được tính. Hai cơ chế nằm ở hai tầng khác nhau của pipeline, độc lập và có thể cùng bật.
+
+Hệ quả phụ cần lưu ý: khi $s_i$ bị kéo lên do clamp, $K$ của Gaussian đó cũng tăng nhẹ theo — bật filter này có thể làm tăng nhẹ chi phí $bNK$ ở những Gaussian bị ảnh hưởng, đổi lấy chất lượng hình ảnh khi render đa độ phân giải/đa khoảng cách. Đây là trade-off, không phải "miễn phí".
+
+### Trạng thái tích hợp
+
+Cài trong `scene/gaussian_model.py` (`setup_3d_filter`, `compute_3d_filter`, property `get_scaling` áp clamp khi `self._filter_3d is not None`). **Luôn bật** (không còn cờ `use_3d_filter`) — `opt.filter_3d_variance` (mặc định `0.2`) là tham số duy nhất còn lại. Cần recompute filter sau mỗi lần số lượng Gaussian đổi (densify/prune) vì shape tensor đổi — đã wiring trong `train.py`/`pipeline/trainer.py`.
+
+Chưa test trên GPU thật (viết trong môi trường không có torch/CUDA) — cần verify trên Colab: render cùng scene ở vài độ phân giải/khoảng cách khác nhau, bật/tắt filter, so sánh mức nhấp nháy và PSNR.
+
+---
+
 [← Chương 7](07-3d-gaussians.md) | [Mục lục](00-muc-luc.md) | [Chương 9 →](09-differentiable-tile-rasterizer.md)

@@ -1,0 +1,71 @@
+% !TeX program = xelatex
+% Compile với XeLaTeX (Overleaf: Menu > Compiler > XeLaTeX)
+% BẢN RÚT GỌN 45 PHÚT (41 slide) — copy & tinh chỉnh từ bộ slide gốc 190 slide trong ../ (KHÔNG xoá bản gốc)
+\documentclass[aspectratio=169,9pt]{beamer}
+
+\usepackage{fontspec}
+\setmainfont{Noto Serif}
+\setsansfont{Noto Sans}
+\usepackage{polyglossia}
+\setmainlanguage{vietnamese}
+
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes,fit}
+\usepackage{caption}
+\captionsetup{font=scriptsize,labelfont=bf}
+\usepackage{etoolbox}
+\AtBeginEnvironment{itemize}{\setlength{\itemsep}{1pt}\setlength{\parskip}{0pt}\setlength{\topsep}{1pt}}
+\AtBeginEnvironment{enumerate}{\setlength{\itemsep}{1pt}\setlength{\parskip}{0pt}\setlength{\topsep}{1pt}}
+\setlength{\abovedisplayskip}{4pt}
+\setlength{\belowdisplayskip}{4pt}
+\setlength{\abovedisplayshortskip}{2pt}
+\setlength{\belowdisplayshortskip}{2pt}
+
+\usetheme{Madrid}
+\usecolortheme{seahorse}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+\setbeamerfont{footnote}{size=\tiny}
+\setbeamerfont{section in toc}{size=\tiny}
+\setbeamerfont{subsection in toc}{size=\tiny}
+
+\title[FastGS-lite: 3DGS \& Tăng tốc (45 phút)]{Quy trình Render 3D Gaussian Splatting\\và Cải tiến FastGS (FastGS-lite)}
+\subtitle{Bản rút gọn 45 phút — Từ nền tảng đến Adaptive Density Control}
+\author{Digital Twin GS}
+\date{\today}
+
+% Thư mục ảnh vẫn trỏ về figures/ gốc (Slides67/figures), vì file này nằm trong Slides67/Slides45min/
+\graphicspath{{../figures/}}
+
+\begin{document}
+
+% Lưu ý: KHÔNG đặt \titlepage ở đây — Slide 1 (trang bìa) đã nằm sẵn
+% trong part45_01.tex để tránh trùng lặp trang bìa.
+
+% ===================== 41 SLIDE RÚT GỌN, CHIA 10 FILE CHO 10 BOT =====================
+% part45_01.tex : Slide 1-4   (Bìa/agenda, Động lực, 3D Gaussian là gì)
+% part45_02.tex : Slide 5-8   (Hiệp phương sai, Màu SH, Pipeline render, EWA splatting)
+% part45_03.tex : Slide 9-12  (Compact Box, Alpha blending, Tổng kết render, Loss)
+% part45_04.tex : Slide 13-16 (Gradient biên, Tổng kết training loop, ADC tổng quan, Tích luỹ gradient)
+% part45_05.tex : Slide 17-20 (Gradient cancellation, Clone, Split, Prune multi-view)
+% part45_06.tex : Slide 21-24 (Reset opacity, Importance counts, Importance score, Sơ đồ densify)
+% part45_07.tex : Slide 25-28 (Top-k vs Multinomial, Toy model, So sánh ADC, Kết quả 3 kịch bản)
+% part45_08.tex : Slide 29-32 (Tổng kết 5 cải tiến, Vì sao 3DGS chậm, 3 đòn bẩy, Thác nước)
+% part45_09.tex : Slide 33-37 (Tổng kết 3DGS→FastGS, Colab T4, Bảng 1, Bảng 3, Giới hạn phép đo)
+% part45_10.tex : Slide 38-41 (RAM vs VRAM, Tổng kết pipeline, Tổng kết cải tiến, Cảm ơn/Q&A)
+
+\input{part45_01}
+\input{part45_02}
+\input{part45_03}
+\input{part45_04}
+\input{part45_05}
+\input{part45_06}
+\input{part45_07}
+\input{part45_08}
+\input{part45_09}
+\input{part45_10}
+
+\end{document}

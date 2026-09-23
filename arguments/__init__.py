@@ -55,6 +55,12 @@ class ModelParams(ParamGroup):
         self.data_device = "cuda"
         self.eval = False
         self.llffhold = 8
+
+        # Faster-GS-style random initialization fallback (Group A of the integration plan).
+        # Defaults reproduce prior behavior exactly (use COLMAP points3D when present).
+        self.random_init_force = False
+        self.random_init_n_points = 100_000
+        self.random_init_carving = True
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -96,6 +102,19 @@ class OptimizationParams(ParamGroup):
         self.mult = 0.5      # multiplier for the compact box to control the tile number of each splat
 
         self.random_background = False
+
+        # Faster-GS-derived mechanisms — luôn bật, không còn là cờ tuỳ chọn.
+        self.morton_reorder_interval = 5000  # reorder Gaussians theo Morton code mỗi N iter
+        self.filter_3d_variance = 0.2        # tham số cho 3D anti-aliasing filter (Mip-Splatting), luôn bật
+
+        # MCMC densification (3DGS-MCMC) — CHỦ ĐÍCH giữ không dùng trong control flow mặc định:
+        # nó loại trừ lẫn nhau về thuật toán với densify_and_prune_fastgs (đóng góp chính của FastGS),
+        # không thể "luôn bật" cả hai cùng lúc. Các hằng số dưới đây là tham số dự phòng cho hàm
+        # mcmc_* vẫn còn trong scene/gaussian_model.py, chưa được gọi ở đâu theo mặc định.
+        self.mcmc_cap_max = 1_000_000
+        self.mcmc_min_opacity = 0.005
+        self.mcmc_noise_lr = 5e5
+
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

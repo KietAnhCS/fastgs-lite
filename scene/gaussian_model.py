@@ -18,8 +18,38 @@ from utils.system_utils import mkdir_p
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
-from utils.graphics_utils import BasicPointCloud
+from utils.graphics_utils import BasicPointCloud, fov2focal
 from utils.general_utils import strip_symmetric, build_scaling_rotation
+
+# --- MCMC densification (3DGS-MCMC) support ---------------------------------
+# Ported from the closed-form relocation formula (Eq. 9 of the 3DGS-MCMC paper),
+# as implemented in faster-gaussian-splatting/FasterGSCudaBackend/.../kernels_mcmc.cuh.
+# Kept as module-level helpers (not GaussianModel state) so this stays a pure
+# additive diff on top of the existing class.
+_MCMC_MAX_N_SAMPLES = 51
+_mcmc_cum_coeff_cache = {}
+
+def _mcmc_get_cum_coefficients(device):
+    """Cache of cumulative binomial coefficients used by the relocation formula.
+
+    cum[n, k] = sum_{n'=k}^{n} C(n', k) * (-1)^k / sqrt(k + 1), for k <= n' (else 0).
+    """
+    key = str(device)
+    cached = _mcmc_cum_coeff_cache.get(key)
+    if cached is None:
+        n_max = _MCMC_MAX_N_SAMPLES
+        coeff = np.zeros((n_max, n_max), dtype=np.float64)
+        for n in range(n_max):
+            binom = 1.0
+            sign = 1.0
+            for k in range(n + 1):
+                coeff[n, k] = binom * sign / np.sqrt(k + 1)
+                binom *= (n - k) / (k + 1)
+                sign = -sign
+        cached = torch.tensor(np.cumsum(coeff, axis=0), dtype=torch.float32, device=device)
+        _mcmc_cum_coeff_cache[key] = cached
+    return cached
+
 
 class GaussianModel:
 
@@ -55,6 +85,9 @@ class GaussianModel:
         self.optimizer = None
         self.shoptimizer = None
         self.spatial_lr_scale = 0
+        # Mip-Splatting-style 3D anti-aliasing filter — luôn bật.
+        # See faster-gaussian-splatting/Model.py:150-201 and filter3d.cu for the reference formulation.
+        self._filter_3d = None
         self.setup_functions()
 
     def capture(self):
@@ -99,6 +132,10 @@ class GaussianModel:
 
     @property
     def get_scaling(self):
+        if self._filter_3d is not None:
+            # Clamp the raw (log-space) scale from below so screen-space footprint never
+            # drops under one pixel worth of extent -> removes aliasing when zooming/downsampling.
+            return self.scaling_activation(torch.maximum(self._scaling, self._filter_3d))
         return self.scaling_activation(self._scaling)
     
     @property
@@ -173,8 +210,10 @@ class GaussianModel:
         ]
         sh_l = [{'params': [self._features_rest], 'lr': training_args.highfeature_lr / 20.0, "name": "f_rest"}]
 
-        self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
-        self.shoptimizer = torch.optim.Adam(sh_l, lr=0.0, eps=1e-15)
+        # Fused-CUDA Adam (Faster-GS-inspired), luôn dùng: xem utils/fused_adam.py.
+        from utils.fused_adam import FusedAdam
+        self.optimizer = FusedAdam(l, lr=0.0, eps=1e-15)
+        self.shoptimizer = FusedAdam(sh_l, lr=0.0, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
                                                     max_steps=training_args.position_lr_max_steps)
@@ -499,7 +538,290 @@ class GaussianModel:
         """Final-stage pruning: remove Gaussians based on opacity and multi-view consistency.
         In the final stage we remove Gaussians that have low opacity or that are flagged by
         our multi-view reconstruction consistency metric (provided as `pruning_score`)."""
-        prune_mask = (self.get_opacity < min_opacity).squeeze() 
+        prune_mask = (self.get_opacity < min_opacity).squeeze()
         scores_mask = pruning_score > 0.9
         final_prune = torch.logical_or(prune_mask, scores_mask)
         self.prune_points(final_prune)
+
+    def _reorder_optimizer(self, order):
+        """Applies `order` (a permutation of indices) to every optimizable tensor and its
+        Adam state, following the same pattern as `_prune_optimizer`/`cat_tensors_to_optimizer`."""
+        optimizable_tensors = {}
+        optimizers = [self.optimizer]
+        if self.shoptimizer: optimizers.append(self.shoptimizer)
+
+        for opt in optimizers:
+            for group in opt.param_groups:
+                stored_state = opt.state.get(group['params'][0], None)
+                if stored_state is not None:
+                    stored_state["exp_avg"] = stored_state["exp_avg"][order]
+                    stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][order]
+
+                    del opt.state[group['params'][0]]
+                    group["params"][0] = nn.Parameter(group["params"][0][order].requires_grad_(True))
+                    opt.state[group['params'][0]] = stored_state
+                else:
+                    group["params"][0] = nn.Parameter(group["params"][0][order].requires_grad_(True))
+
+                optimizable_tensors[group["name"]] = group["params"][0]
+        return optimizable_tensors
+
+    def apply_morton_ordering(self):
+        """Reorders all Gaussians (and their optimizer state) by 3D Morton code.
+
+        Purely a memory-locality optimization (nearby Gaussians end up nearby in memory,
+        which the rasterizer's tile-based sort/blend benefits from) — does not change any
+        rendering math, densification/pruning logic, or the number of Gaussians. Safe to
+        call at any point during training; opt-in via `morton_reorder_interval` (default 0
+        = never called).
+        """
+        with torch.no_grad():
+            xyz = self._xyz.detach()
+            mins = xyz.min(dim=0).values
+            maxs = xyz.max(dim=0).values
+            span = (maxs - mins).clamp_min(1e-8)
+            n_bits = 10  # 3 * 10 = 30-bit code, fits comfortably in int64
+            scale = float((1 << n_bits) - 1)
+            quantized = ((xyz - mins) / span * scale).clamp(0, scale).long()
+
+            def spread_bits(v):
+                # Interleave `n_bits` bits of v with two zero bits after each bit (part1by2).
+                v = v & ((1 << n_bits) - 1)
+                v = (v | (v << 16)) & 0x030000FF
+                v = (v | (v << 8)) & 0x0300F00F
+                v = (v | (v << 4)) & 0x030C30C3
+                v = (v | (v << 2)) & 0x09249249
+                return v
+
+            code = (spread_bits(quantized[:, 0])
+                    | (spread_bits(quantized[:, 1]) << 1)
+                    | (spread_bits(quantized[:, 2]) << 2))
+            order = torch.argsort(code)
+
+            optimizable_tensors = self._reorder_optimizer(order)
+            self._xyz = optimizable_tensors["xyz"]
+            self._features_dc = optimizable_tensors["f_dc"]
+            self._features_rest = optimizable_tensors["f_rest"]
+            self._opacity = optimizable_tensors["opacity"]
+            self._scaling = optimizable_tensors["scaling"]
+            self._rotation = optimizable_tensors["rotation"]
+
+            self.max_radii2D = self.max_radii2D[order]
+            self.xyz_gradient_accum = self.xyz_gradient_accum[order]
+            self.xyz_gradient_accum_abs = self.xyz_gradient_accum_abs[order]
+            self.denom = self.denom[order]
+            if getattr(self, "tmp_radii", None) is not None:
+                self.tmp_radii = self.tmp_radii[order]
+            if self._filter_3d is not None:
+                self._filter_3d = self._filter_3d[order]
+
+    def setup_3d_filter(self, cameras, filter_variance=0.2):
+        """Enables the Mip-Splatting-style 3D anti-aliasing filter and computes it for the
+        first time. `cameras` is any iterable of `scene.cameras.Camera` (e.g.
+        `scene.getTrainCameras()`). Ported from faster-gaussian-splatting/Model.py:150-201
+        ("optimized formulation": clamps scale directly in log-space, no opacity correction
+        needed) — see that file for the reference derivation."""
+        max_focal = 1e-12
+        for cam in cameras:
+            max_focal = max(max_focal, fov2focal(cam.FoVx, cam.image_width), fov2focal(cam.FoVy, cam.image_height))
+        self.distance2filter = (filter_variance ** 0.5) / max_focal
+        self.compute_3d_filter(cameras)
+
+    def compute_3d_filter(self, cameras, clipping_tolerance=0.15):
+        """Recomputes the 3D filter buffer; must be re-run whenever the number of Gaussians
+        changes (after densify/prune) or after `setup_3d_filter`. Filter is always active
+        (see `get_scaling`), gated only by `self._filter_3d is not None`."""
+        means = self._xyz.detach()
+        n_points = means.shape[0]
+        ones = torch.ones((n_points, 1), device=means.device, dtype=means.dtype)
+        homogeneous = torch.cat([means, ones], dim=1)
+
+        filter_3d = torch.full((n_points, 1), fill_value=float("inf"), device=means.device, dtype=torch.float32)
+        visibility_mask = torch.zeros((n_points, 1), device=means.device, dtype=torch.bool)
+
+        for cam in cameras:
+            p_view = homogeneous @ cam.world_view_transform  # row-vector convention (see scene/cameras.py)
+            z = p_view[:, 2:3]
+            x = p_view[:, 0:1]
+            y = p_view[:, 1:2]
+
+            width, height = float(cam.image_width), float(cam.image_height)
+            focal_x = fov2focal(cam.FoVx, width)
+            focal_y = fov2focal(cam.FoVy, height)
+            bounds_factor = clipping_tolerance + 0.5
+            max_x_shifted = bounds_factor * width
+            max_y_shifted = bounds_factor * height
+            # principal point assumed centered -> principal_offset terms cancel out
+            left, right = -max_x_shifted / focal_x, max_x_shifted / focal_x
+            top, bottom = -max_y_shifted / focal_y, max_y_shifted / focal_y
+
+            in_view = (z >= cam.znear) & (z <= cam.zfar)
+            in_view &= (x >= left * z) & (x <= right * z)
+            in_view &= (y >= top * z) & (y <= bottom * z)
+
+            candidate = self.distance2filter * z
+            update = in_view & (candidate < filter_3d)
+            filter_3d = torch.where(update, candidate, filter_3d)
+            visibility_mask |= in_view
+
+        if visibility_mask.any():
+            filter_3d_max = filter_3d[visibility_mask].max()
+            filter_3d = torch.where(visibility_mask, filter_3d, filter_3d_max)
+        else:
+            filter_3d = torch.zeros_like(filter_3d)
+
+        # store in log-space so it can be used directly as a lower clamp on `self._scaling`
+        self._filter_3d = filter_3d.clamp_min(1e-12).log()
+
+    # --- MCMC densification (3DGS-MCMC), alternative densification mode --------
+    # Not wired into any training control-flow: densify_and_prune_fastgs/
+    # final_prune_fastgs are the only densification path used. Kept here as a
+    # ready-to-use alternative for manual benchmarking (call directly instead
+    # of densify_and_prune_fastgs if you want to compare).
+
+    def _mcmc_reset_state(self, indices):
+        """Zero the Adam moment estimates at `indices` (both optimizer and shoptimizer)."""
+        optimizers = [self.optimizer]
+        if self.shoptimizer:
+            optimizers.append(self.shoptimizer)
+        for opt in optimizers:
+            for group in opt.param_groups:
+                stored_state = opt.state.get(group["params"][0], None)
+                if stored_state is not None:
+                    stored_state["exp_avg"][indices] = 0
+                    stored_state["exp_avg_sq"][indices] = 0
+
+    def _mcmc_relocate(self, old_opacity, old_scale, n_samples):
+        """Closed-form relocation (3DGS-MCMC Eq. 9): redistribute one Gaussian's
+        opacity/scale across `n_samples` copies of itself so the sum stays consistent.
+
+        old_opacity: (M, 1) activated opacity in (0, 1).
+        old_scale:   (M, 3) activated scale.
+        n_samples:   (M,) int64, number of copies each sampled Gaussian ended up with (>=1).
+        Returns (new_opacity (M, 1), new_scale (M, 3)), both activated.
+        """
+        n_samples = n_samples.clamp(min=1, max=_MCMC_MAX_N_SAMPLES)
+        old_opacity_flat = old_opacity.flatten()
+        new_opacity = 1.0 - (1.0 - old_opacity_flat).pow(1.0 / n_samples.float())
+
+        k_idx = torch.arange(_MCMC_MAX_N_SAMPLES, device=old_opacity.device, dtype=torch.float32)
+        power = new_opacity.unsqueeze(1).pow(k_idx.unsqueeze(0) + 1.0)  # (M, max_n) = new_opacity^(k+1)
+
+        cum_coeff = _mcmc_get_cum_coefficients(old_opacity.device)  # (max_n, max_n)
+        gathered = cum_coeff[(n_samples - 1).long()]  # (M, max_n), zero for k > n_samples-1
+        denominator = (gathered * power).sum(dim=1).clamp_min(1e-12)
+
+        scaling_factor = old_opacity_flat / denominator
+        new_scale = scaling_factor.unsqueeze(1) * old_scale
+        return new_opacity.unsqueeze(1), new_scale
+
+    @torch.no_grad()
+    def mcmc_densification(self, min_opacity, cap_max):
+        """3DGS-MCMC densification: relocate dead Gaussians by resampling from alive
+        ones (weighted by opacity), then grow the population up to `cap_max`.
+        This is an alternative to densify_and_prune_fastgs. Not called anywhere in the
+        default training loop; invoke it manually if you want to benchmark it.
+        """
+        eps = torch.finfo(torch.float32).eps
+        dead_mask = (self.get_opacity.flatten() <= min_opacity) | (self._rotation.pow(2).sum(dim=1) < 1e-8)
+        n_dead = int(dead_mask.sum().item())
+        if n_dead > 0:
+            dead_indices = torch.where(dead_mask)[0]
+            alive_indices = torch.where(~dead_mask)[0]
+            opacities = self.get_opacity.flatten()
+            sampled_local = torch.multinomial(opacities[alive_indices], n_dead, replacement=True)
+            sampled_indices = alive_indices[sampled_local]
+
+            _, inverse, counts_per_unique = sampled_indices.unique(sorted=False, return_inverse=True, return_counts=True)
+            counts = counts_per_unique[inverse] + 1  # +1 for the original Gaussian being kept alive too
+
+            new_opacity, new_scale = self._mcmc_relocate(
+                opacities[sampled_indices].unsqueeze(1),
+                self.get_scaling[sampled_indices],
+                counts,
+            )
+            new_opacity_raw = self.inverse_opacity_activation(new_opacity.clamp(min_opacity, 1.0 - eps))
+            new_scale_raw = self.scaling_inverse_activation(new_scale.clamp_min(1e-8))
+
+            self._opacity[sampled_indices] = new_opacity_raw
+            self._scaling[sampled_indices] = new_scale_raw
+
+            self._xyz[dead_indices] = self._xyz[sampled_indices]
+            self._features_dc[dead_indices] = self._features_dc[sampled_indices]
+            self._features_rest[dead_indices] = self._features_rest[sampled_indices]
+            self._opacity[dead_indices] = new_opacity_raw
+            self._scaling[dead_indices] = new_scale_raw
+            self._rotation[dead_indices] = self._rotation[sampled_indices]
+
+            self._mcmc_reset_state(sampled_indices)
+
+        current_n_points = self.get_xyz.shape[0]
+        n_target = min(cap_max, int(1.05 * current_n_points))
+        n_added = max(0, n_target - current_n_points)
+        if n_added > 0:
+            opacities = self.get_opacity.flatten()
+            sampled_indices = torch.multinomial(opacities, n_added, replacement=True)
+
+            _, inverse, counts_per_unique = sampled_indices.unique(sorted=False, return_inverse=True, return_counts=True)
+            counts = counts_per_unique[inverse] + 1
+
+            new_opacity, new_scale = self._mcmc_relocate(
+                opacities[sampled_indices].unsqueeze(1),
+                self.get_scaling[sampled_indices],
+                counts,
+            )
+            new_opacity_raw = self.inverse_opacity_activation(new_opacity.clamp(min_opacity, 1.0 - eps))
+            new_scale_raw = self.scaling_inverse_activation(new_scale.clamp_min(1e-8))
+
+            self._opacity[sampled_indices] = new_opacity_raw
+            self._scaling[sampled_indices] = new_scale_raw
+
+            new_xyz = self._xyz[sampled_indices].clone()
+            new_features_dc = self._features_dc[sampled_indices].clone()
+            new_features_rest = self._features_rest[sampled_indices].clone()
+            new_rotation = self._rotation[sampled_indices].clone()
+
+            optimizable_tensors = self.cat_tensors_to_optimizer({
+                "xyz": new_xyz,
+                "f_dc": new_features_dc,
+                "f_rest": new_features_rest,
+                "opacity": new_opacity_raw.clone(),
+                "scaling": new_scale_raw.clone(),
+                "rotation": new_rotation,
+            })
+            self._xyz = optimizable_tensors["xyz"]
+            self._features_dc = optimizable_tensors["f_dc"]
+            self._features_rest = optimizable_tensors["f_rest"]
+            self._opacity = optimizable_tensors["opacity"]
+            self._scaling = optimizable_tensors["scaling"]
+            self._rotation = optimizable_tensors["rotation"]
+
+            self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+            self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+            self.xyz_gradient_accum_abs = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+            self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+            if getattr(self, "tmp_radii", None) is not None:
+                self.tmp_radii = torch.cat((self.tmp_radii, torch.zeros(n_added, device="cuda")))
+
+            self._mcmc_reset_state(sampled_indices)
+
+        torch.cuda.empty_cache()
+
+    @torch.no_grad()
+    def mcmc_add_noise(self, current_lr):
+        """Add positional noise scaled inversely with opacity (3DGS-MCMC): stable,
+        high-opacity Gaussians barely move, low-opacity ones explore more.
+        `current_lr` is the current xyz learning rate times opt.mcmc_noise_lr.
+        """
+        rotation_matrices = build_rotation(self.get_rotation)  # (N, 3, 3)
+        variance = self.get_scaling.pow(2)  # (N, 3), == exp(2 * raw_scale)
+        cov3d = rotation_matrices @ torch.diag_embed(variance) @ rotation_matrices.transpose(1, 2)
+
+        noise = torch.randn_like(self._xyz)
+        transformed_noise = torch.bmm(cov3d, noise.unsqueeze(-1)).squeeze(-1)
+
+        opacity = self.get_opacity.flatten()
+        op_sigmoid = torch.sigmoid(0.5 - 100.0 * opacity)
+        noise_factor = current_lr * op_sigmoid
+
+        self._xyz.add_(noise_factor.unsqueeze(1) * transformed_noise)

@@ -36,7 +36,7 @@ class Config:
 
     # --- huấn luyện -----------------------------------------------------
     output_root: str = "/content/output"
-    iterations: int = 7000
+    iterations: int = 30_000
     smoke_iterations: int = 300
     score_every: int = 1000
     # Lịch densify của 3DGS gốc được đặt cho 30k vòng. Chạy ngắn hơn mà giữ
@@ -44,12 +44,26 @@ class Config:
     # không kịp hồi phục. Co lịch theo số vòng thực tế:
     #   densify_until_iter = densify_until_frac * iterations
     densify_until_frac: float = 0.5
+    # opacity_reset_interval gốc (3000) được đặt cho lịch 30k iterations (= 10%).
+    # Trước đây KHÔNG co giãn theo iterations như densify_until_iter -> ở lịch
+    # ngắn (vd 7000 iter) reset rơi vào 43% tiến trình thay vì rải đều, gây sụp
+    # PSNR giữa chừng (quan sát thật trong output/fastgs_models/history.csv,
+    # scene HCM0539: PSNR 22->5.9 tại iter 3000/7000). Co theo cùng nguyên tắc:
+    #   opacity_reset_interval = opacity_reset_frac * iterations
+    opacity_reset_frac: float = 0.2
     save_every: int = 2000                    # lưu .ply định kỳ; 0 = chỉ lưu ở vòng cuối
     keep_last_checkpoint: bool = True         # xoá checkpoint giữa chừng cũ, chỉ giữ cái mới nhất
-    eval_views: int = 6
+    # None = chấm trên TOÀN BỘ ảnh hold-out, không lấy mẫu con.
+    # Trước đây chỉ lấy 6 ảnh đầu -> số liệu theo dõi lệch hẳn so với điểm
+    # thật lúc render submission (toàn bộ ảnh test), không liêm chính.
+    eval_views: Optional[int] = None
     mult: float = 0.5
     psnr_max: float = 30.0
-    lpips_net_live: str = "alex"              # nhanh, dùng cho theo dõi
+    # Trước đây live dùng AlexNet (đọc số thấp hơn hẳn VGG ở cùng chất lượng
+    # ảnh) trong khi báo cáo/submission dùng VGG -> log lúc train luôn có vẻ
+    # tốt hơn điểm thật. Dùng chung VGG để số liệu theo dõi và số liệu chấm
+    # điểm cuối cùng nói cùng một sự thật.
+    lpips_net_live: str = "vgg"
     lpips_net_report: str = "vgg"             # dùng cho số liệu báo cáo
     ram_soft_limit_gb: float = 10.5
     train_extra_args: Sequence[str] = field(default_factory=lambda: [
@@ -101,7 +115,7 @@ class Config:
     def show(self) -> "Config":
         keys = ("repo_dir", "data_root", "scene_root", "scenes", "resolution",
                 "output_root", "iterations", "smoke_iterations", "score_every", "save_every",
-                "densify_until_frac",
+                "densify_until_frac", "opacity_reset_frac",
                 "eval_views", "psnr_max", "mult", "submission_dir", "submission_zip",
                 "submission_resolution", "download_submission", "download_model")
         for key in keys:

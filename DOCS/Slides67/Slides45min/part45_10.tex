@@ -1,0 +1,89 @@
+% ============================================================
+% PHẦN 45 phút — Slide 38-41 (Quan sát RAM, Tổng kết pipeline,
+% Tổng kết FastGS & giới hạn, Cảm ơn / Q&A) — rút gọn từ part7.tex
+% ============================================================
+
+% --- Slide 38 (gốc: Slide 62 — Quan sát 2) ---
+\begin{frame}{Quan sát 2: Nút thắt là RAM hệ thống, không phải VRAM}
+\begin{itemize}
+    \item Đo trên Google Colab T4 trong quá trình huấn luyện:
+\end{itemize}
+\footnotesize
+\begin{table}[]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Tài nguyên & Đỉnh sử dụng & Khả dụng & \% sử dụng \\
+\midrule
+VRAM (GPU) & 1.16 GB & 14.56 GB & \textbf{8\%} \\
+RAM hệ thống & 9.59 GB & 12.7 GB & \textbf{91\%} (giới hạn mềm 10.5 GB) \\
+\bottomrule
+\end{tabular}
+\end{table}
+\normalsize
+\begin{itemize}
+    \item RAM hệ thống áp sát giới hạn mềm, trong khi VRAM còn dư rất nhiều.
+    \item Khuyến nghị cũ "giảm độ phân giải để tiết kiệm VRAM" \textbf{không cần thiết} ở ngân sách này.
+\end{itemize}
+\end{frame}
+
+% --- Slide 39 (gốc: Slide 64 — Tổng kết pipeline) ---
+\begin{frame}{Tổng kết pipeline render 3D Gaussian Splatting}
+\centering
+\footnotesize
+\begin{tikzpicture}[
+    node distance=8mm and 6mm,
+    box/.style={draw, rounded corners, align=center, minimum height=0.9cm, minimum width=2.6cm, fill=blue!8}
+]
+\node[box] (gauss) {3D Gaussian\\$(\mu,\Sigma,\alpha,SH)$};
+\node[box, right=of gauss] (proj) {Chiếu phối cảnh\\(EWA)};
+\node[box, right=of proj] (raster) {Rasterizer khả vi\\theo tile};
+
+\node[box, below=of raster] (blend) {Alpha\\blending};
+\node[box, left=of blend] (loss) {Loss\\($L_1$+D-SSIM)};
+\node[box, left=of loss] (back) {Backward\\(gradient)};
+
+\node[box, below=of back, fill=orange!12] (adc) {Adaptive\\Density Control};
+
+\draw[-Latex] (gauss) -- (proj);
+\draw[-Latex] (proj) -- (raster);
+\draw[-Latex] (raster) -- (blend);
+\draw[-Latex] (blend) -- (loss);
+\draw[-Latex] (loss) -- (back);
+\draw[-Latex] (back) -- (adc);
+\draw[-Latex] (adc) -- (gauss);
+\end{tikzpicture}
+\vspace{2mm}
+
+\normalsize
+Một chu trình khép kín: render $\rightarrow$ tính loss $\rightarrow$ lan truyền ngược $\rightarrow$ điều chỉnh mật độ Gaussian $\rightarrow$ lặp lại.
+\end{frame}
+
+% --- Slide 40 (gốc: Slide 65 — Tổng kết cải tiến FastGS \& giới hạn) ---
+\begin{frame}{Tổng kết cải tiến FastGS \& giới hạn còn lại}
+\textbf{Ba đòn bẩy chính:}
+\begin{itemize}
+    \item \textbf{Multi-view score} + \textbf{Compact box} $\Rightarrow$ giảm Gaussian dư thừa mà không giảm chất lượng đáng kể.
+    \item \textbf{Sparse Adam} $\Rightarrow$ giảm chi phí tính toán mỗi iteration.
+\end{itemize}
+\vspace{2mm}
+\textbf{Giới hạn / hướng phát triển:}
+\begin{enumerate}
+    \item Dữ liệu Gaussian đầu ra chưa được nén (248 B/Gaussian, thô).
+    \item Ngân sách 7k iteration bỏ lỡ bước \texttt{final\_prune}.
+    \item Chưa có ablation study cô lập riêng từng đòn bẩy.
+    \item 4 nhánh mở rộng của FastGS gốc — dynamic scenes, sparse view, surface reconstruction, SLAM — chưa tích hợp vào fork này.
+\end{enumerate}
+\end{frame}
+
+% --- Slide 41 (gốc: Slide 67 — Cảm ơn / Q&A, frame cuối cùng) ---
+\begin{frame}[c]{}
+\centering
+{\Huge \textbf{Cảm ơn đã theo dõi!}}
+
+\vspace{6mm}
+{\LARGE Hỏi đáp (Q\&A)}
+
+\vspace{10mm}
+{\small Digital Twin GS --- FastGS-lite \\ \texttt{github.com/KietAnhCS/fastgs-lite}}
+\end{frame}

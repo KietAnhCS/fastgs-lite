@@ -2845,4 +2845,56 @@ Mã nguồn tương ứng: `utils/fast_utils.py`, `scene/gaussian_model.py:167�
 
 ---
 
+## Cập nhật: tích hợp thêm từ Faster-GS (CVPR 2026)
+
+Repo từng có thêm 1 bản clone tham khảo `faster-gaussian-splatting/` (Faster-GS, Hahlbohm et al., CVPR 2026) để so sánh với fastgs-lite của repo này. Đã rà soát và port những phần fastgs-lite **chưa có** sang dạng flag tuỳ chọn (mặc định tắt, không đổi hành vi huấn luyện cũ); phần không port được (warp-level culling CUDA) bị bỏ có chủ đích, giải thích ở §13.4 dưới đây. Sau khi port xong, folder `faster-gaussian-splatting/` đã bị xoá khỏi repo để tránh trùng lặp code tham khảo với code thật.
+
+### 13.1' — Gắn từng tính năng mới vào mô hình chi phí $T_{\text{iter}}=aN+bNK+cN\cdot\mathbb 1[\text{Adam}]+F$
+
+Mô hình chi phí ở §8.2 có 3 đại lượng có thể can thiệp ($N$, $K$, $\mathbb 1[\text{Adam}]$) cộng 2 hằng số ẩn ($a,b,c$ — hệ số tỉ lệ thật của phần cứng, không xuất hiện tường minh trong bảng 8.5 vì đã chuẩn hoá theo tỉ lệ 15/55/15/15). Năm tính năng mới không tính năng nào đổi $F$ (loss/SSIM/IO không co giãn, đúng như trần Amdahl §8.4 đã nói).
+
+| Tính năng | Số hạng bị ảnh hưởng | Cơ chế | Chương chi tiết |
+|---|---|---|---|
+| Morton reordering | hệ số ẩn $b$ (không đổi $N$, $K$) | Gaussian gần nhau trong không gian được lưu gần nhau trong bộ nhớ → tile-rasterizer gather/scatter ít cache-miss hơn khi xử lý số hạng $bNK$ | Chương 3 |
+| Random-init + carving (frustum) | $N_0$ (điểm khởi tạo, tức giá trị đầu quỹ đạo $N(t)$ ở §8.3(c)), không phải chính công thức $aN$ | Loại điểm nằm ngoài mọi frustum camera trước khi vào vòng lặp; đồng thời sửa 1 bug khiến pipeline crash khi thiếu `points3D` COLMAP | Chương 6 |
+| 3D anti-aliasing filter | **không đổi số hạng chi phí nào** — $N$, $K$ không đổi khi đếm, chỉ scale bị clamp | Tính năng CHẤT LƯỢNG (giảm alias khi đổi độ phân giải/khoảng cách render so với lúc train), không phải tính năng TỐC ĐỘ — có thể tăng nhẹ $K$ cục bộ ở các Gaussian bị clamp lớn hơn | Chương 8 |
+| MCMC densification | quỹ đạo $N(t)$ toàn phần | Thay mô hình tăng hữu cơ không giới hạn $N_{\text{cuối}}=N_0[(1+r_s)(1-r_p)]^n$ (§8.3(c)) bằng tăng có cận cứng `cap_max`, tối đa +5%/lần gọi | Chương 12 |
+| Fused Adam | hằng số $c$ của $cN\cdot\mathbb 1[\text{Adam}]$ | Xem §13.3' — **không** đổi $\mathbb 1[\text{Adam}]$ (lịch thưa 1→1/32→1/64 ở §8.3 giữ nguyên y hệt); hai cơ chế trực giao, nhân được với nhau | Mục này |
+
+### 13.3' — Fused Adam: công thức và vì sao nó rẻ hơn
+
+Công thức Adam **không đổi** — vẫn đúng công thức `torch.optim.Adam` đang chạy trong `optimizer_step` (§6.4):
+
+$$m_t=\beta_1 m_{t-1}+(1-\beta_1)g_t,\qquad v_t=\beta_2 v_{t-1}+(1-\beta_2)g_t^2$$
+
+$$\hat m_t=\frac{m_t}{1-\beta_1^t},\qquad \hat v_t=\frac{v_t}{1-\beta_2^t}$$
+
+$$\theta_t=\theta_{t-1}-\text{lr}\cdot\frac{\hat m_t}{\sqrt{\hat v_t}+\epsilon}$$
+
+Vấn đề hiệu năng không nằm ở công thức mà ở **thực thi**: `torch.optim.Adam` mặc định launch nhiều kernel CUDA riêng biệt cho từng phép toán element-wise (nhân, cộng, sqrt, chia…) trên mỗi param-group, mỗi kernel là một lượt đọc+ghi toàn bộ tensor từ/vào HBM — công thức trên hoàn toàn memory-bound (element-wise thuần), không phải compute-bound. `submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/adam_fused.cu` + `utils/fused_adam.py::FusedAdam` gộp toàn bộ công thức vào **một** kernel mỗi tensor tham số, giảm số lượt round-trip bộ nhớ từ ~6-8 xuống 1, và giảm phí launch kernel cố định (đáng kể khi $N$ lớn và có 6 param-group mỗi bước).
+
+Bằng ký hiệu của chương này: gọi $c_{\text{torch}}$, $c_{\text{fused}}$ là hằng số chi phí mỗi tham số mỗi lần step của hai cách thực thi, kỳ vọng $c_{\text{fused}}<c_{\text{torch}}$ — nhưng đúng tinh thần "đếm được / đo được / giả định" đã dùng xuyên suốt chương (xem bảng tổng hợp cuối §13.2), tỉ số $c_{\text{fused}}/c_{\text{torch}}$ thuộc nhóm **giả định — chưa đo A/B**, giống hệt cách $R_{\text{gauss}}$ được xếp loại. Không có số liệu nào được bịa ra ở đây.
+
+`FusedAdam` kế thừa đúng `torch.optim.Optimizer` (không phải class tự chế), nên toàn bộ code thao túng optimizer sẵn có trong `scene/gaussian_model.py` (`_prune_optimizer`, `cat_tensors_to_optimizer`, `replace_tensor_to_optimizer`, và `_reorder_optimizer` mới ở chương 3) chạy y hệt, không cần sửa thêm gì. `training_setup` giờ **luôn** dùng `FusedAdam` (không còn cờ `use_fused_adam`, không còn nhánh `torch.optim.Adam`).
+
+### 13.4' — Phần bị bỏ qua: warp-level culling
+
+Forward/backward kernel hiện tại của fastgs-lite (`submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/backward.cu`) đã có kiến trúc warp-cooperative **riêng** (kiểu Taming-3DGS, `PerGaussianRenderCUDA`), khác cấu trúc per-tile của forward kernel bên Faster-GS. Áp thẳng kỹ thuật warp-culling của Faster-GS lên kiến trúc khác này có nguy cơ dùng nhầm một cận bán kính KHÔNG bảo toàn (bán kính $3\sigma$ cố định thay vì đúng ngưỡng $t=\texttt{mult}\cdot2\ln(255\alpha)$ mà compact-box đã dùng ở Chương 3/4) → cắt nhầm alpha còn hợp lệ, sai gradient một cách âm thầm — không thể kiểm chứng nếu không có GPU để build và so ảnh render trước/sau. Quyết định: bỏ qua, giữ nguyên kernel hiện tại (phần $K$ đã tối ưu tốt rồi, xem Chương 3/4).
+
+### 13.5' — Bảng tổng kết (cập nhật sau khi tích hợp FastGS+Faster-GS "luôn bật, không cờ")
+
+Các cờ bật/tắt cũ đã bị xoá (trừ MCMC, xem lý do ở Chương 12) — bảng dưới đây liệt kê trạng thái hiện tại:
+
+| Cơ chế | File | Trạng thái | Ghi chú |
+|---|---|---|---|
+| `morton_reorder_interval` | `arguments/__init__.py` (`OptimizationParams`) | **luôn bật**, mặc định `5000` | xem Chương 3 — không còn là cờ, chỉ còn là tần suất |
+| 3D anti-aliasing filter (+ `filter_3d_variance`) | `arguments/__init__.py`, `scene/gaussian_model.py` | **luôn bật**, mặc định `0.2` | xem Chương 8 — cờ `use_3d_filter` đã bị xoá |
+| `random_init_force` / `random_init_n_points` / `random_init_carving` | `arguments/__init__.py` (`ModelParams`) | `False` / `100000` / `True` (chưa đổi) | xem Chương 6 — ngoài phạm vi đợt tích hợp này |
+| MCMC densification (`mcmc_cap_max`, `mcmc_min_opacity`, `mcmc_noise_lr`) | `scene/gaussian_model.py` | **chủ đích giữ không dùng** trong control flow mặc định | xem Chương 12 — loại trừ lẫn nhau với `densify_and_prune_fastgs`, hàm vẫn còn để bật thủ công |
+| Fused CUDA Adam | `scene/gaussian_model.py`, `utils/fused_adam.py` | **luôn bật** | §13.3' ở trên — cờ `use_fused_adam` đã bị xoá |
+
+Toàn bộ bảng trên **chưa được đo A/B trên GPU thật** (không có CUDA toolchain ở môi trường viết docs này). Các con số $3.83\times/1.64\times/2.38\times/1.12\times$ ở §8.5 phía trên là của fastgs-lite **gốc** (trước đợt tích hợp này) — không được lẫn hai bộ số liệu này với nhau; cần benchmark lại sau khi build.
+
+---
+
 [← Chương 12](12-adaptive-density-control.md) | [Mục lục](00-muc-luc.md) | [Chương 14 →](14-trien-khai-colab-nhat-ky-train.md)

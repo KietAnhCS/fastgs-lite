@@ -1,0 +1,83 @@
+% ============================================================
+% Slide 21-24 (bản 45 phút) — rút gọn từ part4.tex / partADC_2a.tex / partADC_4a.tex
+% ============================================================
+
+% --- Slide 21 (gốc: part4.tex, "Reset opacity định kỳ") ---
+\begin{frame}{Reset opacity định kỳ}
+    \footnotesize
+    \begin{itemize}
+        \item Mỗi \texttt{opacity\_reset\_interval} (mặc định 3000 iteration): toàn bộ opacity reset về \textbf{giá trị thấp} (qua sigmoid-inverse).
+        \item Buộc optimizer \textbf{"đánh giá lại"} từng Gaussian từ đầu.
+        \item Gaussian thực sự cần thiết: opacity \textbf{tăng trở lại}; Gaussian dư thừa: không hồi phục kịp $\Rightarrow$ bị \textbf{prune} ở vòng sau.
+    \end{itemize}
+    \begin{columns}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{fig_17_opacity_trajectory.png}
+            \captionof{figure}{Quỹ đạo opacity theo thời gian}
+        \end{column}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{fig_18_hist_reset.png}
+            \captionof{figure}{Histogram trước/sau reset}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 22 (gốc: partADC_2a.tex, "Tổng hợp counts qua nhiều view: đầu vào cho Importance") ---
+\begin{frame}{Tổng hợp counts qua nhiều view: đầu vào cho Importance}
+    \footnotesize
+    \begin{itemize}
+        \item Mỗi Gaussian $i$ có vector counts $(\text{counts}_i^1, \text{counts}_i^2, \text{counts}_i^3)$ theo từng view.
+        \item Tổng số lỗi bị "tố cáo" trên mỗi view luôn $\ge$ số pixel lỗi thật:
+        \[
+            \sum_i \text{counts}_i^v \ \ge\ |m_v|
+        \]
+        vì một pixel lỗi có thể được nhiều Gaussian chồng lấn cùng đếm.
+        \item Trong code: mỗi lần render view $v$, kernel CUDA cộng dồn atomic vào \texttt{metricCount}$[N]$, rồi lũy kế: \texttt{full\_metric\_counts += counts\textsuperscript{(v)}}.
+        \item Vector counts tổng hợp qua $V$ view là đầu vào trực tiếp cho bước tính Importance.
+    \end{itemize}
+    \centering
+    \includegraphics[width=0.85\linewidth]{2_4_bar-counts-moi-view.png}
+    \captionof{figure}{\footnotesize Trái: counts$_i^v$ (màu) trên nền $|\Omega_i^v|$ (xám). Phải: $|m_v|$ so với $\sum_i \text{counts}_i^v$ mỗi view.}
+\end{frame}
+
+% --- Slide 23 (gốc: partADC_2a.tex, "Importance score: trung bình counts qua các view, làm tròn xuống") ---
+\begin{frame}{Importance score: trung bình counts qua các view, làm tròn xuống}
+    \footnotesize
+    \begin{itemize}
+        \item Công thức Importance (khớp code \texttt{compute\_gaussian\_score\_fastgs}):
+        \[
+            \text{Importance}_i = \left\lfloor \frac{1}{V} \sum_{v=1}^{V} \text{counts}_i^v \right\rfloor
+        \]
+        (\texttt{torch.div(full\_metric\_counts, V, rounding\_mode='floor')}).
+        \item Gaussian được xem là "quan trọng" (giữ lại/densify) khi $\text{Importance}_i > 5$.
+        \item Ví dụ $4\times4$, $3$ view: chỉ $G3$ có mean $> 5$ vượt ngưỡng; các Gaussian còn lại bị chặn.
+        \item Màu nóng trong heatmap = Gaussian đóng góp nhiều vào vùng lỗi cao (giữ lại); màu lạnh = ứng viên prune.
+    \end{itemize}
+    \centering
+    \includegraphics[width=0.85\linewidth]{2_5_importance-heatmap.png}
+    \captionof{figure}{\footnotesize Trái: ma trận counts $(5\times 3)$. Giữa: Importance$_i = \lfloor \text{mean}_v \rfloor$, ngưỡng $5$. Phải: so sánh mean vs.\ max vs.\ sum.}
+\end{frame}
+
+% --- Slide 24 (gốc: partADC_4a.tex, "Sơ đồ quyết định densify đầy đủ") ---
+\begin{frame}{Sơ đồ quyết định densify đầy đủ}
+\begin{columns}[T]
+\begin{column}{0.48\linewidth}
+\footnotesize
+\begin{itemize}
+  \item Áp dụng cho mỗi Gaussian $i$, mỗi 100 (hoặc 500) vòng lặp, khi $500 < t < 15000$.
+  \item \textbf{Bước 1 — kích thước chọn nhánh:} $\max s_i \le \delta \cdot \text{extent}\;?$
+  \item \textbf{Nhánh NHỎ:} nếu $\bar g_i \ge \tau_{\text{grad}} = 2\times10^{-4}$ \textbf{và} $\text{Imp}_i > 5$ $\Rightarrow$ \textbf{CLONE} ($1 \to 2$, giữ bản gốc).
+  \item \textbf{Nhánh TO:} nếu $\bar g_{\text{abs},i} \ge \tau_{\text{abs}} = 1.2\times10^{-3}$ \textbf{và} $\text{Imp}_i > 5$ $\Rightarrow$ \textbf{SPLIT} (2 con, xoá gốc, $1 \to 2$).
+  \item Nếu Importance không thoả: 3DGS gốc vẫn densify, FastGS-lite thì không.
+  \item Nguồn: \texttt{densify\_and\_prune\_fastgs}, \texttt{gaussian\_model.py:449-462}.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=\linewidth]{4_6_decision-diagram.png}
+\captionof{figure}{\footnotesize 3 điều kiện nối bằng AND: kích thước chọn nhánh, gradient chọn có/không, Importance lọc thêm.}
+\end{column}
+\end{columns}
+\end{frame}

@@ -150,7 +150,50 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8):
+def generate_random_point_cloud(cam_infos, nerf_normalization, n_points=100_000,
+                                 carve=True, carve_in_all_frustums=False):
+    """Faster-GS-style random initialization fallback (see faster-gaussian-splatting/utils.py
+    `carve()` for the reference formulation), used when COLMAP has no usable points3D.
+
+    Samples `n_points` uniformly inside the scene's bounding sphere (from `nerf_normalization`),
+    then optionally keeps only points inside at least one camera's frustum (`carve_in_all_frustums
+    =False`) or every camera's frustum (`True`). Pure numpy — no torch/CUDA required. Falls back
+    to the uncarved point set if carving would remove everything.
+    """
+    center = -nerf_normalization["translate"]
+    radius = nerf_normalization["radius"]
+
+    # uniform sampling inside a sphere: sample direction + radius^(1/3)
+    directions = np.random.normal(size=(n_points, 3))
+    directions /= np.linalg.norm(directions, axis=1, keepdims=True).clip(min=1e-8)
+    radii = radius * np.cbrt(np.random.uniform(0.0, 1.0, size=(n_points, 1)))
+    xyz = center[None, :] + directions * radii
+
+    if carve and cam_infos:
+        visible_counts = np.zeros(n_points, dtype=np.int32)
+        for cam in cam_infos:
+            W2C = getWorld2View2(cam.R, cam.T)  # 4x4, world -> camera (column-vector convention)
+            cam_coords = xyz @ W2C[:3, :3].T + W2C[:3, 3]
+            z = cam_coords[:, 2]
+            x = cam_coords[:, 0]
+            y = cam_coords[:, 1]
+            tan_x = np.tan(cam.FovX * 0.5)
+            tan_y = np.tan(cam.FovY * 0.5)
+            in_frustum = (z > 1e-4) & (np.abs(x) <= z * tan_x) & (np.abs(y) <= z * tan_y)
+            visible_counts += in_frustum.astype(np.int32)
+
+        keep_mask = (visible_counts == len(cam_infos)) if carve_in_all_frustums else (visible_counts > 0)
+        if keep_mask.any():
+            xyz = xyz[keep_mask]
+        # else: carving removed every point -> keep the uncarved set instead of an empty cloud
+
+    shs = np.random.random((xyz.shape[0], 3)) / 255.0
+    rgb = SH2RGB(shs) * 255.0
+    normals = np.zeros_like(xyz)
+    return xyz, rgb, BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=normals)
+
+def readColmapSceneInfo(path, images, eval, llffhold=8, random_init_force=False,
+                         random_init_n_points=100_000, random_init_carving=True):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -190,11 +233,23 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
     except:
         pcd = None
 
+    used_ply_path = ply_path
+    if pcd is None or random_init_force:
+        reason = "no usable points3D" if pcd is None else "random_init_force=True"
+        print(f"Falling back to random point cloud initialization ({reason}): "
+              f"{random_init_n_points} points, carving={random_init_carving}")
+        xyz, rgb, pcd = generate_random_point_cloud(
+            train_cam_infos, nerf_normalization,
+            n_points=random_init_n_points, carve=random_init_carving)
+        # Cache to a distinct file so real COLMAP points3D.ply is never overwritten.
+        used_ply_path = os.path.join(path, "sparse/0/points3D_random_init.ply")
+        storePly(used_ply_path, xyz, rgb)
+
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
                            test_cameras=test_cam_infos,
                            nerf_normalization=nerf_normalization,
-                           ply_path=ply_path)
+                           ply_path=used_ply_path)
     return scene_info
 
 def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png"):

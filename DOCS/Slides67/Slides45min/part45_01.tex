@@ -1,0 +1,70 @@
+% ===================== part45_01.tex : Slide 1-4 =====================
+% Bìa / Agenda / Động lực / 3D Gaussian là gì (rút gọn từ part1.tex, bản 45 phút)
+
+% --- Slide 1: Trang bìa ---
+\begin{frame}
+\titlepage
+\end{frame}
+
+% --- Slide 2: Agenda (viết mới, rút gọn) ---
+\begin{frame}{Nội dung trình bày (45 phút)}
+\begin{itemize}
+    \item \textbf{1.} Nền tảng: 3D Gaussian \& Spherical Harmonics (lược gọn)
+    \item \textbf{2.} Chiếu phối cảnh \& Rasterizer khả vi
+    \item \textbf{3.} Hàm mất mát, Gradient \& Optimizer
+    \item \textbf{4.} \textbf{Trọng tâm:} Adaptive Density Control -- cải tiến đề xuất
+    \item \textbf{5.} Ba đòn bẩy tăng tốc của FastGS
+    \item \textbf{6.} Kết quả thực nghiệm: FastGS-lite trên Colab T4
+    \item \textbf{7.} Quan sát, giới hạn \& kết luận
+\end{itemize}
+\vspace{0.3cm}
+\small
+Phần nền tảng toán học sẽ lược gọn tối đa, dành thời gian cho đóng góp chính và số liệu thực nghiệm.
+\end{frame}
+
+% --- Slide 3: Động lực: vì sao cần một biểu diễn cảnh mới? (cắt gọn từ part1.tex) ---
+\begin{frame}{Động lực: vì sao cần một biểu diễn cảnh mới?}
+\begin{itemize}
+    \item NeRF: biểu diễn \textbf{implicit} bằng MLP, chất lượng cao nhưng render chậm (giây/khung hình) do ray-marching.
+    \item 3D Gaussian Splatting (3DGS): biểu diễn \textbf{explicit} bằng hàng trăm nghìn Gaussian mờ, render bằng \textbf{rasterization khả vi}.
+    \item Kết quả: hàng chục--hàng trăm FPS, gần thời gian thực.
+\end{itemize}
+\vspace{0.3cm}
+\small
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Tiêu chí} & \textbf{NeRF} & \textbf{3D Gaussian Splatting} \\
+\midrule
+Biểu diễn & Implicit (MLP) & Explicit (tập Gaussian) \\
+Render & Ray-marching, chậm & Rasterization, nhanh \\
+Tốc độ & $\sim$giây/khung hình & Hàng chục--hàng trăm FPS \\
+Huấn luyện & Backprop qua MLP & Backprop qua tham số Gaussian \\
+\bottomrule
+\end{tabular}
+\end{frame}
+
+% --- Slide 4: 3D Gaussian là gì? (cắt gọn từ part1.tex) ---
+\begin{frame}{3D Gaussian là gì?}
+\begin{columns}
+\begin{column}{0.55\textwidth}
+\footnotesize
+Hàm mật độ Gaussian 3D:
+\[
+G(x) = \exp\left( -\frac{1}{2} (x-\mu)^T \Sigma^{-1} (x-\mu) \right)
+\]
+Bốn nhóm tham số học được:
+\begin{itemize}
+    \item Vị trí $\mu \in \mathbb{R}^3$
+    \item Hiệp phương sai $\Sigma$ (hình dạng, hướng)
+    \item Độ mờ (opacity) $\alpha$
+    \item Màu qua hệ số Spherical Harmonics
+\end{itemize}
+\end{column}
+\begin{column}{0.45\textwidth}
+\centering
+\includegraphics[width=0.95\linewidth]{ch2_gaussian_bump.png}
+\captionof{figure}{\footnotesize Quả chuông mật độ Gaussian 3D}
+\end{column}
+\end{columns}
+\end{frame}

@@ -44,6 +44,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
 
+    gaussians.setup_3d_filter(scene.getTrainCameras(), opt.filter_3d_variance)
+
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -75,7 +77,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         iter_start.record()
         
-        gaussians.update_learning_rate(iteration)
+        current_xyz_lr = gaussians.update_learning_rate(iteration)
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if iteration % 1000 == 0:
@@ -123,7 +125,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             
             optim_start.record()
             
-            # Densification
+            # Densification: FastGS's gradient + multi-view scoring path (its main
+            # contribution) is the only densify/prune mechanism, always on. MCMC
+            # densification (scene/gaussian_model.py::mcmc_densification) is kept as
+            # library code but not wired in here -- it is algorithmically mutually
+            # exclusive with the path below (both can't drive the same Gaussian set).
             if iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
@@ -135,17 +141,25 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     camlist = sampling_cameras(my_viewpoint_stack)
 
                     # The multiview consistent densification of fastgs
-                    importance_score, pruning_score = compute_gaussian_score_fastgs(camlist, gaussians, pipe, bg, opt, DENSIFY=True)                    
-                    gaussians.densify_and_prune_fastgs(max_screen_size = size_threshold, 
-                                                min_opacity = 0.005, 
-                                                extent = scene.cameras_extent, 
+                    importance_score, pruning_score = compute_gaussian_score_fastgs(camlist, gaussians, pipe, bg, opt, DENSIFY=True)
+                    gaussians.densify_and_prune_fastgs(max_screen_size = size_threshold,
+                                                min_opacity = 0.005,
+                                                extent = scene.cameras_extent,
                                                 radii=radii,
                                                 args = opt,
                                                 importance_score = importance_score,
                                                 pruning_score = pruning_score)
 
+                    gaussians.compute_3d_filter(scene.getTrainCameras())
+
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
+
+            # Memory-locality reordering (Faster-GS-style), always on. Purely a speed
+            # optimization, no effect on rendering math or which Gaussians exist.
+            morton_interval = opt.morton_reorder_interval
+            if morton_interval and iteration < opt.densify_until_iter and iteration % morton_interval == 0:
+                gaussians.apply_morton_ordering()
 
             # The multiview consistent pruning of fastgs. We do it every 3k iterations after 15k
             # In this stage, the model converge basically. So we can prune more aggressively without degrading rendering quality.
@@ -154,9 +168,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 my_viewpoint_stack = scene.getTrainCameras().copy()
                 camlist = sampling_cameras(my_viewpoint_stack)
 
-                _, pruning_score = compute_gaussian_score_fastgs(camlist, gaussians, pipe, bg, opt)                    
+                _, pruning_score = compute_gaussian_score_fastgs(camlist, gaussians, pipe, bg, opt)
                 gaussians.final_prune_fastgs(min_opacity = 0.1, pruning_score = pruning_score)
-        
+                gaussians.compute_3d_filter(scene.getTrainCameras())
+
             # Optimization step
             if iteration < opt.iterations:
                 gaussians.optimizer_step(iteration)

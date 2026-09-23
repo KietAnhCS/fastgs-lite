@@ -612,4 +612,49 @@ Giải thích vì sao hàm `return lr` ngay trong vòng `for` không cần `brea
 
 ---
 
+## Cập nhật: Morton reordering định kỳ (tuỳ chọn)
+
+### 1. Vấn đề locality mà 3DGS gốc (và fastgs-lite khi tắt flag này) không xử lý
+
+Sau nhiều vòng densify/clone/split/prune, thứ tự các Gaussian trong bộ nhớ — tức chỉ số $0..N-1$ của `_xyz`, `_scaling`, `_rotation`, ... — hoàn toàn không liên quan tới vị trí không gian của chúng. Gaussian mới sinh ra luôn được `cat` vào **cuối** mảng (xem `cat_tensors_to_optimizer`/`densification_postfix` ở §31), bất kể nó nằm ở đâu trong không gian 3D. Kết quả: hai Gaussian gần nhau trong không gian — và do đó thường phủ cùng tile hoặc tile lân cận khi rasterize (chương 4/9) — có thể nằm rất xa nhau về chỉ số mảng, tức rất xa nhau trong bộ nhớ vật lý (tensor PyTorch lưu liên tục theo chỉ số).
+
+Rasterizer tile-based khi xử lý một tile phải gom (gather) toàn bộ Gaussian phủ tile đó. Nếu các Gaussian này rải rác khắp bộ nhớ, mỗi lần đọc là một cache-miss riêng lẻ thay vì được gộp vào cùng vài cache-line — tốn băng thông bộ nhớ (HBM) nhiều hơn mức cần thiết. Trong mô hình chi phí của chương 13,
+
+$$T_{\text{iter}}=aN+bNK+cN\cdot\mathbb 1[\text{Adam}]+F,$$
+
+đây là phần overhead **ẩn bên trong hằng số $b$** của số hạng $bNK$ — không phải $N$ hay $K$ tự thân giảm, mà là **hệ số $b$ giảm** nhờ truy cập bộ nhớ hiệu quả hơn khi Gaussian cùng vùng không gian nằm gần nhau trong mảng.
+
+### 2. Đường cong Morton (Z-order) — công thức
+
+Chuẩn hoá toạ độ mỗi Gaussian về hộp bao của toàn bộ tập điểm hiện tại, rồi lượng tử hoá $b=10$ bit mỗi trục (1024 mức/trục, đã chọn trong code):
+
+$$\hat p_i = \frac{p_i - p_{\min}}{p_{\max}-p_{\min}}, \qquad q_i = \big\lfloor \hat p_i \cdot (2^{b}-1) \big\rfloor \in \{0,\dots,2^b-1\}^3.$$
+
+"Trải bit" (bit-spreading / part1by2): với mỗi số nguyên $b$-bit $q$, chèn 2 bit 0 sau mỗi bit của $q$ để nó chiếm các vị trí bit $0,3,6,9,\dots$ trong một số nguyên rộng hơn — ký hiệu $\text{spread}(q)$. Mã Morton 3D là phép xen kẽ (interleave) bit của ba trục:
+
+$$\text{code}(p) = \text{spread}(q_x) \;\big|\; \big(\text{spread}(q_y)\ll 1\big) \;\big|\; \big(\text{spread}(q_z)\ll 2\big).$$
+
+Tính chất cốt lõi (không chứng minh ở đây): đường cong Morton ánh xạ không gian 3D xuống 1 chiều và **bảo toàn locality một phần** — hai điểm gần nhau trong không gian 3D thường (không phải luôn luôn, có bước nhảy ở biên octant) có mã Morton gần nhau. Sắp mảng theo `argsort(code)` khiến các Gaussian lân cận không gian có chỉ số mảng gần nhau, do đó nằm gần nhau trong bộ nhớ.
+
+### 3. Cơ chế reorder trong code
+
+`apply_morton_ordering()` tính `order = argsort(code)` rồi áp `order` lên **mọi** tensor optimizable (`_xyz, _features_dc, _features_rest, _scaling, _rotation, _opacity`) **và** trạng thái Adam tương ứng (`exp_avg`, `exp_avg_sq` trong `self.optimizer`/`self.shoptimizer`) thông qua hàm riêng `_reorder_optimizer`. Bắt buộc phải hoán vị cả state Adam cùng lúc với tham số: nếu chỉ hoán vị tensor tham số mà không hoán vị `exp_avg`/`exp_avg_sq` theo đúng `order`, trạng thái động lượng của Gaussian $i$ sẽ bị gán nhầm cho Gaussian khác ngay sau phép hoán vị (index không còn khớp giữa tham số và trạng thái optimizer của nó) — đây là lỗi tương tự loại lỗi đã bàn ở Bài tập 3.7 phía trên (mất đồng bộ giữa `id()` tham số và khoá trong `opt.state`).
+
+Về bản chất, đây là một phép hoán vị (permutation) **thuần tuý**: không thêm/bớt/đổi giá trị của bất kỳ tham số nào, không đổi gradient, không đổi ảnh render ra — chỉ đổi thứ tự lưu trữ. Với mọi tensor $\theta$ liên quan:
+
+$$\theta'_{\text{order}(i)} = \theta_i \quad \forall i.$$
+
+### 4. So với 3DGS gốc / fastgs-lite khi tắt flag
+
+3DGS gốc và fastgs-lite mặc định (`morton_reorder_interval = 0`) không có bước này — thứ tự bộ nhớ "trôi dạt" dần theo lịch sử densify, mức độ kém locality tăng dần theo thời gian train (càng nhiều lần densify, càng nhiều Gaussian mới bị nối vào cuối mảng bất kể vị trí). Bật `morton_reorder_interval = K` khiến cứ mỗi $K$ vòng (trước khi densify kết thúc) mảng được sắp lại một lần — tốn một lần `argsort` cộng hoán vị toàn bộ tensor, chi phí $O(N\log N)$ một lần, đánh đổi lấy hàng nghìn vòng render tiếp theo được hưởng lợi từ locality tốt hơn.
+
+### 5. Trạng thái tích hợp
+
+- `scene/gaussian_model.py`: hàm `_reorder_optimizer` (hoán vị tham số + state Adam) và `apply_morton_ordering` (tính mã Morton, gọi hàm trên, đồng thời hoán vị luôn `max_radii2D`, `xyz_gradient_accum(_abs)`, `denom`, `tmp_radii`, `_filter_3d` nếu có).
+- `arguments/__init__.py` (`OptimizationParams`): `morton_reorder_interval` — **luôn bật**, mặc định `5000` (không còn là cờ tắt/bật, chỉ còn là tần suất).
+- Được gọi ở cùng vị trí/điều kiện trong cả `train.py` và `pipeline/trainer.py`.
+- **Chưa đo tốc độ thật trên GPU** — cần benchmark trên Colab (so `iter/s` khi bật vs tắt) trước khi mặc định bật cho submission thật; lợi ích lý thuyết chỉ có ý nghĩa rõ khi $N$ đủ lớn để cache-miss thật sự là bottleneck của $bNK$.
+
+---
+
 [← Chương 2](02-kien-truc-pipeline-phan-1.md) | [Mục lục](00-muc-luc.md) | [Chương 4 →](04-luu-render-cham-diem-phan-3.md)

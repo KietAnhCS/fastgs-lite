@@ -1,0 +1,77 @@
+% part45_07.tex — Slide 25-28 (ban rut gon 45 phut)
+% Chi chua 4 khoi frame, khong documentclass/usepackage/begin{document}.
+% Nguon: partADC_5a.tex, partADC_6.tex, partADC_7.tex (KHONG sua file goc).
+
+% ===== Slide 25 (nguon: partADC_5a.tex, frame "Top-k cứng vs. Multinomial") =====
+\begin{frame}{Top-k cứng vs.\ Multinomial: hai chiến lược pruning}
+\begin{columns}[T]
+\begin{column}{0.5\linewidth}
+\footnotesize
+\begin{itemize}
+    \item Mô phỏng $N=300$ Gaussian, điểm số $P_i$ chuẩn hoá min--max từ \texttt{Beta}$(2{,}2{,}5)$; tập ứng viên $C$ chọn ngẫu nhiên $40\%$ quần thể, budget $=\lfloor 0{,}5|C|\rfloor$.
+    \item \textbf{Top-k cứng:} xoá đúng \texttt{budget} phần tử điểm thấp nhất.
+    \begin{itemize}
+        \item[--] Cắt theo ngưỡng cứng -- có thể xoá nhầm cả một cụm liền kề điểm số tương tự.
+    \end{itemize}
+    \item \textbf{Multinomial (stochastic):} rút mẫu không hoàn lại theo $w_i \propto 1/(10^{-6}+1-P_i)$.
+    \begin{itemize}
+        \item[+] Đa dạng hơn, tránh xoá đồng loạt một vùng.
+        \item[--] Số lượng xoá thực tế thường \emph{ít hơn} budget.
+    \end{itemize}
+\end{itemize}
+\end{column}
+\begin{column}{0.5\linewidth}
+\centering
+\includegraphics[width=0.95\linewidth]{5_3_topk-vs-multinomial.png}
+\captionof{figure}{\footnotesize (a) top-k cứng cắt theo một đường ngưỡng; (b) multinomial xoá ít hơn budget, có ngẫu nhiên; (c) phân bố điểm còn lại; (d) xác suất bị xoá tăng mạnh khi $P_i\to 1$.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ===== Slide 26 (nguon: partADC_6.tex, frame "Toy model 2D: mục tiêu và một Gaussian") =====
+\begin{frame}{Toy model 2D: mục tiêu và một Gaussian}
+\begin{itemize}
+    \footnotesize
+    \item Ảnh mục tiêu $64\times 64$ px: hình tròn phẳng + vùng chi tiết (dải mảnh, chấm màu xen kẽ, ô vuông nhỏ).
+    \item Mỗi Gaussian 2D: $G(x) = \exp\!\big(-\tfrac{1}{2}d^\top \Sigma^{-1} d\big)$, footprint giới hạn ở $3\sigma$.
+    \item Render bằng alpha-compositing theo thứ tự chỉ số: $I(x) = \sum_i T_i\,\alpha_i G_i(x)\,c_i + T_{\text{end}}\cdot\text{bg}$, với $T_i = \prod_{j<i}(1-\alpha_j G_j)$.
+\end{itemize}
+\begin{center}
+\includegraphics[width=0.75\linewidth]{6_1_muc-tieu-va-gaussian-2d.png}
+\captionof{figure}{\footnotesize (a) Ảnh mục tiêu + lưới pixel; (b) một Gaussian $s=(7,3)$ px, $\theta=30°$ với các đường mức $1\sigma,2\sigma,3\sigma$; (c) kết quả render của Gaussian đó lên nền.}
+\end{center}
+\end{frame}
+
+% ===== Slide 27 (nguon: partADC_6.tex, frame "So sánh trực tiếp: không ADC vs có ADC") =====
+\begin{frame}{So sánh trực tiếp: không ADC vs có ADC}
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+\scriptsize
+\begin{itemize}
+    \item Ba kịch bản: (1) không ADC, $N{=}N_0$; (2) không ADC, khởi tạo ngẫu nhiên $N{=}N_{\text{cuối}}$; (3) có ADC, $N_0{\to}N_{\text{cuối}}$ dần.
+    \item (2) cùng số Gaussian (3) nhưng khởi tạo ngẫu nhiên không khớp tự nhiên vào vùng chi tiết.
+    \item[$\Rightarrow$] ADC không chỉ tăng $N$ mà đặt đúng chỗ cần thiết.
+\end{itemize}
+\end{column}
+\begin{column}{0.5\textwidth}
+\centering
+\includegraphics[width=0.85\linewidth]{6_10_khong-adc-vs-co-adc.png}
+\captionof{figure}{\footnotesize 3 hàng (không ADC $N_0$; ngẫu nhiên; có ADC) $\times$ 3 cột.}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ===== Slide 28 (nguon: partADC_7.tex, frame "Kết quả render cuối cùng: 3 kịch bản đối chiếu") =====
+% KET QUA QUAN TRONG -- giu du noi dung.
+\begin{frame}{Kết quả render cuối cùng: 3 kịch bản đối chiếu}
+\scriptsize
+\begin{itemize}
+  \item Hàng 1 — \textbf{ADC 3DGS gốc}: $N$ tăng từ khởi tạo lên $N$ cuối, $L_1$ cuối như trong hình.
+  \item Hàng 2 — \textbf{ADC FastGS-lite}: $L_1$ cuối \textbf{tương đương} nhưng \textbf{ít Gaussian hơn} — hiệu quả của Importance + prune multinomial + final prune.
+  \item Hàng 3 — \textbf{Không ADC}: $N{=}N_0$ cố định, không clone/split/prune — chất lượng kém hơn rõ rệt.
+  \item Mỗi hàng: render cuối, sai số $|I-T|$, ellipse $1.5\sigma$. Viền màu: đỏ=3DGS, xanh=FastGS, xám=không ADC.
+\end{itemize}
+\centering
+\includegraphics[width=0.42\linewidth]{7_5_cuoi-3dgs-fastgs-khong-adc.png}
+\captionof{figure}{\footnotesize Đối chiếu cuối: ADC 3DGS gốc / ADC FastGS-lite / không ADC.}
+\end{frame}

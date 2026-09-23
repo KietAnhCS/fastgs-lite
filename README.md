@@ -20,6 +20,19 @@ This fork keeps that method intact and rebuilds everything around it for a **16 
 | Progress signal | L1 loss + EMA | **composite Score logged every 1000 iterations**, with the per-1000 delta |
 | Memory | assumes headroom | **anti-OOM playbook** so the model is still retrievable after training |
 | Docs | README + wiki | [`DOCS/`](DOCS/README.md) — math foundation, mechanism walkthrough, Colab guide |
+| Optimizer | `torch.optim.Adam` | **fused CUDA Adam** kernel (Faster-GS-derived), always on |
+| Anti-aliasing | none | **3D filter** (Mip-Splatting-style), always on |
+| Gaussian layout | insertion order | **Morton-code reordering** every `morton_reorder_interval` iters (default 5000), always on |
+
+The optimizer/anti-aliasing/reordering mechanisms above are ports of ideas from
+[Faster-GS](https://github.com/nerficg-project/faster-gaussian-splatting); they run unconditionally (no
+opt-in flag). FastGS's own gradient + multi-view densify/prune (`densify_and_prune_fastgs`) remains the sole
+density-control mechanism — it is the fork's main contribution and is algorithmically incompatible with
+MCMC-style densification (3DGS-MCMC), so the MCMC path from Faster-GS was **not** wired in as an alternative;
+its implementation still exists in `scene/gaussian_model.py` (`mcmc_*` methods) for anyone who wants to swap it
+in manually. The Faster-GS CUDA rasterizer itself was not adopted either — it doesn't expose the
+`radii`/`viewspace_points` that `densify_and_prune_fastgs` needs, so swapping it in would have broken that
+mechanism.
 
 Extra task branches from upstream (dynamic scenes, sparse view, surface reconstruction, SLAM) are **not** included here — see [Not included](#not-included).
 
@@ -235,12 +248,21 @@ artifact, not divergence**. `opacity_reset_interval = 3000` makes `reset_opacity
 iterations, and `score_every = 1000` samples the model in the same iteration, before any recovery step. Full
 recovery takes fewer than 1000 iterations in every case.
 
-Two practical consequences:
+Two practical consequences (of the run described above, which used a fixed `opacity_reset_interval = 3000`
+regardless of the `iterations` budget):
 
 - Do not set `iterations` to a multiple of 3000 while densification is still active — the run would terminate on
   a reset. `iterations = 7000` lands 1000 steps after the last reset, so the delivered model is intact.
   Budgets of 15000+ are unaffected because `densify_until_iter = 15000` closes that branch.
 - Offsetting `score_every` (e.g. 1100) yields a monotone curve without changing the optimization.
+
+**Update**: `pipeline/trainer.py` now scales `opacity_reset_interval` with the actual `iterations` budget
+(`opacity_reset_frac`, default `0.2`, mirroring how `densify_until_frac` already scales `densify_until_iter`),
+instead of leaving it fixed at 3000. Runs launched through `pipeline/` no longer need the "avoid multiples of
+3000" workaround above; the collapse-at-reset described here can still happen (it is inherent to
+`reset_opacity()`), but it is now spread proportionally across the run instead of landing at a fixed absolute
+iteration that may sit arbitrarily close to (or past) the end of a short run. Calling `train.py` directly (outside
+`pipeline/`) still defaults to the fixed `opacity_reset_interval = 3000` unless passed explicitly.
 
 ### Table 3 — Cost and storage
 

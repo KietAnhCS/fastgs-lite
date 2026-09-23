@@ -21,6 +21,10 @@ def build_args(cfg, scene, model_path=None, iterations=None, resolution=None, ex
     # Densify (và các lần reset opacity bên trong nó) phải kết thúc sớm hơn vòng
     # cuối, nếu không model dừng ngay sau một lần reset và PSNR sụp.
     densify_until = max(1, int(round(getattr(cfg, "densify_until_frac", 0.5) * n_iter)))
+    # opacity_reset_interval gốc (3000, mặc định của OptimizationParams) được đặt cho
+    # lịch 30k -- co giãn theo cùng nguyên tắc với densify_until_iter ở trên, nếu không
+    # reset rơi lệch tỷ lệ và gây sụp PSNR giữa chừng (xem pipeline/config.py).
+    opacity_reset = max(1, int(round(getattr(cfg, "opacity_reset_frac", 0.2) * n_iter)))
     parser = ArgumentParser()
     lp, op, pp = ModelParams(parser), OptimizationParams(parser), PipelineParams(parser)
     argv = ["-s", data_mod.scene_path(cfg, scene), "-m", model_path,
@@ -29,6 +33,7 @@ def build_args(cfg, scene, model_path=None, iterations=None, resolution=None, ex
             "--iterations", str(n_iter),
             "--position_lr_max_steps", str(n_iter),
             "--densify_until_iter", str(densify_until),
+            "--opacity_reset_interval", str(opacity_reset),
             "--mult", str(cfg.mult),
             "--llffhold", str(cfg.llffhold)]
     if cfg.white_background:
@@ -79,6 +84,8 @@ def train_scene(cfg, scene, iterations=None, tag=None, keep_model=False, quiet_e
     scene_obj = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
 
+    gaussians.setup_3d_filter(scene_obj.getTrainCameras(), opt.filter_3d_variance)
+
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -97,7 +104,7 @@ def train_scene(cfg, scene, iterations=None, tag=None, keep_model=False, quiet_e
     score_every = max(1, min(cfg.score_every, iterations))
     pbar = tqdm(range(1, iterations + 1), desc=f"train[{tag}]", dynamic_ncols=True)
     for iteration in pbar:
-        gaussians.update_learning_rate(iteration)
+        current_xyz_lr = gaussians.update_learning_rate(iteration)
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
@@ -123,7 +130,10 @@ def train_scene(cfg, scene, iterations=None, tag=None, keep_model=False, quiet_e
         with torch.no_grad():
             ema_loss = 0.4 * loss.item() + 0.6 * ema_loss
 
-            # --- densify + prune đa góc nhìn của FastGS ---
+            # --- densify + prune đa góc nhìn của FastGS (đóng góp chính của repo này) ---
+            # MCMC densification (3DGS-MCMC) loại trừ lẫn nhau về thuật toán với nhánh dưới
+            # đây (xem scene/gaussian_model.py::mcmc_densification) nên không thể "luôn bật"
+            # cả hai; nhánh FastGS được giữ làm cơ chế duy nhất, luôn chạy.
             if iteration < opt.densify_until_iter:
                 gaussians.max_radii2D[visibility] = torch.max(gaussians.max_radii2D[visibility],
                                                               radii[visibility])
@@ -137,14 +147,21 @@ def train_scene(cfg, scene, iterations=None, tag=None, keep_model=False, quiet_e
                         max_screen_size=size_threshold, min_opacity=0.005,
                         extent=scene_obj.cameras_extent, radii=radii, args=opt,
                         importance_score=importance, pruning_score=pruning)
+                    gaussians.compute_3d_filter(scene_obj.getTrainCameras())
                 if iteration % opt.opacity_reset_interval == 0 or (
                         dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
+
+            # Memory-locality reordering (Faster-GS-style), luôn bật.
+            morton_interval = opt.morton_reorder_interval
+            if morton_interval and iteration < opt.densify_until_iter and iteration % morton_interval == 0:
+                gaussians.apply_morton_ordering()
 
             if iteration % 3000 == 0 and 15_000 < iteration < 30_000:
                 camlist = sampling_cameras(scene_obj.getTrainCameras().copy())
                 _, pruning = compute_gaussian_score_fastgs(camlist, gaussians, pipe, bg, opt)
                 gaussians.final_prune_fastgs(min_opacity=0.1, pruning_score=pruning)
+                gaussians.compute_3d_filter(scene_obj.getTrainCameras())
 
             if iteration < iterations:
                 gaussians.optimizer_step(iteration)

@@ -1,0 +1,83 @@
+% --- Slide 9 (từ part2.tex: Compact Box) ---
+\begin{frame}{Compact Box -- đòn bẩy tăng tốc \#1 của FastGS}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\footnotesize
+    \begin{itemize}
+        \item Mặc định: bounding-box $3\sigma$ -- khá rộng, chạm nhiều tile không cần thiết
+        \item FastGS thay bằng \textbf{compact box}: vùng ảnh hưởng 2D nhỏ hơn, điều chỉnh bằng hệ số \texttt{-{}-mult}
+        \item Kết quả: giảm đáng kể số tile mỗi Gaussian phải rasterize
+    \end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+    \centering
+    \includegraphics[width=0.95\linewidth]{ch3_compact_box.png}
+    \captionof{figure}{\footnotesize So sánh bounding-box mặc định và compact box}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- Slide 10 (từ part2.tex: Alpha blending front-to-back) ---
+\begin{frame}{Alpha blending (front-to-back)}
+    \begin{itemize}
+        \item Màu pixel là tổng có trọng số của các Gaussian chồng nhau theo thứ tự độ sâu
+        \item Công thức blend:
+        \[
+            C = \sum_i c_i\,\alpha_i\,T_i, \qquad T_i = \prod_{j<i}(1-\alpha_j)
+        \]
+        \item $T_i$: độ truyền sáng còn lại (transmittance) trước Gaussian thứ $i$
+    \end{itemize}
+    \vspace{0.2cm}
+    \centering
+    \includegraphics[width=0.55\linewidth]{ch4_alpha_blend_stack.png}
+    \captionof{figure}{Chồng lớp alpha blending theo độ sâu}
+\end{frame}
+
+% --- Slide 11 (từ part2.tex: Tổng kết phương trình render) ---
+\begin{frame}{Tổng kết phương trình render}
+    \begin{itemize}
+        \item Phương trình render đầy đủ:
+        \[
+            C(p) = \sum_i c_i\,\alpha_i \prod_{j<i}(1-\alpha_j)
+        \]
+        \item Khả vi theo mọi tham số: vị trí $\mu$, hiệp phương sai $\Sigma$, độ mờ $\alpha$, hệ số SH
+    \end{itemize}
+    \vspace{0.4cm}
+    \centering
+    \begin{tikzpicture}[node distance=1.1cm, every node/.style={font=\footnotesize}]
+        \node (g3d) {Gaussian 3D};
+        \node (proj) [right=of g3d] {Chiếu 2D};
+        \node (alpha) [right=of proj] {Trường alpha};
+        \node (blend) [right=of alpha] {Blend};
+        \node (pixel) [right=of blend] {Pixel};
+        \draw[-Latex] (g3d) -- (proj);
+        \draw[-Latex] (proj) -- (alpha);
+        \draw[-Latex] (alpha) -- (blend);
+        \draw[-Latex] (blend) -- (pixel);
+    \end{tikzpicture}
+\end{frame}
+
+% --- Slide 12 (từ part3.tex: Hàm mất mát L1 + D-SSIM) ---
+\begin{frame}{Hàm mất mát: kết hợp L1 và D-SSIM}
+    \begin{columns}[T]
+        \begin{column}{0.5\textwidth}
+            \begin{itemize}
+                \item Loss huấn luyện kết hợp hai thành phần bổ trợ nhau:
+                \begin{itemize}
+                    \item \textbf{L1}: sai khác trung bình theo từng pixel.
+                    \item \textbf{D-SSIM}: $1-\text{SSIM}$, phản ánh sai lệch \textbf{cấu trúc}.
+                \end{itemize}
+                \item Công thức tổng:
+                \[
+                    \mathcal{L} = (1-\lambda)\,\mathcal{L}_1 + \lambda\,(1-\text{SSIM})
+                \]
+                \item Hệ số $\lambda = $ \texttt{lambda\_dssim}: mặc định $0.2$, \texttt{fastgs-lite}: $0.25$
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{ch5_loss_mix.png}
+            \captionof{figure}{Tỉ trọng L1 và D-SSIM trong loss}
+        \end{column}
+    \end{columns}
+\end{frame}

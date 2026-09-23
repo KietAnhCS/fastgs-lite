@@ -1,0 +1,67 @@
+\begin{frame}{Vấn đề triệt tiêu gradient (gradient cancellation)}
+    \begin{itemize}
+        \item Khi lấy trung bình vector gradient từ \textbf{nhiều view có hướng ngược nhau}, chúng có thể \textbf{triệt tiêu lẫn nhau}.
+        \item Hệ quả: dù mỗi view riêng lẻ báo lỗi lớn, $\bar g$ trung bình vẫn nhỏ $\Rightarrow$ Gaussian \textbf{bị bỏ sót}, không được densify.
+        \item FastGS cải thiện bằng \textbf{multi-view consistency score} thay vì chỉ dựa vào gradient trung bình.
+    \end{itemize}
+    \vspace{0.2cm}
+    \centering
+    \includegraphics[width=0.7\linewidth]{fig_03_grad_cancel.png}
+\end{frame}
+
+% --- Slide 36 ---
+\begin{frame}{Clone (nhân bản)}
+    \footnotesize
+    \begin{itemize}
+        \item Áp dụng cho Gaussian \textbf{nhỏ nhưng thiếu hình học} (under-reconstruction).
+        \item Nhân đôi Gaussian theo \textbf{hướng gradient vị trí} $\bar g$, đặt bản sao lệch một khoảng nhỏ.
+        \item \textbf{Không} thay đổi kích thước/covariance -- chỉ lấp đầy vùng thiếu chi tiết bằng tăng mật độ.
+    \end{itemize}
+    \begin{columns}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{fig_08_clone_before_after.png}
+            \captionof{figure}{Trước/sau clone}
+        \end{column}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{ch7_clone_region.png}
+            \captionof{figure}{Vùng được clone}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 37 ---
+\begin{frame}{Split (tách)}
+    \footnotesize
+    \begin{itemize}
+        \item Áp dụng cho Gaussian \textbf{quá to} (over-reconstruction), vượt ngưỡng \texttt{--dense} theo scene extent.
+        \item Tách thành \textbf{2 Gaussian con} nhỏ hơn (giảm scale theo hệ số cố định).
+        \item Vị trí Gaussian con được \textbf{lấy mẫu ngẫu nhiên} theo phân phối chuẩn dựa trên covariance gốc của Gaussian cha.
+    \end{itemize}
+    \begin{columns}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{fig_09_split_geometry.png}
+            \captionof{figure}{Hình học split}
+        \end{column}
+        \begin{column}{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{ch7_split_sampling.png}
+            \captionof{figure}{Lấy mẫu theo covariance}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 38 ---
+\begin{frame}{Prune theo độ quan trọng đa góc nhìn (FastGS)}
+    \begin{itemize}
+        \item 3DGS gốc: prune đơn thuần theo ngưỡng \textbf{opacity thấp} hoặc \textbf{kích thước quá lớn}.
+        \item \textbf{FastGS}: tính điểm \emph{importance} cho mỗi Gaussian dựa trên đóng góp thực tế vào chất lượng ảnh render, tổng hợp qua \textbf{nhiều góc nhìn}.
+        \item Gaussian có điểm importance thấp nhất bị cắt tỉa trước, bất kể opacity/kích thước.
+        \item Kết quả: mô hình \textbf{gọn hơn} nhưng vẫn giữ chất lượng tái tạo -- đây là \textbf{đòn bẩy chính} giúp FastGS tăng tốc.
+    \end{itemize}
+    \vspace{0.2cm}
+    \centering
+    \includegraphics[width=0.7\linewidth]{ch7_importance_pruning.png}
+\end{frame}

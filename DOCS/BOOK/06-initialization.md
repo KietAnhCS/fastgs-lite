@@ -385,4 +385,73 @@ Giá trị full precision (để chương sau copy nếu cần): $\tilde s=(-0.1
 
 ---
 
+## Cập nhật: sửa lỗi + random init có carving
+
+### Initialization gốc của 3DGS thiếu gì
+
+3DGS gốc có đúng hai nhánh khởi tạo, cả hai đều đã mô tả ở mục 1.1–1.2 phía trên:
+
+1. **Có COLMAP** — dùng thẳng point cloud SfM $\{p_k\}_{k=1}^{N_0}$ làm $\mu_i$. Tốt, vì mỗi điểm đã "biết" nằm trên một bề mặt thật (được tam giác hoá từ nhiều ảnh).
+2. **Không có COLMAP (nhánh Blender/synthetic)** — sample $N=100{,}000$ điểm **đều** trong một hộp cố định $[-1.3,\,1.3]^3$, không quan tâm điểm đó có nằm trong tầm nhìn camera nào hay không.
+
+Lỗ hổng nằm giữa hai nhánh này: pipeline của repo luôn đi qua nhánh COLMAP (`readColmapSceneInfo`) vì dataset cuộc thi ở dạng ảnh thật + SfM. Nếu SfM thất bại trên một scene (không hiếm với scene khó — ít feature, motion blur…) và `sparse/0/points3D.bin`/`.ply` không đọc được, code cũ chạy:
+
+```python
+try:
+    pcd = fetchPly(ply_path)
+except:
+    pcd = None
+...
+self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)  # pcd=None -> crash
+```
+
+`create_from_pcd` gọi thẳng `np.asarray(pcd.points)` — với `pcd=None` chương trình dừng ngay, **không có fallback nào**. Đây là bug thật (mất cả 1 scene trong submission), không phải một tính năng còn thiếu.
+
+### Vì sao "sample đều trong hộp/khối cầu bao" là lãng phí
+
+Gọi $\mathcal F=\bigcup_{v=1}^V \text{frustum}(v)$ là hợp các vùng nhìn thấy được của $V$ camera train. Với một scene thật (đặc biệt object-centric hoặc camera chỉ quét một nửa không gian), thể tích $\mathcal F$ thường chỉ chiếm một phần nhỏ của khối bao toàn cảnh. Nếu sample đều $N_0$ điểm trong toàn bộ khối bao mà không lọc theo $\mathcal F$, một phần lớn trong số đó rơi ra ngoài $\mathcal F$: các Gaussian sinh ra ở đó **không được bất kỳ ảnh training nào render tới**, do đó không nhận gradient hữu ích — chúng chỉ tồn tại cho tới khi ADC (chương 7) tình cờ prune chúng đi qua điều kiện opacity/size, tốn bộ nhớ (mỗi Gaussian mang $177$ float trạng thái Adam, mục 1.4) và một phần thời gian các vòng đầu.
+
+### Carving bằng frustum (`scene/dataset_readers.py::generate_random_point_cloud`)
+
+Thay vì sample trong hộp $[-1.3,1.3]^3$ cố định, code mới sample đều trong **khối cầu bán kính `extent`** đã có sẵn ở mục 1.3 (tâm $\bar c$, bán kính $\text{extent}=1.1\max_v\lVert c_v-\bar c\rVert$) — dùng phương pháp sample cầu chuẩn (hướng ngẫu nhiên chuẩn hoá, bán kính $\propto U^{1/3}$ để mật độ đều theo thể tích):
+
+$$
+\hat d \sim \mathcal N(0, I_3),\quad \hat d \leftarrow \hat d / \lVert \hat d\rVert,\qquad
+r = \text{extent}\cdot U^{1/3},\ U\sim\text{Unif}(0,1),\qquad p = \bar c + r\hat d
+$$
+
+Sau đó, với mỗi camera $v$ có ma trận quay/tịnh tiến $(R_v, T_v)$ (quy ước COLMAP: $p_{\text{cam}} = R_v^\top p + T_v$, đúng như `getWorld2View2` đã dùng ở mục 1.3), một điểm $p$ được xem là nằm trong frustum của $v$ nếu:
+
+$$
+z_v(p) > 0 \quad\text{(trước camera)},\qquad
+|x_v(p)| \le z_v(p)\tan\!\Big(\frac{\text{FoV}_x^{(v)}}{2}\Big),\qquad
+|y_v(p)| \le z_v(p)\tan\!\Big(\frac{\text{FoV}_y^{(v)}}{2}\Big)
+$$
+
+với $(x_v,y_v,z_v)=R_v^\top p + T_v$ (không dùng far-plane vì `CameraInfo` ở bước đọc dataset chưa mang thông tin đó). Hai chế độ giữ điểm:
+
+- `random_init_carving=True`, `carve_in_all_frustums=False` (mặc định của hàm) — giữ $p$ nếu nằm trong **ít nhất 1** camera: $p\in\bigcup_v\text{frustum}(v)=\mathcal F$.
+- `carve_in_all_frustums=True` — giữ $p$ chỉ khi nằm trong **mọi** camera: $p\in\bigcap_v\text{frustum}(v)$, chặt hơn nhiều, chỉ hợp lý khi camera cùng quay quanh một object trung tâm.
+
+Nếu carving loại sạch toàn bộ điểm (frustum quá hẹp hoặc dữ liệu camera bất thường), hàm fallback về đúng tập **chưa carve** — không bao giờ trả về point cloud rỗng (tránh crash kiểu khác thay cho crash cũ).
+
+### So với 3DGS gốc
+
+| | 3DGS gốc (nhánh Blender) | Bản sửa trong repo này |
+|---|---|---|
+| Miền sample | hộp cố định $[-1.3,1.3]^3$ | khối cầu bán kính `extent` quanh $\bar c$ (khớp tỉ lệ thật của scene, mục 1.3) |
+| Lọc theo tầm nhìn | không | carving theo $\bigcup_v$ hoặc $\bigcap_v$ frustum |
+| Khi thiếu point cloud (nhánh COLMAP) | không có nhánh này trong code gốc | fallback tự động thay vì crash |
+
+Kết quả: (a) không còn mất scene vì crash khi SfM thất bại; (b) khi phải random-init, phần lớn điểm khởi tạo nằm đúng vùng có ít nhất một camera quan sát được, nên ADC ở các vòng đầu tốn ít "công dọn rác" hơn so với sample đều toàn khối bao.
+
+### Trạng thái tích hợp
+
+- `scene/dataset_readers.py`: hàm mới `generate_random_point_cloud(cam_infos, nerf_normalization, n_points, carve, carve_in_all_frustums)`; `readColmapSceneInfo` nhận thêm `random_init_force`, `random_init_n_points`, `random_init_carving` và gọi hàm trên khi `pcd is None or random_init_force`.
+- `arguments/__init__.py` (`ModelParams`): 3 flag cùng tên — `random_init_force=False` (giữ hành vi cũ khi COLMAP có point cloud hợp lệ), `random_init_n_points=100_000`, `random_init_carving=True`.
+- Ý tưởng carving có tham khảo repo Faster-GS (Hahlbohm et al., CVPR 2026), nhưng công thức frustum test và cách sample cầu ở trên được viết lại thuần numpy riêng cho quy ước camera của repo này, không copy nguyên bản.
+- Chưa test trên GPU thật (viết trong môi trường không có torch/CUDA) — cần verify trên Colab với ít nhất một scene cố tình thiếu `points3D.ply` để xác nhận không còn crash và chất lượng init hợp lý.
+
+---
+
 [← Chương 5](05-ky-hieu-nen-tang-toan-hoc.md) | [Mục lục](00-muc-luc.md) | [Chương 7 →](07-3d-gaussians.md)

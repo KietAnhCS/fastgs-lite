@@ -1,0 +1,94 @@
+% ============================================================
+% Slide 13-16 (bản 45 phút) -- rút gọn từ part3.tex, part4.tex
+% ============================================================
+
+% --- Slide 13 (part3.tex: Gradient tập trung tại biên Gaussian) ---
+\begin{frame}{Gradient tập trung tại biên Gaussian}
+    \begin{columns}[T]
+        \begin{column}{0.5\textwidth}
+            \begin{itemize}
+                \item Gradient view-space lớn nhất xuất hiện ở vùng \textbf{biên/rìa} của Gaussian -- nơi ảnh render lệch nhiều nhất so với ảnh thật.
+                \item Gradient tại biên chính là \textbf{tín hiệu} quyết định \textbf{densify} (thêm Gaussian mới) ở giai đoạn sau.
+                \item Vùng gradient thấp $\Rightarrow$ Gaussian đã khớp tốt, không cần chia tách thêm.
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \centering
+            \includegraphics[width=0.95\linewidth]{ch6_edge_gradient.png}
+            \captionof{figure}{Gradient tập trung ở biên Gaussian}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 14 (part3.tex: Tổng kết vòng lặp huấn luyện) ---
+\begin{frame}{Tổng kết vòng lặp huấn luyện}
+    \begin{center}
+        \footnotesize
+        \begin{tikzpicture}[
+            node distance=1.1cm and 1.6cm,
+            box/.style={draw, rounded corners, fill=blue!8, align=center, minimum width=2.6cm, minimum height=1cm},
+            ->, thick
+        ]
+            \node[box] (render) {1. Render};
+            \node[box, right=of render] (loss) {2. Tính loss\\ (L1 + D-SSIM)};
+            \node[box, right=of loss] (backward) {3. Backward\\ (lan gradient)};
+            \node[box, below=of loss] (step) {4. optimizer.step()\\ (sparse Adam)};
+            \node[box, left=of step] (dp) {5. Densify /\\ Prune (định kỳ)};
+
+            \draw (render) -- (loss);
+            \draw (loss) -- (backward);
+            \draw (backward) |- (step);
+            \draw (step) -- (dp);
+            \draw (dp) |- (render);
+        \end{tikzpicture}
+    \end{center}
+    \begin{itemize}
+        \item Một iteration: \textbf{render} $\to$ \textbf{loss} $\to$ \textbf{backward} $\to$ \textbf{optimizer.step()} $\to$ (định kỳ) \textbf{densify/prune} $\to$ lặp lại đến hội tụ.
+    \end{itemize}
+\end{frame}
+
+% --- Slide 15 (part4.tex: Tổng quan Adaptive Density Control (ADC)) ---
+\begin{frame}{Tổng quan Adaptive Density Control (ADC)}
+    \begin{itemize}
+        \item Point cloud khởi tạo từ COLMAP thường \textbf{quá thưa} ở vùng thiếu chi tiết, đồng thời có Gaussian \textbf{quá to} che khuất chi tiết nhỏ.
+        \item ADC chạy định kỳ mỗi \texttt{densification\_interval} iteration để điều chỉnh mật độ Gaussian:
+        \begin{itemize}
+            \item \textbf{Densify}: nhân bản (clone) hoặc tách (split) Gaussian thiếu hình học.
+            \item \textbf{Prune}: cắt tỉa Gaussian thừa, mờ, vô dụng.
+        \end{itemize}
+        \item Mục tiêu: cân bằng chất lượng tái tạo và số lượng Gaussian (bộ nhớ, tốc độ render).
+    \end{itemize}
+    \vspace{0.2cm}
+    \centering
+    \begin{tikzpicture}[node distance=1.4cm, every node/.style={font=\footnotesize}]
+        \node[draw, rounded corners, fill=blue!10] (adc) {ADC};
+        \node[draw, rounded corners, fill=green!10, below left=0.9cm and 1.6cm of adc] (clone) {Clone};
+        \node[draw, rounded corners, fill=orange!10, below=1.2cm of adc] (split) {Split};
+        \node[draw, rounded corners, fill=red!10, below right=0.9cm and 1.6cm of adc] (prune) {Prune};
+        \draw[->] (adc) -- (clone);
+        \draw[->] (adc) -- (split);
+        \draw[->] (adc) -- (prune);
+    \end{tikzpicture}
+\end{frame}
+
+% --- Slide 16 (part4.tex: Tích luỹ gradient view-space) ---
+\begin{frame}{Tích luỹ gradient view-space}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\footnotesize
+    \begin{itemize}
+        \item Với mỗi Gaussian, gradient vị trí 2D (view-space) được \textbf{cộng dồn} qua nhiều lần render từ các camera khác nhau.
+        \item Đồng thời đếm \texttt{denom}: số lần Gaussian đó thực sự visible trong batch.
+        \item Gradient trung bình dùng làm tín hiệu densify:
+        \[
+            \bar{g} = \frac{\sum_{v} \nabla_{\text{view}} }{\text{denom}}
+        \]
+        \item $\bar g$ lớn $\Rightarrow$ ứng viên clone/split.
+    \end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+    \centering
+    \includegraphics[width=0.95\linewidth]{fig_02_accum_denom.png}
+\end{column}
+\end{columns}
+\end{frame}

@@ -2705,4 +2705,68 @@ Hàng 1, 2, 6 hạ $r_{\text{spawn}}$; hàng 3 làm $r_{\text{prune}}$ dịu nh�
 
 ---
 
+## Cập nhật: MCMC densification (tuỳ chọn)
+
+### 1. Vấn đề mà ADC (gốc lẫn `densify_and_prune_fastgs`) không giải quyết được
+
+ADC gốc của 3DGS chọn ứng viên densify bằng một ngưỡng thuần heuristic trên gradient vị trí tích luỹ (`grad_thresh`), rồi **clone** (nếu Gaussian nhỏ) hoặc **split N=2** (nếu Gaussian lớn). Không có ràng buộc nào đảm bảo rằng ngay tại thời điểm nhân bản, tổng "khối lượng quang học" (opacity nhân với footprint, tức phần đóng góp vào alpha-compositing) của các bản sao bằng đúng bản gốc — hai Gaussian con y hệt bản cha chồng lên nhau sẽ tạm thời làm điểm đó **sáng/đậm hơn** cho tới khi optimizer kịp điều chỉnh, gây giật ảnh cục bộ ngay sau mỗi lần densify. Số Gaussian cuối cùng cũng không có cận trên tường minh — hoàn toàn do động lực $q=(1+r_{\text{spawn}})(1-r_{\text{prune}})$ ở 12.4 quyết định, dễ nổ theo hàm mũ nếu $q>1$ kéo dài (xem 12.4.7).
+
+`densify_and_prune_fastgs` (đang dùng trong repo, xem phần trên của chương này) đã cải thiện đáng kể bằng cách thêm điều kiện AND với **multi-view importance/pruning score** — nhưng đây vẫn là một phép cắt ngưỡng rời rạc (`metric_mask = importance_score > 5`), không có cơ sở xác suất, và vẫn thừa hưởng vấn đề "không bảo toàn khối lượng quang học khi nhân bản" ở trên.
+
+### 2. Ý tưởng MCMC densification (3DGS-MCMC, Kheradmand et al., NeurIPS 2024)
+
+Thay vì coi tập Gaussian là các tham số được tối ưu thuần bằng gradient descent, 3DGS-MCMC coi chúng là một tập **hạt (particle)** đang lấy mẫu một phân phối xác suất xấp xỉ cảnh 3D — quá trình huấn luyện trở thành **Stochastic Gradient Langevin Dynamics (SGLD)**: gradient descent thông thường cộng thêm một bước nhiễu ngẫu nhiên có kiểm soát. Điều này thay đổi cả cách densify lẫn cách optimizer cập nhật vị trí.
+
+**a) Relocation — thay clone/split bằng resampling có xác suất**
+
+Các Gaussian "chết" (opacity $\le$ ngưỡng, hoặc quaternion suy biến gần 0) không bị xoá rồi hy vọng gradient sẽ tự sinh Gaussian mới bù vào (như ADC), mà được **thay thế trực tiếp** bằng cách resample từ các Gaussian còn sống, với xác suất chọn tỉ lệ thuận với opacity (Gaussian đóng góp quang học càng lớn càng dễ được "nhân bản" — bản chất là importance sampling).
+
+Vấn đề đặt ra: nếu một Gaussian sống bị chọn $n$ lần (tạo ra $n$ bản gần trùng vị trí), làm sao để $n$ bản đó **cùng nhau** đóng góp vào alpha-compositing đúng bằng 1 bản gốc, tại đúng thời điểm nhân bản (không cần chờ optimizer sửa)? Đây chính là điều ADC gốc bỏ qua. 3DGS-MCMC giải bằng công thức đóng (Eq. 9 của paper, đã cài trong `scene/gaussian_model.py::_mcmc_relocate`):
+
+$$
+\alpha_{\text{new}} = 1-(1-\alpha)^{1/n}
+$$
+
+$$
+D(n,\alpha_{\text{new}}) = \sum_{k=0}^{n-1}\binom{n-1}{k}(-1)^k\,\frac{\alpha_{\text{new}}^{\,k+1}}{\sqrt{k+1}}
+$$
+
+$$
+s_{\text{new}} = \frac{\alpha}{D(n,\alpha_{\text{new}})}\cdot s
+$$
+
+với $\alpha, s$ là opacity/scale gốc trước khi nhân bản. Trực giác: $\alpha_{\text{new}}$ là opacity sao cho $n$ Gaussian giống hệt nhau, xếp chồng dọc tia nhìn, cho tổng transmittance-loss đúng bằng 1 Gaussian opacity $\alpha$ — còn $D(n,\alpha_{\text{new}})$ là hệ số hiệu chỉnh scale để tổng "diện tích quang học" cũng được bảo toàn. Nói cách khác: **ngay sau khi densify, ảnh render tại vùng đó gần như không đổi** — khác hẳn ADC gốc, nơi densify luôn kèm một nhiễu loạn tạm thời.
+
+**b) Add-noise — phần "MC" (Monte Carlo) mà ADC không có**
+
+Sau mỗi bước optimizer, vị trí mỗi Gaussian được cộng thêm nhiễu Gaussian $\epsilon \sim \mathcal N(0, \Sigma_i)$, dùng đúng ma trận hiệp phương sai 3D $\Sigma_i = R_iS_iS_i^\top R_i^\top$ của chính Gaussian đó (nhiễu "méo" theo hình dạng elip của nó, không phải nhiễu đẳng hướng), nhân với hệ số:
+
+$$
+\text{noise\_factor} = \text{lr}_{xyz}\cdot\lambda_{\text{noise}}\cdot\sigma\!\left(0.5-100\,\alpha\right)
+$$
+
+($\sigma$ là hàm sigmoid). Vì $\sigma(0.5-100\alpha)\to 0$ khi $\alpha\to 1$ và $\to 1$ khi $\alpha\to 0$: Gaussian có opacity cao (đã "chắc chắn" là một phần thật của cảnh) gần như đứng yên, còn Gaussian có opacity thấp (chưa hội tụ, còn nghi ngờ) bị nhiễu mạnh để tiếp tục "thăm dò" không gian nghiệm xung quanh — đúng tinh thần bước Langevin trong SGLD. ADC/gradient-descent thuần không có bước khám phá ngẫu nhiên này; toàn bộ chuyển động của Gaussian chỉ đến từ gradient của loss.
+
+**c) Cận cứng số lượng Gaussian**
+
+Thay vì để $N$ tăng không kiểm soát theo $N_n=N_0[(1+r_{\text{spawn}})(1-r_{\text{prune}})]^n$ như 12.4, MCMC tăng dân số tối đa $5\%$ mỗi lần gọi (`current_n_points * 1.05`) cho tới khi chạm `cap_max` — nghĩa là **VRAM và thời gian render/iter có thể ước lượng trước khi train**, không phụ thuộc scene "nổ" densify hay không.
+
+### 3. So sánh trực diện
+
+| Tiêu chí | ADC gốc 3DGS | `densify_and_prune_fastgs` (**luôn dùng, duy nhất**) | MCMC (có code, không được gọi mặc định) |
+|---|---|---|---|
+| Cơ sở lý thuyết | Heuristic ngưỡng gradient | Heuristic + multi-view importance score | Xác suất (SGLD / importance resampling) |
+| Bảo toàn khối lượng quang học lúc nhân bản | Không | Không (clone/split kế thừa cơ chế ADC) | Có, bằng công thức đóng Eq. 9 |
+| Cận cứng số Gaussian | Không | Không (chỉ có final-prune giảm bớt) | Có (`cap_max`, tăng tối đa 5%/lần) |
+| Cần multi-view scoring (thêm forward pass) | Không | Có ($2V$ ảnh phụ mỗi lần chấm điểm, xem 12.3.5) | Không |
+| Có bước nhiễu thăm dò (exploration) | Không | Không | Có (`mcmc_add_noise`, tỉ lệ nghịch opacity) |
+
+### 4. Trạng thái tích hợp
+
+Đã cài trong `scene/gaussian_model.py` (`mcmc_densification`, `mcmc_add_noise`, `_mcmc_relocate`) — port có tham khảo cách hiện thực của repo Faster-GS (CVPR 2026). **Quyết định (đợt tích hợp "luôn bật, không cờ"): KHÔNG wiring MCMC vào control flow mặc định** — cờ `use_mcmc` đã bị xoá khỏi `arguments/__init__.py` và nhánh gọi trong `train.py`/`pipeline/trainer.py` đã bị xoá. Lý do: MCMC và `densify_and_prune_fastgs` loại trừ lẫn nhau về mặt thuật toán (không thể chạy cả hai trên cùng tập Gaussian trong cùng vòng lặp), và `densify_and_prune_fastgs` là đóng góp chính của repo FastGS nên được ưu tiên giữ làm cơ chế duy nhất. Các hàm `mcmc_*` vẫn còn nguyên trong `gaussian_model.py` làm code thư viện dự phòng — có thể gọi thủ công (thay thế nhánh `densify_and_prune_fastgs` trong `train.py`/`pipeline/trainer.py`) nếu sau này cần benchmark so sánh. `mcmc_cap_max`, `mcmc_min_opacity`, `mcmc_noise_lr` vẫn còn trong `arguments/__init__.py` làm tham số dự phòng cho các hàm này.
+
+Toàn bộ phần này được viết trong môi trường không có torch/CUDA, **chưa test trên GPU thật** — cần verify PSNR/tốc độ trên Colab trước khi dùng cho submission thật.
+
+---
+
 [← Chương 11](11-gradient-flow-backprop.md) | [Mục lục](00-muc-luc.md) | [Chương 13 →](13-tong-hop-chi-phi-fastgs.md)

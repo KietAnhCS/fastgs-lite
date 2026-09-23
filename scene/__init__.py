@@ -45,8 +45,12 @@ class Scene:
         self.test_cameras = {}
 
         if os.path.exists(os.path.join(args.source_path, "sparse")):
-            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval,
-                                                          getattr(args, "llffhold", None) or 8)
+            scene_info = sceneLoadTypeCallbacks["Colmap"](
+                args.source_path, args.images, args.eval,
+                getattr(args, "llffhold", None) or 8,
+                random_init_force=getattr(args, "random_init_force", False),
+                random_init_n_points=getattr(args, "random_init_n_points", 100_000),
+                random_init_carving=getattr(args, "random_init_carving", True))
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
