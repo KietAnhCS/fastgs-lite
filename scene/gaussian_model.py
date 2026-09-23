@@ -132,9 +132,12 @@ class GaussianModel:
 
     @property
     def get_scaling(self):
-        if self._filter_3d is not None:
+        if self._filter_3d is not None and self._filter_3d.shape[0] == self._scaling.shape[0]:
             # Clamp the raw (log-space) scale from below so screen-space footprint never
             # drops under one pixel worth of extent -> removes aliasing when zooming/downsampling.
+            # Densify/prune inside densify_and_prune_fastgs changes the point count before
+            # compute_3d_filter() re-syncs _filter_3d, so a stale (mismatched) filter is
+            # skipped here rather than crashing on the broadcast.
             return self.scaling_activation(torch.maximum(self._scaling, self._filter_3d))
         return self.scaling_activation(self._scaling)
     
