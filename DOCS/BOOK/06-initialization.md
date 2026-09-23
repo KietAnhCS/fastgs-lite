@@ -420,6 +420,12 @@ $$
 r = \text{extent}\cdot U^{1/3},\ U\sim\text{Unif}(0,1),\qquad p = \bar c + r\hat d
 $$
 
+**Vì sao $U^{1/3}$ chứ không phải $U$ trực tiếp.** Sai lầm thường gặp là lấy $r=\text{extent}\cdot U$ — trông "đều" vì $U\sim\text{Unif}(0,1)$, nhưng thực ra làm điểm dồn về tâm khối cầu. Lý do: thể tích của một lớp vỏ mỏng ở bán kính $r$ tỉ lệ với diện tích mặt cầu tại đó, $dV=4\pi r^2\,dr$ — càng ra xa tâm, vỏ càng "dày" về thể tích dù bề dày $dr$ như nhau, nên để mật độ điểm đều trên toàn thể tích, xác suất $r\le t$ phải bằng tỉ lệ thể tích $\left(t/\text{extent}\right)^3$ (tích phân $r^2\,dr$ từ 0 đến $t$), tức CDF $F(t)=(t/\text{extent})^3$. Lấy nghịch đảo CDF để sample: $F^{-1}(U)=\text{extent}\cdot U^{1/3}$ — chính là công thức code dùng. Với $r=\text{extent}\cdot U$ (không luỹ thừa), phần lớn khối lượng xác suất bị "nén" gần tâm, làm random-init tập trung sai chỗ, lãng phí Gaussian ở vùng gần $\bar c$ thay vì trải đều khắp $\mathcal F$.
+
+![Sample bán kính đúng/sai và minh hoạ carving 2D](fastergs_merge_figures/06_random_init_sampling.png)
+
+*Trái: histogram bán kính của 5000 điểm sample bằng $r=R\cdot U$ (đỏ, dồn về tâm — SAI) so với $r=R\cdot U^{1/3}$ (xanh, đúng code) và đường lý thuyết $f(r)\propto r^2$ (đen) — đường xanh khớp lý thuyết, đường đỏ lệch hẳn về bên trái. Phải: mô phỏng 2D rút gọn của carving — điểm sample trong đường tròn bán kính `extent`, tam giác đen là 1 camera, vùng nét đứt là frustum $|x|\le z\tan(\text{FoV}/2)$; điểm xanh được giữ, điểm xám bị loại. Cả hai đều là mô phỏng công thức thật bằng numpy độc lập, không phải log train.*
+
 Sau đó, với mỗi camera $v$ có ma trận quay/tịnh tiến $(R_v, T_v)$ (quy ước COLMAP: $p_{\text{cam}} = R_v^\top p + T_v$, đúng như `getWorld2View2` đã dùng ở mục 1.3), một điểm $p$ được xem là nằm trong frustum của $v$ nếu:
 
 $$

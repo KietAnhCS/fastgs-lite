@@ -1,4 +1,5 @@
-"""Optional fused-CUDA Adam optimizer (Nhóm C2 của kế hoạch tích hợp Faster-GS).
+"""Fused-CUDA Adam optimizer, always used by GaussianModel.training_setup
+(Nhóm C2 của kế hoạch tích hợp Faster-GS).
 
 Drop-in replacement for `torch.optim.Adam` that calls a single fused CUDA
 kernel (`diff_gaussian_rasterization_fastgs._C.fused_adam_step`, see

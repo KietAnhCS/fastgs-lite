@@ -1,0 +1,27 @@
+% ============================================================
+% PHẦN Faster-GS — Random-init fallback
+% ============================================================
+
+% --- Slide: Random-init fallback ---
+\begin{frame}{Random-init fallback — khi COLMAP thiếu points3D}
+\footnotesize
+\begin{itemize}
+    \item \textbf{Sample đều bên trong hình cầu} bán kính $R$ quanh tâm scene:
+\end{itemize}
+\[
+r = R\cdot u^{1/3}, \qquad u\sim\text{Uniform}(0,1)
+\]
+\begin{itemize}
+    \item Hướng lấy từ phân phối chuẩn rồi chuẩn hoá (đều trên mặt cầu đơn vị).
+    \item \alert{Sai lầm thường gặp:} dùng $r=R\cdot u$ trực tiếp $\Rightarrow$ điểm dồn về tâm, vì thể tích vỏ cầu $dV\propto r^2\,dr$ — công thức $u^{1/3}$ mới cho mật độ \textbf{đều} trong toàn thể tích.
+    \item \textbf{Frustum carving:} giữ điểm nếu nằm trong góc nhìn ít nhất 1 camera:
+    \[
+        z>0,\quad \lvert x\rvert\le z\tan(FovX/2),\quad \lvert y\rvert\le z\tan(FovY/2)
+    \]
+    Nếu carving xoá hết toàn bộ điểm $\Rightarrow$ fallback về tập chưa carve (an toàn, tránh crash).
+    \item Chỉ kích hoạt khi COLMAP \textbf{không có} points3D dùng được (\texttt{random\_init\_force=False} mặc định) — không đổi hành vi khi COLMAP có sẵn dữ liệu.
+\end{itemize}
+\centering
+\includegraphics[width=0.38\linewidth]{06_random_init_sampling.png}
+\captionof{figure}{\footnotesize Histogram thật so sánh 2 cách sample (đúng/sai) + minh hoạ carving 2D}
+\end{frame}

@@ -572,8 +572,8 @@ class GaussianModel:
         Purely a memory-locality optimization (nearby Gaussians end up nearby in memory,
         which the rasterizer's tile-based sort/blend benefits from) — does not change any
         rendering math, densification/pruning logic, or the number of Gaussians. Safe to
-        call at any point during training; opt-in via `morton_reorder_interval` (default 0
-        = never called).
+        call at any point during training; the training loop calls it every
+        `morton_reorder_interval` iterations (default 5000, always on).
         """
         with torch.no_grad():
             xyz = self._xyz.detach()

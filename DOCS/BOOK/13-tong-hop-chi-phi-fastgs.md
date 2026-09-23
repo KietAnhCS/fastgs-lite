@@ -473,6 +473,16 @@ Kết luận: chỉ $R_{\text{adam}}$ và số lần densify là con số chắc
 
 $(R_{\text{adam}},R_{\text{tile}},R_{\text{gauss}})=(0.2761,\ 0.2888,\ 0.3138)$ → tốc độ mô hình $3.833\times$, trần $6.667\times$. Chương 8 là chương cuối; không có chương sau lấy dùng.
 
+## 13.2b Baseline VRAM/thời gian thật — trước khi merge cơ chế Faster-GS
+
+Phần 13.1/13.2 ở trên là **mô hình lý thuyết** (không đo GPU). Ở đây là **log thật duy nhất hiện có** trong repo (`output/fastgs_models/history.csv`, `leaderboard.csv`), chạy scene `HCM0539`, 7000 iterations, **TRƯỚC** đợt tích hợp cơ chế Faster-GS (fused Adam luôn bật, 3D anti-aliasing filter, Morton reordering, sửa bug `opacity_reset_interval`) mô tả ở Chương 3/12.
+
+![VRAM theo iteration và tổng kết run — log thật trước khi merge](fastergs_merge_figures/13_vram_time_real_log.png)
+
+*Log thật, 1 scene (HCM0539) 1 lần chạy — không đại diện tổng quát. VRAM dao động 1.11–1.26 GB qua các mốc log; `train_s=119.3s`, `peak_vram_gb=1.35` theo `leaderboard.csv`.*
+
+**Chưa có log thật SAU khi merge** — môi trường phát triển đợt merge này không có GPU/CUDA toolchain nên không build/chạy lại được. Muốn biết cơ chế mới có thực sự giảm VRAM/thời gian hay không, cần tự build `diff-gaussian-rasterization_fastgs` (đã thêm `adam_fused.cu` vào `setup.py`) trên máy có CUDA, chạy lại đúng scene `HCM0539` với `iterations=7000`, rồi so `history.csv`/`leaderboard.csv` mới với các số ở trên.
+
 ## 13.3 Tài liệu gốc đầy đủ nhất: fastgs-acceleration-method.md
 
 *(Phần dưới đây là tài liệu chính, tự chứa, đầy đủ nhất của repo — Phần I–IX. Nhiều khái niệm đã được trình bày lại có hệ thống hơn ở mục 13.1/13.2 và các Chương 5–12; phần này giữ nguyên toàn văn để không mất chi tiết nào, đặc biệt là mô hình chi phí, phép đo fastgs-lite vs 3DGS và roadmap thực nghiệm.)*

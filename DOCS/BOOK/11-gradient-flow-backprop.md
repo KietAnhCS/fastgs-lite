@@ -10,7 +10,7 @@
 
 > Mũi tên xanh trong sơ đồ: từ Image ngược qua Rasterizer, Projection, về 3D Gaussians. Gồm ba việc: (1) backward qua blend, (2) backward qua projection về 59 tham số, (3) cập nhật tham số bằng Adam.
 > **FastGS-lite thay đổi ở (1)** — thêm gradient trị tuyệt đối — **và ở (3)** — đòn bẩy 3: Adam thưa dần, lr SH riêng.
-> Code: `backward.cu`, `scene/gaussian_model.py:190-209` (`optimizer_step`), `:167-181` (`training_setup`), `:494-495` (`add_densification_stats`).
+> Code: `backward.cu`, `scene/gaussian_model.py:190-209` (`optimizer_step`), `:167-181` (`training_setup`), `:494-495` (`add_densification_stats`), `utils/fused_adam.py` và `submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/adam_fused.cu` (kernel Adam thực thi bước (3) — xem 6.4).
 
 ## 6.1 — Backward qua blend
 
@@ -91,7 +91,25 @@ $$
 
 Lấy `norm` **trước** khi cộng qua iteration — sau đó mọi số đều không âm, không còn gì triệt tiêu. Chương 7 dùng $\bar g_i=\text{accum}_i/\text{denom}_i$.
 
+### Edge case: Morton reordering "ăn" 1 bước gradient mỗi lần chạy
+
+`apply_morton_ordering` (mặc định chạy mỗi `morton_reorder_interval=5000` iteration, luôn bật từ đợt merge Faster-GS) permutation lại toàn bộ tensor `_xyz`/optimizer state và bọc chúng thành `nn.Parameter` **mới**. Parameter mới có `.grad = None` ngay sau khi tạo, và `FusedAdam.step()` bỏ qua mọi param có `grad is None` (`utils/fused_adam.py:43-44`) — nên bước Adam **ngay tại iteration reorder đó** bị bỏ qua hoàn toàn cho mọi nhóm tham số. Đây không phải bug mới: `densify_and_prune_fastgs` (chương 7) vốn đã có hiệu ứng y hệt mỗi lần densify (cũng tạo Parameter mới rồi gọi `optimizer_step` ngay sau). Tần suất 1/5000 khiến ảnh hưởng tổng thể rất nhỏ (xem biểu đồ dưới), nhưng đáng biết khi đọc log huấn luyện thấy một vài bước "im lặng".
+
+![Tỉ lệ gradient step bị mất tích luỹ do Morton reorder, theo tổng số iterations](fastergs_merge_figures/11_morton_grad_step_loss.png)
+
+*Trục x là tổng số iterations của một lần train (300 = smoke test, 7000/15000/30000 = các cấu hình thật dùng trong repo); trục y là tỉ lệ % số iteration bị mất bước Adam do trùng mốc Morton reorder, tính đúng bằng công thức $\lfloor t/5000\rfloor / t \times 100\%$ — không phải số đo thực nghiệm, chỉ là hệ quả tất định của tần suất reorder.*
+
 ## 6.4 — Cập nhật tham số: Adam — **FastGS thay nhịp gọi**
+
+> Kể từ đợt tích hợp Faster-GS (Hahlbohm et al., CVPR 2026), `self.optimizer`/`self.shoptimizer` **không còn** là `torch.optim.Adam` mà là `FusedAdam` — một kernel CUDA elementwise tự viết (`utils/fused_adam.py`, gọi `adam_fused_step` trong `submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/adam_fused.cu`). Kernel này triển khai đúng công thức update rule bên dưới (đã đối chiếu bias correction và vị trí $\epsilon$ ngoài căn). Lịch step thưa dần (`optimizer_step`, mục dưới) không đổi — thay đổi chỉ nằm ở *bộ máy* tính update mỗi lần `.step()` được gọi, không đổi *tần suất* gọi.
+>
+> ⚠️ **Chưa build/test trên GPU thật.** Kernel được viết không có toolchain CUDA sẵn sàng để compile — công thức đúng trên giấy (đối chiếu bằng mắt với `torch.optim.Adam`) nhưng chưa có xác nhận runtime. Trước khi tin số liệu train sau đợt merge này, cần build `diff-gaussian-rasterization_fastgs` trên máy có CUDA và so sánh output với `torch.optim.Adam` trên cùng input.
+
+Công thức đầy đủ (5 bước $m,v,\hat m,\hat v,\theta$) đã có ở mục "Công thức Adam gốc" phía dưới (11.2) — kernel `adam_fused.cu` triển khai đúng y hệt, mỗi thread CUDA xử lý 1 phần tử độc lập (không có phụ thuộc chéo, không race condition), gộp cả 5 bước vào 1 lần kernel-launch thay vì nhiều phép tensor rời của `torch.optim.Adam`. Đây là điểm khác biệt duy nhất — **thuật toán không đổi, chỉ đổi cách thực thi** để giảm overhead launch.
+
+![Bias-correction: hệ số theo t và mô phỏng quỹ đạo có/không hiệu chỉnh](fastergs_merge_figures/11_adam_bias_correction.png)
+
+*(a) Hệ số nhân bias-correction $1/(1-\beta_1^t)$ và $1/\sqrt{1-\beta_2^t}$ theo $t$ — lớn khi $t$ nhỏ (bù cho $m,v$ khởi tạo 0), giảm về 1 khi $t\to\infty$. (b) Mô phỏng toán thuần (không phải log train): quỹ đạo $\theta$ với gradient hằng $g=1$, so sánh có/không bias correction — thiếu hiệu chỉnh khiến bước đi ban đầu bị "rụt rè" hơn nhiều vì $m,v$ còn lệch về 0.*
 
 ### Update rule (giữ nguyên)
 

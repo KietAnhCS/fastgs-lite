@@ -473,7 +473,13 @@ if iteration < opt.densify_until_iter:              # 15_000
 | `train_base.sh` / `train_big.sh` | **500** | truyền `--densification_interval 500` |
 | Notebook / `pipeline/` | **500** | `Config.train_extra_args`, `pipeline/config.py:43` |
 
-Với cấu hình notebook mặc định `iterations = 7000` (`pipeline/config.py:31`), điều kiện `iteration < 15_000` luôn đúng suốt toàn bộ quá trình train — densify chạy mỗi 500 iteration từ iteration 1000 đến 6500 mà không bao giờ chạm mốc dừng 15k.
+**Cập nhật (đợt tích hợp Faster-GS-derived):** câu trên chỉ đúng khi chạy `train.py` trực tiếp không qua pipeline — ở đó `densify_until_iter` giữ nguyên default `15_000` của `OptimizationParams`, và với `iterations=7000` thì `iteration < 15_000` luôn đúng suốt toàn bộ quá trình train (densify chạy mỗi 500 iteration từ iteration 1000 đến 6500, không bao giờ chạm mốc dừng 15k).
+
+Nhưng đường chạy **notebook/`pipeline/`** (đường chạy mặc định thực tế) KHÔNG dùng con số 15_000 cố định. `pipeline/trainer.py::build_args` co giãn `densify_until_iter` theo `Config.densify_until_frac` (mặc định `0.5`):
+```python
+densify_until = max(1, int(round(cfg.densify_until_frac * n_iter)))   # 0.5 * n_iter
+```
+Với `iterations = 7000`, `densify_until_iter` thực tế được truyền vào `argv` là **3500**, không phải 15000 — densify dừng ở 50% tiến trình, không phải "không bao giờ chạm mốc dừng". Lý do co giãn: nếu giữ nguyên mốc 15000 gốc (được thiết kế cho lịch 30k) trong một lần train ngắn hơn, `densify_until_iter` có thể vượt quá hẳn tổng số iteration thực tế, khiến densify chạy suốt cả quá trình train mà không có giai đoạn "ổn định lại" cuối cùng.
 
 ## 30. Ba tầng pruning + `final_prune_fastgs`
 
@@ -487,7 +493,28 @@ Ghi chú quan trọng: **tầng 2 không phải là một cơ chế "prune đi�
 
 Đúng như phần task đề cập, cần xác minh xem có tầng "prune ngẫu nhiên theo opacity thấp" độc lập nào khác không — không có; toàn bộ logic pruning nằm trong hai hàm `densify_and_prune_fastgs` (đuôi hàm) và `final_prune_fastgs`, không có hàm riêng biệt nào khác gọi `prune_points` trong `train.py`/`pipeline/trainer.py`.
 
-**Tầng 3 dưới cấu hình mặc định notebook (`iterations=7000`) không bao giờ chạy.** Điều kiện `iteration % 3000 == 0 and iteration > 15_000 and iteration < 30_000` đòi hỏi `iteration > 15000`, nhưng vòng lặp chỉ chạy tới 7000 — `final_prune_fastgs` không được gọi lần nào trong một lần train mặc định của `pipeline/trainer.py`. Nó chỉ có ý nghĩa với cấu hình `--iterations` lớn hơn 15000 (ví dụ preset "big" nếu có, hoặc chạy `train.py` thủ công với iterations mặc định 30000 của `OptimizationParams`).
+**Tầng 3 dưới cấu hình mặc định notebook (`iterations=7000`) không bao giờ chạy.** Điều kiện `iteration % 3000 == 0 and iteration > 15_000 and iteration < 30_000` đòi hỏi `iteration > 15000`, nhưng vòng lặp chỉ chạy tới 7000 — `final_prune_fastgs` không được gọi lần nào trong một lần train mặc định của `pipeline/trainer.py`. Nó chỉ có ý nghĩa với cấu hình `--iterations` lớn hơn 15000 (ví dụ preset "big" nếu có, hoặc chạy `train.py` thủ công với iterations mặc định 30000 của `OptimizationParams`). Ngưỡng `15_000`/`3000`/`30_000` ở tầng này là hằng số cứng trong `train.py`/`pipeline/trainer.py` (không đọc từ `Config`), **không** bị co giãn bởi `densify_until_frac`/`opacity_reset_frac` — khác với `densify_until_iter`/`opacity_reset_interval` ở mục dưới đây.
+
+### 30.1. `opacity_reset_interval` giờ co giãn theo `iterations` — bug đã sửa
+
+Bảng ở mục 30 ghi `max_screen_size = 20` chỉ khi `iteration > opacity_reset_interval (3000)` — con số `3000` đó là **default của argparse** (`OptimizationParams`, thiết kế cho lịch gốc 30k/15k iterations), và cho tới đợt tích hợp Faster-GS-derived này, **nó là hằng số cố định bất kể `--iterations` truyền vào bao nhiêu** — khác hẳn `densify_until_iter`, vốn đã được `pipeline/trainer.py::build_args` co giãn theo `densify_until_frac` từ trước.
+
+**Hậu quả quan sát được (không phải suy luận):** với cấu hình notebook mặc định `iterations=7000`, `opacity_reset_interval=3000` cố định kích hoạt `reset_opacity()` (mục 32) khi model mới huấn luyện được 3000/7000 ≈ 43% tiến trình — quá muộn so với thiết kế gốc (3000/15000 = 20%) và quá gần điểm giữa của một lịch train đã ngắn sẵn. Log thật tại `output/fastgs_models/history.csv` (scene `HCM0539`, chạy 7000 iterations) cho thấy đúng hiện tượng này: PSNR rơi từ **22.02 xuống 5.92** và SSIM từ **0.760 xuống 0.047** ngay tại mốc ghi log iteration 3000 (checkpoint đầu tiên sau reset), rồi hồi phục dần ở các mốc sau (PSNR 24.90 tại iter 4000, 25.30 lúc kết thúc iter 7000). Đây là do toàn bộ Gaussian bị ép trần opacity về 0.01 cùng lúc, giữa chừng một lịch train đã rút ngắn, không kịp "chứng minh lại" trước khi bị đánh giá.
+
+**Cách sửa:** thêm field `opacity_reset_frac: float = 0.2` vào `pipeline/config.py` (cạnh `densify_until_frac`), co giãn theo đúng nguyên tắc đã áp dụng cho `densify_until_iter`:
+```python
+# pipeline/trainer.py::build_args
+opacity_reset = max(1, int(round(cfg.opacity_reset_frac * n_iter)))   # 0.2 * n_iter
+...
+"--opacity_reset_interval", str(opacity_reset),
+```
+Giờ `opacity_reset_interval` luôn bằng 20% tổng số iterations thực tế, giữ đúng tỉ lệ với lịch gốc 3000/15000, thay vì là một hằng số tuyệt đối 3000.
+
+**Lưu ý hành vi mới cần biết:** với `smoke_iterations=300` (cfg.run_smoke), `opacity_reset` giờ tính ra `round(0.2*300)=60` — smoke test giờ **sẽ trải qua reset opacity** (vài lần, mỗi 60 iteration) trong khi trước đây `opacity_reset_interval=3000 > 300` nên smoke test chưa từng kích hoạt reset. Nếu smoke test dùng để "xem model có học được gì trong vài trăm iteration đầu" thì giờ cần tính đến việc PSNR có thể dao động ngay trong khoảng quan sát ngắn này — đây là hành vi đúng theo thiết kế (reset càng thường xuyên khi lịch càng ngắn), không phải lỗi mới.
+
+![Lịch `densify_until_iter` và `opacity_reset_interval` trước/sau khi co giãn theo iterations](fastergs_merge_figures/03_schedule_before_after.png)
+
+*Biểu đồ dùng đúng công thức thật trong code (`round(0.5×iterations)` cho densify, `round(0.2×iterations)` cho opacity-reset cũ/mới) — không phải số đo benchmark. Điểm PSNR 22→5.9 trích từ log thật `output/fastgs_models/history.csv`, một scene, một lần chạy.*
 
 ## 31. 🔒 Phẫu thuật trạng thái Adam
 
@@ -521,12 +548,15 @@ Cả điểm **clone** lẫn điểm **split** đều nhận `exp_avg`/`exp_avg_
 
 **Điều gì hỏng nếu làm sai:** nếu index-theo-mask không nhất quán giữa param và state (ví dụ prune tensor tham số nhưng quên prune state, hoặc dùng nhầm `mask` thay vì `~mask`), Adam sẽ áp `exp_avg` của điểm A lên điểm B → gradient/momentum bị gán nhầm chủ, mô hình phân kỳ hoặc render sai màu ở đúng những điểm vừa densify/prune. Việc `del` + gán lại key theo tensor mới (thay vì sửa item tại chỗ) là bắt buộc vì `torch.optim.Optimizer.state` là `defaultdict` khoá theo **object identity** (`id()`) của `nn.Parameter`, và `group["params"][0] = nn.Parameter(...)` tạo object mới mỗi lần.
 
-**Hai optimizer, một đường.** `training_setup` (dòng 176-177) luôn dựng đúng hai `torch.optim.Adam`:
+**Hai optimizer, một đường — cập nhật: giờ là `FusedAdam`, không còn `torch.optim.Adam`.** `training_setup` (`scene/gaussian_model.py:213-216`) luôn dựng hai instance của `FusedAdam` (kernel CUDA elementwise tự viết, `utils/fused_adam.py` + `submodules/diff-gaussian-rasterization_fastgs/cuda_rasterizer/adam_fused.cu`, luôn dùng — không còn cờ bật/tắt):
 ```python
-self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
-self.shoptimizer = torch.optim.Adam(sh_l, lr=0.0, eps=1e-15)     # tối ưu riêng cho f_rest (SH bậc cao)
+from utils.fused_adam import FusedAdam
+self.optimizer = FusedAdam(l, lr=0.0, eps=1e-15)
+self.shoptimizer = FusedAdam(sh_l, lr=0.0, eps=1e-15)     # tối ưu riêng cho f_rest (SH bậc cao)
 ```
-Fork từng có thêm nhánh `--optimizer_type sparse_adam` dựng một `SparseGaussianAdam` gộp `l + sh_l` (kernel `adam.cu`, chỉ cập nhật Gaussian visible mỗi iteration). Nhánh đó không bao giờ chạy được — `SparseGaussianAdam` được import từ gói vanilla `diff_gaussian_rasterization` trong `try/except: pass` — nên toàn bộ nhánh, cờ `--optimizer_type` và `adam.cu` đã bị **xóa**. `_prune_optimizer`/`cat_tensors_to_optimizer` vì thế luôn duyệt đúng `[self.optimizer, self.shoptimizer]`.
+Công thức Adam (bias correction, `eps` ngoài căn) giống hệt `torch.optim.Adam` — kernel chỉ gộp việc đọc/ghi `(param, grad, exp_avg, exp_avg_sq)` vào một lần launch CUDA thay vì nhiều phép tensor trung gian của PyTorch, giảm overhead launch. **Chưa có benchmark thật** (không có GPU để build/đo tại thời điểm viết đợt tích hợp này) — số học đã được review tĩnh là đúng chuẩn, nhưng thời gian/VRAM tiết kiệm được là suy luận lý thuyết, chưa đo thực nghiệm.
+
+Fork từng có thêm nhánh `--optimizer_type sparse_adam` dựng một `SparseGaussianAdam` gộp `l + sh_l` (kernel `adam.cu`, chỉ cập nhật Gaussian visible mỗi iteration). Nhánh đó không bao giờ chạy được — `SparseGaussianAdam` được import từ gói vanilla `diff_gaussian_rasterization` trong `try/except: pass` — nên toàn bộ nhánh, cờ `--optimizer_type` và `adam.cu` đã bị **xóa**. `_prune_optimizer`/`cat_tensors_to_optimizer` vì thế luôn duyệt đúng `[self.optimizer, self.shoptimizer]` (logic index-theo-mask ở §31 không đổi — `FusedAdam` vẫn expose `.state`/`.param_groups` tương thích interface `torch.optim.Optimizer`).
 
 ## 32. `reset_opacity`
 
@@ -545,7 +575,7 @@ def reset_opacity(self):
 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
     gaussians.reset_opacity()
 ```
-`opacity_reset_interval = 3000` mặc định. Trường hợp đặc biệt nền trắng: nếu `dataset.white_background` bật, còn có một lần reset sớm đúng tại `iteration == densify_from_iter` (500) — vì trên nền trắng, Gaussian có thể "trốn" trong opacity cao ngay từ đầu để giả làm nền, reset sớm buộc chúng phải học lại độ mờ dựa trên tín hiệu thật thay vì lợi dụng nền.
+`opacity_reset_interval = 3000` là default argparse của `OptimizationParams` (áp dụng khi chạy `train.py` trực tiếp không qua pipeline); đường chạy notebook/`pipeline/` giờ co giãn giá trị này theo `opacity_reset_frac × iterations` — xem §30.1. Trường hợp đặc biệt nền trắng: nếu `dataset.white_background` bật, còn có một lần reset sớm đúng tại `iteration == densify_from_iter` (500) — vì trên nền trắng, Gaussian có thể "trốn" trong opacity cao ngay từ đầu để giả làm nền, reset sớm buộc chúng phải học lại độ mờ dựa trên tín hiệu thật thay vì lợi dụng nền.
 
 **Lý do cần bước này:** đây là kỹ thuật chuẩn của 3DGS — theo thời gian, một số Gaussian tích luỹ opacity cao chỉ vì nằm ở vị trí "ăn theo" nền hoặc bị chồng lấp bởi các Gaussian khác che khuất phần render sai của chúng, khiến gradient prune (điều kiện `opacity < min_opacity` ở §30) không bao giờ đụng tới chúng. Định kỳ ép trần opacity buộc mọi Gaussian phải "chứng minh lại" độ cần thiết của mình qua vài trăm iteration tiếp theo — Gaussian nào không đóng góp thật sẽ tụt trở lại dưới `min_opacity` và bị tầng pruning kế tiếp dọn đi.
 

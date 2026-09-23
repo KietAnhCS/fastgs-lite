@@ -1,0 +1,26 @@
+% ============================================================
+% PHẦN Faster-GS — Fused Adam optimizer
+% ============================================================
+
+% --- Slide: Fused Adam ---
+\begin{frame}{Fused Adam optimizer — 1 kernel CUDA thay nhiều phép tensor}
+\footnotesize
+\begin{itemize}
+    \item Công thức Adam chuẩn, không đổi thuật toán — chỉ đổi cách thực thi: 1 kernel CUDA elementwise (mỗi thread xử lý đúng 1 tham số, không phụ thuộc chéo $\Rightarrow$ không race condition) thay vì nhiều phép tensor/kernel-launch riêng lẻ của \texttt{torch.optim.Adam}.
+\end{itemize}
+\[
+m_t=\beta_1 m_{t-1}+(1-\beta_1)g,\qquad v_t=\beta_2 v_{t-1}+(1-\beta_2)g^2
+\]
+\[
+\hat m_t=\frac{m_t}{1-\beta_1^t},\qquad \hat v_t=\frac{v_t}{1-\beta_2^t},\qquad \theta_t=\theta_{t-1}-lr\cdot\frac{\hat m_t}{\sqrt{\hat v_t}+\epsilon}
+\]
+\begin{itemize}
+    \item Tham số mặc định: $\beta_1=0.9$, $\beta_2=0.999$, $\epsilon=10^{-15}$.
+    \item Lợi ích: giảm overhead kernel-launch, không phải giảm số phép toán $\Rightarrow$ kỳ vọng nhanh hơn chủ yếu ở chi phí launch, không phải ở độ phức tạp thuật toán.
+    \item Luôn bật trong \texttt{GaussianModel.training\_setup} — không còn cờ toggle (\texttt{use\_fused\_adam} đã bị xoá).
+    \item \alert{Cảnh báo:} chưa build/test trên GPU thật (không có CUDA toolchain khi phát triển) — cần build lại \texttt{diff-gaussian-rasterization\_fastgs} và so sánh output với \texttt{torch.optim.Adam} trước khi tin số liệu train.
+\end{itemize}
+\centering
+\includegraphics[width=0.42\linewidth]{11_adam_bias_correction.png}
+\captionof{figure}{\footnotesize Hệ số bias-correction theo $t$ và mô phỏng quỹ đạo có/không hiệu chỉnh (công thức toán, không phải log train)}
+\end{frame}

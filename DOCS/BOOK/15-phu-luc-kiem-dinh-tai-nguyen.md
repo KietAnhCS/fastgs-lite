@@ -154,6 +154,28 @@ Mỗi chương lý thuyết (01–08 gốc, tức Chương 6–13 của sách) c
 
 Chạy một script bất kỳ: `python DOCS/Report/test/scripts/chNN_test.py` (in ra console đúng các con số đã chép vào file `NN-test.md` tương ứng). File `ch04_test.py` còn ghi kèm vài artefact trung gian dùng lại giữa các lần chạy: `ch04_aux_cam1.npz`, `ch04_render_cam1.npy`/`.ppm`, `ch04_render_cam1_gt.npy`/`.ppm` — ảnh render/ground-truth của camera 1 trên cảnh đồ chơi, dùng để `ch05_test.py` (Loss) đọc lại mà không cần render lại từ đầu.
 
+## 15.5 Trạng thái kiểm định các cơ chế Faster-GS vừa tích hợp
+
+Đợt tích hợp gần nhất gộp thêm 5 cơ chế lấy ý tưởng từ Faster-GS (Hahlbohm et al., CVPR 2026) vào repo (xem [Chương 3](03-vong-lap-huan-luyen-phan-2.md), [Chương 7](07-3d-gaussians.md), [Chương 11](11-gradient-flow-backprop.md), [Chương 12](12-adaptive-density-control.md)): **fused Adam** (`adam_fused.cu`), **3D anti-aliasing filter** (Mip-Splatting), **Morton reordering**, **random-init fallback** (khi COLMAP thiếu `points3D`), và **fix `opacity_reset_frac`** (bug lịch reset opacity không co giãn theo `iterations`).
+
+Việc audit này được thực hiện hoàn toàn **tĩnh** — đọc code, đối chiếu công thức, kiểm tra cú pháp — trong một môi trường **không có GPU/CUDA toolchain**. Bảng dưới ghi trung thực trạng thái kiểm định của từng cơ chế; ô "chưa làm" không phải bị bỏ sót mà là việc người dùng cần tự thực hiện sau khi có máy hoặc phiên Colab có GPU:
+
+| Cơ chế | Review tĩnh (đọc code) | Build trên GPU thật | Benchmark thật (PSNR/SSIM/LPIPS/VRAM/thời gian) |
+|---|---|---|---|
+| Fused Adam | ✅ Đã làm | ❌ Chưa | ❌ Chưa |
+| 3D anti-aliasing filter | ✅ Đã làm | ❌ Chưa | ❌ Chưa |
+| Morton reordering | ✅ Đã làm | ❌ Chưa | ❌ Chưa |
+| Random-init fallback | ✅ Đã làm | ❌ Chưa | ❌ Chưa |
+| Fix `opacity_reset_frac` | ✅ Đã làm | ❌ Chưa | ❌ Chưa |
+
+![Trạng thái kiểm định quy trình cho 5 cơ chế Faster-GS vừa tích hợp — bảng trạng thái quy trình, không phải số đo hiệu năng](fastergs_merge_figures/15_verification_status.png)
+
+**Các bước để tự kiểm định** (cần máy hoặc Colab có GPU CUDA):
+
+1. Build lại `diff-gaussian-rasterization_fastgs` (`pip install -e submodules/diff-gaussian-rasterization_fastgs`) — `setup.py` đã thêm `cuda_rasterizer/adam_fused.cu` vào danh sách nguồn biên dịch.
+2. Chạy smoke test (`cfg.run_smoke = True`, vài trăm iteration) để bắt lỗi runtime (dtype/shape mismatch) mà review tĩnh không thể phát hiện.
+3. Chạy một scene đầy đủ, so sánh `output/*/history.csv` và `leaderboard.csv` mới với log tham chiếu tại [15.2](#1521-historycsv--lịch-sử-theo-vòng-lặp-của-một-phiên-train) (đặc biệt kiểm tra: hố sụt PSNR tại mốc opacity-reset đã biến mất hay giảm hẳn so với trước khi sửa `opacity_reset_frac` — xem [Chương 14](14-trien-khai-colab-nhat-ky-train.md)).
+
 ---
 
 ## Bài tập (Exercise)

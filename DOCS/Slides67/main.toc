@@ -1,0 +1,18 @@
+\xpg@aux {}{vietnamese}
+\beamer@sectionintoc {1}{Nền tảng: 3D Gaussian là gì}{3}{0}{1}
+\beamer@sectionintoc {2}{Nền tảng toán học đầy đủ: Spherical Harmonics}{13}{0}{2}
+\beamer@sectionintoc {3}{Chiếu phối cảnh \& Rasterizer khả vi}{30}{0}{3}
+\beamer@sectionintoc {4}{Loss, Gradient \& Optimizer}{40}{0}{4}
+\beamer@sectionintoc {5}{Adaptive Density Control — Tổng quan}{50}{0}{5}
+\beamer@sectionintoc {6}{ADC chuyên sâu — P1: Sai số ảnh \& tín hiệu pixel}{60}{0}{6}
+\beamer@sectionintoc {7}{ADC chuyên sâu — P2: Footprint \& Importance đa view}{72}{0}{7}
+\beamer@sectionintoc {8}{ADC chuyên sâu — P3: Công thức Score \& Pruning}{84}{0}{8}
+\beamer@sectionintoc {9}{ADC chuyên sâu — P4: Gradient Cancellation \& Quyết định Clone/Split}{96}{0}{9}
+\beamer@sectionintoc {10}{ADC chuyên sâu — P5: Trọng số, Multinomial Resample \& Opacity Reset}{109}{0}{10}
+\beamer@sectionintoc {11}{ADC chuyên sâu — P6: Toy Model 2D (Có ADC vs Không ADC)}{125}{0}{11}
+\beamer@sectionintoc {12}{ADC chuyên sâu — P7: So sánh cuối 3DGS vs FastGS}{136}{0}{12}
+\beamer@sectionintoc {13}{ADC chuyên sâu — Cơ chế theo dòng thời gian}{146}{0}{13}
+\beamer@sectionintoc {14}{Ba đòn bẩy tăng tốc FastGS \& Mô hình chi phí}{164}{0}{14}
+\beamer@sectionintoc {15}{FastGS-lite: Kết quả thực nghiệm trên Colab T4}{174}{0}{15}
+\beamer@sectionintoc {16}{Faster-GS (CVPR 2026): Cơ chế mới tích hợp}{184}{0}{16}
+\beamer@sectionintoc {17}{Quan sát \& Kết luận}{192}{0}{17}

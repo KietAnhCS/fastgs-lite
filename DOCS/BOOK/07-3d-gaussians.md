@@ -174,6 +174,18 @@ Thay số cho G1: $\lVert(1,0,0,0)\rVert=1\Rightarrow q=(1,0,0,0)$; $s=e^{-0.161
 
 *Hình: (a) cặp cột xám/đỏ là $\tilde q=(0.9,0.1,0.3,0.2)$ trước/sau chia cho $\lVert\tilde q\rVert=0.9747$ (hộp góc phải) — thành phần $r$ ra 0.9234 như mục 2.2b; (b) 4 chấm màu là $s_i=\exp\tilde s_i$ của bảng trên (G1 0.8505 … G3 1.1150) nằm trên đường $\exp$; (c) chấm đỏ tại $\tilde\alpha=-2.197$ cho $\alpha=0.1$ — cả 4 Gaussian trùng một điểm. Script vẽ: `scripts/ch02_plot.py`.*
 
+### 2.1a — 3D anti-aliasing filter (Mip-Splatting), luôn bật sau đợt gộp Faster-GS
+
+`get_scaling` (`gaussian_model.py:133-139`) không trả thẳng $s=\exp\tilde s$ như mục 2.1 mà clamp nó từ dưới:
+
+$$s_{final} = \exp\big(\max(\tilde s,\ \log(\text{threshold}))\big) = \max(s_{raw},\ \text{threshold})$$
+
+`threshold` phụ thuộc khoảng cách $z$ từ Gaussian tới camera: `compute_3d_filter` (`gaussian_model.py:630-674`) duyệt mọi camera train, với mỗi Gaussian còn trong view frustum lấy `threshold = distance2filter · z` (nhỏ nhất qua các camera thấy nó), trong đó `distance2filter = sqrt(filter_variance) / max_focal` (`setup_3d_filter`, `filter_variance` mặc định 0.2). Nói cách khác: Gaussian càng xa camera thì ngưỡng scale tối thiểu càng lớn — giữ cho footprint sau khi chiếu lên màn hình không bao giờ co lại dưới khoảng 1 pixel, tránh alias khi camera lùi xa hoặc ảnh bị downsample. Cơ chế này không đổi công thức activation ở mục 2.1, chỉ thêm một sàn (floor) phụ thuộc hình học camera lên trên nó; giá trị được lưu sẵn ở dạng log (`self._filter_3d`) nên `torch.maximum` ở mục 2.1 và clamp này chạy trên cùng không gian log-scale.
+
+![Clamp của 3D anti-aliasing filter trên get_scaling](fastergs_merge_figures/07_3d_filter_clamp.png)
+
+*Hình: đường xám nét đứt là $s_{raw}=\exp\tilde s$ không clamp (mục 2.1); hai đường liền là $s_{final}=\max(s_{raw},\text{threshold})$ với threshold minh hoạ cho một camera gần ($z=40$) và một camera xa ($z=90$) — camera càng xa, sàn clamp càng cao. Đây là minh hoạ công thức đúng theo `compute_3d_filter`/`get_scaling`; giá trị `max_focal`, $z$ chỉ là số ví dụ để đường vẽ nằm gọn trong khung, không phải số đo từ một cảnh thật.*
+
 ## 2.2 — Covariance 3D $\Sigma=RSS^\top R^\top$
 
 ### 2.2a — $q=(1,0,0,0)$

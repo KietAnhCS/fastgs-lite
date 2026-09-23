@@ -1,0 +1,33 @@
+% ============================================================
+% PHẦN Faster-GS — Slide bổ sung 8/8: Trạng thái kiểm định
+% ============================================================
+
+% --- Slide (mới) ---
+\begin{frame}{Trạng thái kiểm định các cơ chế Faster-GS vừa tích hợp}
+\footnotesize
+\begin{itemize}
+    \item Môi trường phát triển repo này \textbf{không có CUDA toolchain/GPU} $\Rightarrow$ mọi đánh giá dưới đây là \textbf{review tĩnh} (đọc code, đối chiếu công thức), chưa build/chạy thật.
+\end{itemize}
+\vspace{0.3em}
+\begin{table}
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Cơ chế} & \textbf{Review tĩnh} & \textbf{Build/compile GPU} & \textbf{Benchmark thật} \\
+\midrule
+Fused Adam optimizer & \textbf{Đã làm} & Chưa & Chưa \\
+3D anti-aliasing filter & \textbf{Đã làm} & Chưa & Chưa \\
+Morton reordering & \textbf{Đã làm} & Chưa & Chưa \\
+Random-init fallback & \textbf{Đã làm} & Chưa & Chưa \\
+Fix \texttt{opacity\_reset\_frac} & \textbf{Đã làm} & Chưa & Chưa \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{itemize}
+    \item \textbf{Việc user cần tự làm}: build lại \texttt{diff-gaussian-rasterization\_fastgs} (đã thêm \texttt{adam\_fused.cu} vào \texttt{setup.py}), chạy smoke test (\texttt{cfg.run\_smoke=True}, vài trăm iteration), so sánh \texttt{history.csv}/\texttt{leaderboard.csv} trước/sau đợt merge này.
+    \item[$\Rightarrow$] Không có cơ chế nào trong bảng trên đã được \textbf{benchmark thật} — mọi khẳng định "nhanh hơn/ít VRAM hơn" hiện chỉ là suy luận tĩnh từ code, chưa phải kết quả đo.
+\end{itemize}
+\centering
+\includegraphics[width=0.3\linewidth]{15_verification_status.png}
+\captionof{figure}{\footnotesize Bảng trạng thái kiểm định — không phải số đo hiệu năng}
+\end{frame}

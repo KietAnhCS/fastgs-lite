@@ -354,7 +354,24 @@ PSNR tại các mốc sụt rơi xuống 6.0–11.0 dB trên cả 4 cảnh cùng
 mà `score_every=1000` lại chấm điểm **ngay trong cùng vòng đó**, khi toàn bộ Gaussian vừa bị đặt lại độ đục.
 Model hồi phục hoàn toàn trong ~1000 vòng kế tiếp (xem mốc 4000 và 7000).
 
-**Hai hệ quả thực dụng:**
+![drjohnson: PSNR live theo iteration, log thật, có chú thích 2 mốc opacity reset](fastergs_merge_figures/14_train_log_annotated.png)
+
+> **Hình 1.5.** Log thật (`DOCS/assets/history.csv`, scene `drjohnson`) từ **trước** đợt sửa bug dưới đây —
+> giữ nguyên làm minh hoạ triệu chứng, không phải kết quả của bản đã vá.
+
+> **Cập nhật (đợt tích hợp FasterGS):** hiện tượng "hố sụt" này **không phải một đặc điểm cố hữu cần chấp
+> nhận** — nó là hệ quả của một bug thiết kế: `opacity_reset_interval` được hardcode 3000 (đúng cho lịch 30k
+> iteration gốc) nhưng **không co giãn** theo `iterations` khi rút ngắn cho Colab, trong khi `densify_until_iter`
+> đã tránh được lỗi tương tự nhờ co giãn qua `densify_until_frac`. Bug này đã được xác định và sửa trong đợt
+> tích hợp cơ chế Faster-GS (Hahlbohm et al., CVPR 2026): field `opacity_reset_frac` mới (`pipeline/config.py`,
+> mặc định 0.2) tính lại `opacity_reset_interval = round(opacity_reset_frac × iterations)` rồi truyền qua
+> `--opacity_reset_interval`, giữ đúng tỷ lệ với lịch densify đã rút ngắn — xem Chương 12, mục "Hằng số", và
+> Chương 03 để biết chi tiết cơ chế. Log ở mục 1.5 này là log **trước khi sửa**; số liệu **sau khi sửa chưa có**
+> — cần build lại `diff-gaussian-rasterization_fastgs` và chạy lại trên Colab/máy có GPU để xác nhận hố sụt đã
+> biến mất (môi trường phát triển đợt tích hợp này không có GPU để tự kiểm chứng).
+
+**Hai hệ quả thực dụng (áp dụng cho bản TRƯỚC khi sửa; sau khi sửa, lịch reset co giãn theo iterations nên
+không còn cố định ở bội số của 3000 nữa):**
 
 - **Đừng đặt `iterations` là bội số của 3000** (6000, 9000, 12000) khi còn trong vùng densify — model sẽ dừng
   đúng lúc vừa reset opacity. `iterations=7000` nằm 1000 vòng sau reset cuối nên trạng thái cuối lành lặn.
@@ -447,7 +464,7 @@ Postfix của thanh tiến trình `tqdm` **giữ nguyên giá trị của lần 
 
 **Bài tập 14.2.** Dùng công thức $\mathrm{Score}=0.4(1-\mathrm{LPIPS})+0.3\,\mathrm{SSIM}+0.3\,\widehat{\mathrm{PSNR}}$ với $\mathrm{PSNR}_{\max}=30$, hãy tính lại Score của cảnh `truck` từ các số thô trong bảng mục 8.3 (PSNR = 22.23, SSIM = 0.7851, LPIPS = 0.2742) và đối chiếu với giá trị **0.7482** đã in trong bảng. Nêu rõ từng bước tính $\widehat{\mathrm{PSNR}}$.
 
-**Bài tập 14.3.** Mục 8.5 mô tả hai "hố sụt" điểm live tại vòng 3000 và 6000 (ví dụ `drjohnson` rơi từ 0.7598 xuống 0.2954 rồi phục hồi lên 0.8489). Giải thích cơ chế gây ra hiện tượng này bằng cách nối `opacity_reset_interval = 3000` (`arguments/__init__.py:84`) với thời điểm `score_every = 1000` chấm điểm trong `pipeline/trainer.py`. Vì sao ngân sách 30000 vòng (mục 2.1) không còn gặp vấn đề này từ sau vòng 15000?
+**Bài tập 14.3.** Mục 8.5 mô tả hai "hố sụt" điểm live tại vòng 3000 và 6000 (ví dụ `drjohnson` rơi từ 0.7598 xuống 0.2954 rồi phục hồi lên 0.8489). Giải thích cơ chế gây ra hiện tượng này bằng cách nối `opacity_reset_interval = 3000` (`arguments/__init__.py:84`) với thời điểm `score_every = 1000` chấm điểm trong `pipeline/trainer.py`. Vì sao ngân sách 30000 vòng (mục 2.1) không còn gặp vấn đề này từ sau vòng 15000? **Câu hỏi phụ:** sau khi sửa bằng `opacity_reset_frac` (xem hộp cập nhật ngay trên), với `iterations=7000` thì `opacity_reset_interval` mới là bao nhiêu? Hố sụt tại vòng 3000/6000 cụ thể này còn xảy ra đúng những mốc đó không, tại sao?
 
 **Bài tập 14.4.** Từ đạo hàm riêng $\partial\text{Score}/\partial\text{LPIPS} = -0.4$ ở mục 3, hãy tính lượng LPIPS cần cải thiện để Score của cảnh `train` (LPIPS hiện tại 0.3202, Score 0.6867) tăng thêm 0.03, giả sử SSIM và PSNR giữ nguyên. So sánh với mức cải thiện SSIM tương đương (dùng $\partial\text{Score}/\partial\text{SSIM}=+0.3$) để kết luận đòn bẩy nào rẻ hơn xét theo đơn vị phần trăm cải thiện thường thấy trong thực nghiệm.
 

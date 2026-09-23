@@ -6,6 +6,10 @@
 
 Chương mở đầu này giới thiệu bản đồ toàn bộ tài liệu của dự án fastgs-lite, sau đó đi sâu vào gói mã `pipeline/` — lớp glue-code kết nối notebook Colab với logic huấn luyện/chấm điểm/nộp bài. Các chương 2–4 sẽ đi từng dòng lệnh, từng hàm của pipeline này; các chương 5–13 sẽ đi vào nền tảng toán học 3D Gaussian Splatting và các đòn bẩy tăng tốc FastGS.
 
+Bên cạnh cơ chế FastGS gốc (densify/prune riêng theo gradient + điểm đa góc nhìn, rasterizer CUDA vendor — xem [Chương 3](03-vong-lap-huan-luyen-phan-2.md)), repo đã tích hợp thêm một số cơ chế lấy ý tưởng từ **Faster-GS** (Hahlbohm et al., *Faster-GS: Analyzing and Improving Gaussian Splatting Optimization*, CVPR 2026): fused Adam optimizer, 3D anti-aliasing filter (Mip-Splatting), Morton reordering, và một fallback khởi tạo ngẫu nhiên khi COLMAP thiếu `points3D`. Cả bốn cơ chế này **luôn bật, không có cờ tuỳ chọn**. MCMC densification (3DGS-MCMC) cũng được viết sẵn nhưng **giữ tắt có chủ đích** vì xung đột thuật toán với cơ chế densify chính của FastGS. Chi tiết cơ chế và lý do từng quyết định: [Chương 3](03-vong-lap-huan-luyen-phan-2.md) (vòng lặp train), [Chương 12](12-adaptive-density-control.md) (density control), [Chương 13](13-tong-hop-chi-phi-fastgs.md) (tổng hợp chi phí).
+
+![Ba lớp kiến trúc: 3DGS gốc → FastGS → cơ chế Faster-GS (sơ đồ minh hoạ, không phải số đo)](fastergs_merge_figures/01_pipeline_layers.png)
+
 ## 1.1 Mục lục tài liệu gốc (README.md)
 
 Tài liệu của fork này. `docs/` và `docs2/` đã được gộp làm một thư mục `DOCS/`.
@@ -123,7 +127,7 @@ Ghi chú: `pipeline/__init__.py` hiện chỉ re-export `Config` và các hàm c
 | | `eval_views` | `6` | số camera hold-out dùng để chấm điểm sống |
 | | `mult` | `0.5` | hệ số compact-box của renderer của fastgs-lite |
 | | `psnr_max` | `30.0` | mốc chuẩn hoá PSNR — đúng giá trị ban tổ chức dùng |
-| | `lpips_net_live` | `"alex"` | mạng LPIPS dùng khi theo dõi trong lúc train (nhanh) |
+| | `lpips_net_live` | `"vgg"` | mạng LPIPS dùng khi theo dõi trong lúc train — trước đây là `"alex"` (nhanh hơn nhưng đọc số thấp hơn hẳn VGG ở cùng chất lượng ảnh); đổi sang `"vgg"` để khớp `lpips_net_report`, tránh log lúc train "trông tốt hơn" điểm thật lúc chấm submission |
 | | `lpips_net_report` | `"vgg"` | mạng LPIPS dùng khi chấm điểm báo cáo lúc render submission |
 | | `ram_soft_limit_gb` | `10.5` | ngưỡng RAM để chủ động `gc.collect()` |
 | | `train_extra_args` | `["--densification_interval","500", "--lambda_dssim","0.25", "--highfeature_lr","0.02", "--loss_thresh","0.07", "--grad_abs_thresh","0.0012"]` | cờ CLI riêng của fastgs-lite bổ sung, nối thẳng vào `build_args` |
@@ -179,11 +183,11 @@ Giá trị leaderboard = **trung bình cộng `Score` trên mọi scene**. Đây
 
 | Mục đích | File | Chi tiết |
 |---|---|---|
-| Điểm sống trong lúc train (theo dõi tiến trình, chọn siêu tham số) | `pipeline/score.py` — `composite_score`, `evaluate_cameras` | Dùng `lpips_net_live` (mặc định `"alex"`, nhanh); gọi mỗi `score_every` vòng trên `eval_views` camera hold-out, tqdm và log in cả `Score`, `ΔScore`, `PSNR`, `psnr_norm`, `SSIM`, `LPIPS`, RAM, VRAM |
+| Điểm sống trong lúc train (theo dõi tiến trình, chọn siêu tham số) | `pipeline/score.py` — `composite_score`, `evaluate_cameras` | Dùng `lpips_net_live` (mặc định `"vgg"`); gọi mỗi `score_every` vòng trên `eval_views` camera hold-out, tqdm và log in cả `Score`, `ΔScore`, `PSNR`, `psnr_norm`, `SSIM`, `LPIPS`, RAM, VRAM |
 | Điểm báo cáo khi render submission (gần với điểm thi thật hơn) | `pipeline/submission.py` — `render_scene` | Dùng `lpips_net_report` (mặc định `"vgg"` — đúng mạng gốc bài báo LPIPS hay dùng để đánh giá), tính trên **toàn bộ** test camera của scene, không chỉ mẫu con |
 | Trung bình toàn bộ scene → số leaderboard | `pipeline/report.py` — `leaderboard` | Hàng `MEAN` trên mọi scene |
 
-Cả hai nơi gọi chung `composite_score` nên công thức không lệch nhau — chỉ khác **mạng LPIPS** và **số lượng/tập camera** dùng để ước lượng (mẫu nhanh lúc train, đầy đủ lúc render submission).
+Cả hai nơi gọi chung `composite_score` nên công thức không lệch nhau. `lpips_net_live` và `lpips_net_report` giờ **cùng là `"vgg"`** (trước đây `live` dùng `"alex"` cho nhanh, nhưng số liệu live/report lệch nhau khiến log lúc train trông tốt hơn điểm thật) — điểm sống và điểm báo cáo giờ chỉ còn khác nhau ở **số lượng/tập camera** dùng để ước lượng (mẫu nhanh lúc train, đầy đủ lúc render submission), không còn khác mạng LPIPS.
 
 ### 1.2.4 Hợp đồng `submission.zip`
 
@@ -251,7 +255,7 @@ cfg = Config(
 
 **Bài tập 1.3.** Leaderboard là "trung bình cộng `Score` trên mọi scene" (hàng `MEAN` trong `pipeline/report.leaderboard`). Giả sử một submission có 3 scene với `Score` lần lượt là `0.71`, `0.65`, và **thiếu scene thứ ba** (không nộp ảnh nào). Theo mô tả ở mục 1.2.4 về hợp đồng `submission.zip`, điều gì xảy ra với scene bị thiếu khi ban tổ chức chấm điểm? Việc này có được `pipeline/submission.py::verify()` tự phát hiện đầy đủ không? Giải thích giới hạn của `verify()` đã nêu trong bài.
 
-**Bài tập 1.4.** So sánh vai trò của `lpips_net_live` (`"alex"`) và `lpips_net_report` (`"vgg"`) trong `Config`. Vì sao pipeline lại dùng hai mạng LPIPS khác nhau cho hai mục đích khác nhau, thay vì dùng một mạng duy nhất xuyên suốt? Nêu nơi triển khai (file, hàm) của từng loại điểm theo bảng "Nơi triển khai" ở mục 1.2.3.
+**Bài tập 1.4.** `lpips_net_live` và `lpips_net_report` trong `Config` từng khác nhau (`"alex"` vs `"vgg"`) trước khi được đổi thành cùng `"vgg"`. Giải thích vì sao dùng hai mạng LPIPS khác nhau cho điểm sống lúc train và điểm báo cáo submission từng là một rủi ro (gợi ý: so sánh cách AlexNet và VGG đọc số ở cùng một chất lượng ảnh), và vì sao thống nhất về `"vgg"` giúp số liệu theo dõi lúc train và số liệu chấm điểm cuối cùng "nói cùng một sự thật". Nêu nơi triển khai (file, hàm) của từng loại điểm theo bảng "Nơi triển khai" ở mục 1.2.3.
 
 **Bài tập 1.5.** Trace đường đi của tham số `iterations` từ lúc khai báo trong `pipeline.Config` (mặc định `7000`) tới lúc nó trở thành cờ `--iterations` truyền cho `train.py` (qua `pipeline/trainer.py`). Vì sao tài liệu khuyến nghị đặt `iterations=30000` khi train trên dữ liệu riêng để nộp bài thật, thay vì giữ mặc định `7000` của demo?
 

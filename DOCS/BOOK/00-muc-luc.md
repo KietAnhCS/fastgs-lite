@@ -64,6 +64,23 @@ Toàn bộ nội dung trên được hợp nhất từ các file sau trong `DOCS
 
 Ảnh minh hoạ giữ nguyên từ `DOCS/assets/`, `DOCS/Report/assets/`, `DOCS/Report/test/figures/`.
 
+## Cập nhật: tích hợp cơ chế từ Faster-GS
+
+Bên cạnh FastGS (đóng góp densify/prune chính, xem Chương 12), repo giờ tích hợp thêm một số cơ chế của **Faster-GS** (Hahlbohm et al., *"Faster-GS: Analyzing and Improving Gaussian Splatting Optimization"*, CVPR 2026), áp dụng trực tiếp trên code hiện có thay vì đổi sang CUDA backend riêng của họ (lý do: backend đó không trả về `radii`/`viewspace_points` mà thuật toán densify của FastGS cần — xem Chương 12).
+
+**Luôn bật, không còn cờ bật/tắt:**
+- **Fused Adam** — kernel CUDA elementwise tự viết (`adam_fused.cu`), thay `torch.optim.Adam`.
+- **3D anti-aliasing filter** (kiểu Mip-Splatting) — clamp scale theo tần số lấy mẫu camera.
+- **Morton reordering** — sắp lại thứ tự Gaussian trong bộ nhớ mỗi 5000 vòng lặp để tăng locality cho rasterizer tile-based.
+- **Random-init fallback** — sinh point cloud ngẫu nhiên (có carving) khi COLMAP không có `points3D`.
+
+**Ngoại lệ có chủ đích — vẫn tắt mặc định:**
+- **MCMC densification** (kiểu 3DGS-MCMC) — hàm đã viết đầy đủ trong `GaussianModel` nhưng không được gọi trong vòng lặp huấn luyện mặc định, vì nó **loại trừ lẫn nhau về thuật toán** với `densify_and_prune_fastgs` (đóng góp chính của FastGS) — không thể chạy cả hai cùng lúc trên cùng một tập Gaussian. Có thể bật thủ công để benchmark riêng.
+
+![Số lượng cơ chế luôn bật trước/sau đợt merge (đếm số lượng kỹ thuật, không phải benchmark hiệu năng)](fastergs_merge_figures/00_techniques_overview.png)
+
+Chưa có số liệu PSNR/SSIM/LPIPS/VRAM/thời gian thật cho các cơ chế mới này (cần build lại `diff-gaussian-rasterization_fastgs` trên máy có CUDA và chạy huấn luyện thật để đo).
+
 ---
 
 [Bắt đầu đọc — Chương 1 →](01-gioi-thieu-tong-quan.md)

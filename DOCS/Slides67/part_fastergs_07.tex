@@ -1,0 +1,21 @@
+% ============================================================
+% Faster-GS integration — bug opacity_reset_interval đã sửa
+% ============================================================
+
+% --- Slide: Bug opacity_reset_interval đã sửa ---
+\begin{frame}{Bug đã sửa: \texttt{opacity\_reset\_interval} không co giãn theo iterations}
+\footnotesize
+\begin{itemize}
+    \item \textbf{Nguyên nhân thật} của các điểm sụt PSNR/Score tại iteration 3000/6000 (xem thêm Slide 56) -- \texttt{opacity\_reset\_interval} mặc định hardcode \textbf{3000} (đúng cho lịch gốc 30k iteration) \textbf{không co giãn} theo \texttt{iterations} thực tế đã rút ngắn (vd 7000) $\Rightarrow$ opacity reset kích hoạt quá sớm so với tiến trình densify (ở 43\% tiến trình thay vì đúng tỉ lệ).
+    \item \textbf{Bằng chứng thật} (scene HCM0539, log \texttt{history.csv}): PSNR rơi $22.02\to5.92$, SSIM rơi $0.760\to0.047$ đúng tại iteration 3000.
+    \item \textbf{Cách sửa}: field mới \texttt{opacity\_reset\_frac=0.2} trong \texttt{pipeline/config.py}; \texttt{pipeline/trainer.py::build\_args} giờ tính
+    \[
+    \texttt{opacity\_reset\_interval} = \text{round}(\texttt{opacity\_reset\_frac} \times \texttt{iterations})
+    \]
+    và truyền vào argv -- đồng bộ tỉ lệ với \texttt{densify\_until\_iter} (đã co giãn theo \texttt{densify\_until\_frac=0.5} từ trước).
+    \item \alert{Lưu ý:} chưa có log thật "sau khi sửa" (chưa build/chạy lại vì không có GPU ở môi trường phát triển) -- chỉ có log thật "trước khi sửa" làm bằng chứng cho bug.
+\end{itemize}
+\centering
+\includegraphics[width=0.35\linewidth]{12_opacity_reset_crash_real_log.png}
+\captionof{figure}{\footnotesize Log thật (TRƯỚC khi sửa): PSNR sụp tại iteration 3000 -- 1 scene, 1 lần chạy}
+\end{frame}

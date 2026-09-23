@@ -1,0 +1,22 @@
+% ============================================================
+% Faster-GS integration — 3D anti-aliasing filter (Mip-Splatting)
+% ============================================================
+
+% --- Slide: 3D anti-aliasing filter ---
+\begin{frame}{3D anti-aliasing filter (Mip-Splatting) — luôn bật}
+\footnotesize
+\begin{itemize}
+    \item Mỗi Gaussian sau projection phải có "dấu chân" tối thiểu $\sim$1 pixel để chống alias -- thực hiện bằng cách clamp scale trong log-space:
+\end{itemize}
+\[
+s_{\text{final}} = \max(s_{\text{raw}}, \text{threshold}), \quad \text{threshold} = \text{distance2filter} \cdot z
+\]
+\begin{itemize}
+    \item với $\text{distance2filter} = \sqrt{\text{filter\_variance}}/\text{max\_focal}$ (tính 1 lần từ toàn bộ camera train), $z$ = khoảng cách Gaussian tới camera.
+    \item \textbf{Trực giác:} Gaussian càng xa camera, ngưỡng \texttt{threshold} càng lớn (vì $z$ lớn) $\Rightarrow$ scale tối thiểu tăng theo khoảng cách -- đúng với việc 1 pixel ở xa "bao phủ" vùng không gian lớn hơn.
+    \item Trước đây có cờ \texttt{use\_3d\_filter} (mặc định \textbf{tắt}) -- giờ \textbf{luôn bật}, không còn cờ.
+\end{itemize}
+\centering
+\includegraphics[width=0.3\linewidth]{07_3d_filter_clamp.png}
+\captionof{figure}{\footnotesize Đường cong clamp $s_{\text{final}}=\max(s_{\text{raw}},\text{threshold})$ cho camera gần/xa (minh hoạ công thức, giá trị mẫu)}
+\end{frame}

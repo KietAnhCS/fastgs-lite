@@ -581,6 +581,62 @@ Tham khảo nhanh cho chương 5: $\text{mean}|I_{rend}-I_{gt}|$ (L1 trung bình
 
 Dữ liệu cho backward (chương 6) lưu ở `scripts/ch04_aux_cam1.npz`: `final_T` (32,48), `n_contrib` (32,48), `n_real`, `ranges` (6,2), `point_list` (P,), `keys_sorted`, `max_contrib` (6,), `mu2` (4,2), `conic` (4,3), `depth`, `alpha`, `colors`, cùng `final_T_gt`, `n_contrib_gt` cho bản α=0.9.
 
+## 9.3 — Morton Z-order reordering: tăng locality bộ nhớ cho chính tile rasterizer này
+
+Từ đợt tích hợp cơ chế Faster-GS (Hahlbohm et al., CVPR 2026), `GaussianModel.apply_morton_ordering`
+(`scene/gaussian_model.py:569-616`) sắp xếp lại **thứ tự lưu trong bộ nhớ** của toàn bộ N Gaussian
+(và optimizer state đi kèm) mỗi `morton_reorder_interval` iteration (mặc định 5000, luôn bật — không
+có cờ tắt). Đây **không phải** một thay đổi toán học của rasterizer ở trên — $P$, khoá 64-bit,
+radix sort, alpha-blending (mục 4.1–4.7) giữ nguyên y hệt — mà là một cách sắp xếp lại **input** trước
+khi nó chạm rasterizer, để tận dụng cache GPU tốt hơn.
+
+**Vì sao đặt ở đây, không phải chương optimizer/gradient**: các Gaussian trong cùng $\mathcal G_T$
+(tập Gaussian chạm tile $T$, mục 4.3) thường ở gần nhau trong không gian 3D. Nếu chúng cũng ở gần
+nhau trong bộ nhớ GPU (theo cùng thứ tự đọc của `renderCUDA`/backward), tỉ lệ cache-hit khi mỗi CUDA
+block (mục 4.5: 256 thread/tile) nạp dữ liệu Gaussian vào shared memory sẽ cao hơn — cùng mục tiêu
+locality mà `identifyTileRanges` (mục 4.3) đã tận dụng ở tầm tile, Morton reorder tận dụng thêm ở
+tầm bố trí bộ nhớ của bản thân mảng Gaussian.
+
+**Thuật toán (bit-interleaving 3D, rút gọn từ code thật):**
+
+1. **Lượng tử hoá toạ độ** — với bounding box $[\text{min}_i,\text{max}_i]$ của toàn bộ point cloud
+   ($i\in\{x,y,z\}$), mỗi Gaussian $p=(p_x,p_y,p_z)$ được lượng tử về 10-bit mỗi trục:
+   $$
+   q_i=\left\lfloor \operatorname{clamp}\!\left(\frac{p_i-\text{min}_i}{\text{max}_i-\text{min}_i},\,0,\,1\right)\times(2^{10}-1)\right\rfloor,\qquad q_i\in[0,1023]
+   $$
+
+2. **Giãn bit ("spread bits" / part1by2)** — mỗi số 10-bit $q_i$ được giãn thành 30-bit bằng cách
+   chèn 2 bit-0 sau mỗi bit gốc (magic-number bit-trick chuẩn, chuỗi AND/OR/shift với các hằng số
+   `0x030000FF, 0x0300F00F, 0x030C30C3, 0x09249249`). Mã Morton 30-bit:
+   $$
+   \boxed{\ M=\text{spread}(q_x)\ \big|\ \bigl(\text{spread}(q_y)\ll1\bigr)\ \big|\ \bigl(\text{spread}(q_z)\ll2\bigr)\ }
+   $$
+   Bit thứ $3k$ của $M$ đến từ bit thứ $k$ của $x$, bit $3k+1$ từ $y$, bit $3k+2$ từ $z$ — 3 trục
+   "xen kẽ" đều nhau trong chuỗi bit.
+
+3. **Sắp xếp** — toàn bộ N Gaussian (`self._xyz`, `self._opacity`, ..., và cả `xyz_gradient_accum`,
+   `denom`, optimizer state qua `_reorder_optimizer`) được hoán vị theo $M$ tăng dần
+   (`torch.argsort(code)`). Đây chính là thứ tự duyệt theo **đường cong Z-order**: hai điểm gần nhau
+   trong không gian 3D *thường* (không đảm bảo tuyệt đối — nhược điểm đã biết của Morton so với
+   đường cong Hilbert, đổi lại tính rẻ hơn nhiều) có mã Morton gần nhau, nên cũng gần nhau trong bộ
+   nhớ sau khi sort.
+
+![Đường cong Z-order rút gọn 2D, đúng thuật toán bit-interleaving trong apply_morton_ordering](fastergs_merge_figures/09_morton_zorder_curve.png)
+
+*Hình bên trái: nối các điểm của lưới $16\times16$ theo đúng thứ tự Morton tăng dần — hiện ra hình
+chữ Z lặp lại nhiều tầng (đặc trưng của Morton/Z-order curve). Hình bên phải: 4 góc phần tư của
+lưới ứng với 4 khối liên tiếp trong thứ tự Morton (mã 2 bit cao nhất cố định trong mỗi góc) — mỗi
+góc lại tự chia đệ quy theo đúng mẫu Z. Đây là code Python độc lập minh hoạ CHÍNH XÁC thuật toán
+`spread_bits`/`argsort` thật đang chạy trong `apply_morton_ordering` (rút gọn 3D→2D, bỏ trục z, để
+vẽ được trên giấy) — không phải log train hay số đo hiệu năng thật; lợi ích cache thực tế phụ thuộc
+kiến trúc GPU cụ thể và chưa được đo (xem chương 15, chưa có GPU để benchmark).*
+
+**Lưu ý vận hành** (đã nêu ở chương 11): vì reorder tạo `nn.Parameter` mới cho toàn bộ Gaussian, các
+Parameter đó có `.grad = None` ngay sau khi tạo — `FusedAdam.step()` bỏ qua param có `grad=None`
+(`utils/fused_adam.py:44`), nên tại đúng iteration reorder, bước cập nhật Adam của iteration đó bị
+bỏ qua. Không đổi $P$/khoá/sort của rasterizer ở trên, chỉ ảnh hưởng optimizer — xem chương 11 để
+biết mức độ (≈ 1/`morton_reorder_interval` số iteration).
+
 ## Bài tập (Exercise)
 
 **Bài tập 9.1.** Với ảnh $48\times32$ và tile $16\times16$, lưới tile là $3\times2$ (6 tile). Nếu đổi ảnh sang $64\times64$ (cùng cỡ tile $16\times16$), lưới tile sẽ là bao nhiêu? Với 4 Gaussian có $\text{half}_x,\text{half}_y\approx15$–16 px như trong bảng mục 4.0, ước lượng liệu mỗi Gaussian còn phủ **toàn bộ** lưới tile mới hay không, và giải thích ảnh hưởng lên $K_i$ và $P=\sum_iK_i$.

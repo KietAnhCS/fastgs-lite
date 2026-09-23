@@ -209,7 +209,34 @@ if iteration % 3000 == 0 and 15_000 < iteration < 30_000:                    # (
 | `densify_from_iter` | 500 | chờ Gaussian ổn định sơ bộ |
 | `densify_until_iter` | 15 000 | sau đó $N$ chỉ giảm |
 | `densification_interval` | 100 (preset Colab 500) | chu kỳ densify |
-| `opacity_reset_interval` | 3 000 | reset opacity; đồng thời bật `size_threshold` |
+| `opacity_reset_interval` | 3 000 (mặc định argparse; `pipeline/` override — xem dưới) | reset opacity; đồng thời bật `size_threshold` |
+
+### `opacity_reset_interval` trong `pipeline/` — bug co giãn theo `iterations` đã sửa
+
+Bảng lịch ở trên (500/3000/15000/30000) là lịch **gốc cho 30 000 vòng**. Khi chạy ngắn hơn qua
+`pipeline/` (Colab, `iterations` tuỳ chỉnh), `densify_until_iter` đã được co giãn từ lâu
+(`densify_until_frac × iterations`, xem chương 3) — nhưng cho tới đợt tích hợp Faster-GS này,
+`opacity_reset_interval` vẫn bị **giữ cố định 3000**, không co theo `iterations`. Hệ quả với
+`iterations=7000`: `densify_until_iter=3500` (co đúng theo tỉ lệ) trong khi reset opacity đầu
+tiên vẫn rơi đúng $t=3000$ — quá sớm so với lịch đã rút gọn, ngay khi mô hình mới học được 43%
+tiến trình dự kiến chứ chưa "đủ hai tín hiệu" như lý do 3000 được chọn cho lịch 30k gốc (12.1.2).
+
+Log thật dưới đây (chạy **trước khi sửa**, scene `HCM0539`, `output/fastgs_models/history.csv`)
+cho thấy hậu quả cụ thể: PSNR rơi từ 22.0 xuống 5.9, SSIM từ 0.76 xuống 0.047 đúng tại
+$t=3000$, trước khi hồi phục ở $t=4000$.
+
+![Log thật: PSNR/SSIM sụp tại t=3000 do opacity_reset_interval không co giãn](adc_figures/12_opacity_reset_crash_real_log.png)
+
+*Log thật (không phải minh hoạ) — scene HCM0539, 7000 iterations, bản TRƯỚC khi sửa bug. Chỉ 1 scene, 1 lần chạy — không đại diện tổng quát, nhưng xác nhận cơ chế lỗi có thật.*
+
+**Đã sửa** (xem chương 3 để biết chi tiết): thêm field `opacity_reset_frac=0.2` trong
+`pipeline/config.py`, `pipeline/trainer.py::build_args` giờ truyền
+`--opacity_reset_interval round(opacity_reset_frac × iterations)` — với `iterations=7000` ra
+`opacity_reset_interval=1400`, rải đều theo đúng tỉ lệ `densify_until_iter` thay vì lệch pha.
+**Giới hạn cần nói rõ**: đây là code mới, môi trường phát triển không có GPU nên **chưa chạy lại
+để có log thật "sau khi sửa"** — kỳ vọng cú sập PSNR/SSIM tại một mốc cố định sẽ biến mất hoặc dịch
+theo tỉ lệ mới là kỳ vọng **định tính**, cần xác nhận bằng cách chạy lại trên máy có CUDA và so
+sánh `history.csv` mới với biểu đồ trên.
 | `lambda_dssim` | 0.2 | $\lambda$ trong loss và $E_{\text{photo}}$ |
 | `loss_thresh` | 0.1 | $\tau_{\text{loss}}$ ở bước ③ |
 
@@ -2736,6 +2763,10 @@ s_{\text{new}} = \frac{\alpha}{D(n,\alpha_{\text{new}})}\cdot s
 $$
 
 với $\alpha, s$ là opacity/scale gốc trước khi nhân bản. Trực giác: $\alpha_{\text{new}}$ là opacity sao cho $n$ Gaussian giống hệt nhau, xếp chồng dọc tia nhìn, cho tổng transmittance-loss đúng bằng 1 Gaussian opacity $\alpha$ — còn $D(n,\alpha_{\text{new}})$ là hệ số hiệu chỉnh scale để tổng "diện tích quang học" cũng được bảo toàn. Nói cách khác: **ngay sau khi densify, ảnh render tại vùng đó gần như không đổi** — khác hẳn ADC gốc, nơi densify luôn kèm một nhiễu loạn tạm thời.
+
+![Minh hoạ công thức relocation và noise injection của MCMC](adc_figures/12_mcmc_relocation_formula.png)
+
+*Trái: $\alpha_{\text{new}}=1-(1-\alpha)^{1/n}$ theo $n$ cho ba giá trị $\alpha$ gốc — khi $n=1$ (không nhân bản), $\alpha_{\text{new}}=\alpha$; $n$ càng lớn, mỗi bản càng "mờ" hơn để tổng vẫn tái tạo đúng 1 Gaussian gốc. Phải: hệ số nhân nhiễu vị trí $\sigma(0.5-100\alpha)$ theo opacity — Gaussian mờ ($\alpha$ thấp) bị nhiễu mạnh (thăm dò), Gaussian đặc ($\alpha$ cao) gần như đứng yên. Đây là đồ thị công thức toán học chính xác (tính bằng numpy thuần theo đúng công thức trong `_mcmc_relocate`/`mcmc_add_noise`), không phải kết quả train.*
 
 **b) Add-noise — phần "MC" (Monte Carlo) mà ADC không có**
 

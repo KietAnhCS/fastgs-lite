@@ -483,7 +483,11 @@ Hàm công khai `lpips(x, y, net_type='alex', version='0.1')` (`lpipsPyTorch/__i
 | `squeeze` | `squeezenet1_1(pretrained=True).features` | `[2, 5, 8, 10, 11, 12, 13]` | `[64,128,256,384,384,512,512]` |
 | `vgg` | `vgg16(weights=VGG16_Weights.IMAGENET1K_V1).features` | `[4, 9, 16, 23, 30]` | `[64,128,256,512,512]` |
 
-`vgg` đi qua backbone sâu và nặng hơn `alex` (VGG16 có nhiều tham số và tốn FLOPs hơn AlexNet đáng kể), nên **chậm hơn rõ rệt cho mỗi lần gọi** — đúng như tên biến `lpips_net_report` (chỉ dùng khi chấm báo cáo cuối, số lần gọi ít) so với `lpips_net_live` (dùng liên tục trong lúc train, cần nhanh).
+`vgg` đi qua backbone sâu và nặng hơn `alex` (VGG16 có nhiều tham số và tốn FLOPs hơn AlexNet đáng kể), nên **chậm hơn rõ rệt cho mỗi lần gọi**.
+
+**Cập nhật (đợt tích hợp FasterGS)**: `lpips_net_live` từng mặc định là `"alex"` trong khi `lpips_net_report` là `"vgg"` — hai mạng khác nhau cho cùng một chỉ số LPIPS đọc ra hai thang giá trị khác nhau ở cùng chất lượng ảnh (AlexNet thường cho số LPIPS thấp hơn VGG). Hệ quả: log theo dõi trong lúc train (`live_lpips`, dùng alex) luôn có vẻ "tốt hơn" điểm thật lúc chấm submission (dùng vgg), khiến người xem log dễ đánh giá sai tiến độ. `pipeline/config.py` hiện đặt **cả hai đều là `"vgg"`** — đổi lấy chi phí chậm hơn mỗi lần gọi LPIPS trong lúc train, để đảm bảo số liệu theo dõi và số liệu chấm điểm cuối cùng nói cùng một sự thật.
+
+![So sánh cấu hình LPIPS network: live/report trước (khác mạng) và sau (cùng VGG)](fastergs_merge_figures/04_lpips_net_consistency.png)
 
 **Chuẩn hoá đầu vào**: `BaseNet.z_score(x)` (`lpipsPyTorch/modules/lpips.py` gọi gián tiếp qua `networks.py:50-51`) trừ `mean = [-.030, -.088, -.188]` và chia `std = [.458, .448, .450]` — đây là hằng số chuẩn hoá riêng của LPIPS (khác hẳn ImageNet mean/std thông thường), áp dụng **trước khi** đưa ảnh vào backbone. Vì vậy `x, y` truyền vào hàm `lpips(...)` phải là ảnh RGB đã ở thang **[0, 1]** (giống định dạng `torchvision.transforms.functional.to_tensor` hoặc `torch.clamp(render, 0, 1)`) — module tự lo phần chuẩn hoá tiếp theo, người gọi không cần tự chuẩn hoá theo ImageNet.
 
@@ -497,8 +501,8 @@ qua `torch.hub.load_state_dict_from_url(..., progress=True)`, sau đó đổi t�
 | Vị trí | net_type | Biến cấu hình |
 |---|---|---|
 | `metrics.py:74` (CLI) | `'vgg'` | cố định trong code, không cấu hình được |
-| `pipeline/score.py::evaluate_cameras` (chấm nhanh trong lúc train) | tham số `lpips_net`, gọi từ `trainer.py:158` với `cfg.lpips_net_live` | `Config.lpips_net_live = "alex"` (`pipeline/config.py:39`) |
-| `pipeline/submission.py::render_scene` (chấm báo cáo/nộp bài) | `cfg.lpips_net_report` (`pipeline/submission.py:62`) | `Config.lpips_net_report = "vgg"` (`pipeline/config.py:40`) |
+| `pipeline/score.py::evaluate_cameras` (chấm nhanh trong lúc train) | tham số `lpips_net`, gọi từ `trainer.py:158` với `cfg.lpips_net_live` | `Config.lpips_net_live = "vgg"` (`pipeline/config.py:66`) |
+| `pipeline/submission.py::render_scene` (chấm báo cáo/nộp bài) | `cfg.lpips_net_report` (`pipeline/submission.py:62`) | `Config.lpips_net_report = "vgg"` (`pipeline/config.py:67`) |
 
 ## 43. PSNR và SSIM
 
@@ -655,7 +659,7 @@ Lưu ý quan trọng: nhiều tham số của `OptimizationParams` (`arguments/_
 
 **Bài tập 4.7.** §40 liệt kê những gì `verify()` **không thể** kiểm tra (số test-pose thật của ban tổ chức, độ phân giải chuẩn, nội dung hình ảnh đúng/sai). Từ đó, hãy giải thích tại sao câu "`verify()` báo OK" không đủ để kết luận "submission chắc chắn được điểm cao", và đề xuất một bước kiểm tra thủ công bổ sung (gợi ý: xem §46, hàm nào trong `pipeline/report.py` phục vụ việc này).
 
-**Bài tập 4.8.** §42 cho biết `pipeline/score.py::evaluate_cameras` dùng LPIPS mạng `alex` (`cfg.lpips_net_live`) trong lúc train, còn `pipeline/submission.py::render_scene` dùng mạng `vgg` (`cfg.lpips_net_report`) khi chấm nộp bài. Giải thích lựa chọn này dựa trên bảng backbone ở §42 (`alexnet` so với `vgg16`) và tần suất gọi hàm `lpips(...)` ở mỗi nơi — vì sao mỗi lần gọi lại phải build lại toàn bộ mạng (`LPIPS(net_type, version)` không cache)?
+**Bài tập 4.8.** Ở một phiên bản cấu hình cũ của repo, `pipeline/score.py::evaluate_cameras` dùng LPIPS mạng `alex` (`cfg.lpips_net_live`) trong lúc train, còn `pipeline/submission.py::render_scene` dùng mạng `vgg` (`cfg.lpips_net_report`) khi chấm nộp bài — hiện tại `pipeline/config.py` đã đặt cả hai đều là `"vgg"` (xem §42). Dựa trên bảng backbone ở §42 (`alexnet` so với `vgg16`) và tần suất gọi hàm `lpips(...)` ở mỗi nơi (vì sao mỗi lần gọi lại phải build lại toàn bộ mạng — `LPIPS(net_type, version)` không cache): (a) giải thích tại sao cấu hình cũ (`live=alex`, `report=vgg`) từng có vẻ hợp lý xét thuần về tốc độ; (b) giải thích tại sao nó lại là một bug về tính toàn vẹn số liệu, không chỉ là một đánh đổi tốc độ vô hại — liên hệ với việc `alex` và `vgg` cho ra thang giá trị LPIPS khác nhau ở cùng một cặp ảnh.
 
 ---
 

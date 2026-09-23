@@ -107,6 +107,7 @@ Một chu trình khép kín: render $\rightarrow$ tính loss $\rightarrow$ lan t
 \begin{itemize}
     \item \textbf{Multi-view score} + \textbf{Compact box} $\Rightarrow$ giảm số Gaussian dư thừa mà không giảm chất lượng đáng kể.
     \item \textbf{Sparse Adam} $\Rightarrow$ giảm chi phí tính toán mỗi iteration (chỉ cập nhật tham số liên quan).
+    \item \textbf{Mới:} tích hợp thêm 5 cơ chế từ \textbf{Faster-GS} (Hahlbohm et al., CVPR 2026) — fused Adam, 3D anti-aliasing filter, Morton reordering, random-init fallback (luôn bật), MCMC densification (có sẵn, giữ tắt) — xem phần Faster-GS mới trong bộ slide này để biết chi tiết công thức.
 \end{itemize}
 \vspace{2mm}
 \textbf{Giới hạn / hướng phát triển:}
@@ -115,6 +116,7 @@ Một chu trình khép kín: render $\rightarrow$ tính loss $\rightarrow$ lan t
     \item Ngân sách 7k iteration của fastgs-lite bỏ lỡ bước \texttt{final\_prune} (xem Slide 61).
     \item Chưa có ablation study cô lập riêng từng đòn bẩy để đo đóng góp thực tế của mỗi thành phần.
     \item 4 nhánh mở rộng của FastGS gốc — dynamic scenes, sparse view, surface reconstruction, SLAM — chưa được tích hợp vào fork này.
+    \item Các cơ chế Faster-GS mới tích hợp mới chỉ được review tĩnh (đọc code), \textbf{CHƯA} build/benchmark thật trên GPU (không có CUDA toolchain khi phát triển).
 \end{enumerate}
 \end{frame}
 
@@ -131,6 +133,7 @@ Một chu trình khép kín: render $\rightarrow$ tính loss $\rightarrow$ lan t
 \texttt{DOCS/fastgs-\allowbreak acceleration-\allowbreak method.md} & Nền tảng toán 3DGS + 3 đòn bẩy FastGS + đo FastGS-lite vs 3DGS \\
 \texttt{DOCS/colab-t4-guide.md} & Playbook Colab T4, chống OOM, lộ trình CUDA \\
 \texttt{DOCS/BOOK/} & Sách hợp nhất 15 chương, từ toán nền tảng tới cost model \\
+\texttt{DOCS/BOOK/*\_merge\_figures/} & Biểu đồ minh hoạ công thức các cơ chế Faster-GS mới (fused Adam, 3D filter, Morton, MCMC, random-init) \\
 GitHub & \texttt{KietAnhCS/fastgs-lite} \\
 \bottomrule
 \end{tabular}
